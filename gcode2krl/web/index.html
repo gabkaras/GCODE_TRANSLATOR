@@ -62,6 +62,17 @@
       <label class="row"><span>Pozycja startowa X Y Z</span><input type="text" id="opt_start" data-default="0 0 0" value="0 0 0"></label>
     </details>
 
+    <details open>
+      <summary>Robot</summary>
+      <label class="row"><span>Model</span><select id="opt_robot" data-default="KR90R2700PRO"><option value="none">brak</option></select></label>
+      <label class="row"><span>$BASE w ukł. robota<br><small>X Y Z A B C</small></span><input type="text" id="opt_base_frame" data-default="1200 0 500 0 0 0" value="1200 0 500 0 0 0"></label>
+      <label class="row"><span>$TOOL w ukł. kołnierza<br><small>X Y Z A B C</small></span><input type="text" id="opt_tool_frame" data-default="0 0 150 0 0 0" value="0 0 150 0 0 0"></label>
+      <label class="row check"><input type="checkbox" id="opt_base_literal" data-default="false"><span>Zapisz $BASE literalnie w KRL</span></label>
+      <label class="row check"><input type="checkbox" id="opt_tool_literal" data-default="false"><span>Zapisz $TOOL literalnie w KRL</span></label>
+      <label class="row"><span>Próbki IK (maks.)</span><input type="number" id="opt_robot_samples" data-default="3000" value="3000" min="10" step="500"></label>
+      <div class="row-note muted">Model uproszczony: wymiary i limity z kart katalogowych, do sprawdzenia zasięgu i wizualizacji, nie do kalibracji.</div>
+    </details>
+
     <details>
       <summary>Prędkości i wygładzanie</summary>
       <label class="row"><span>Posuw domyślny [mm/min]</span><input type="number" id="opt_default_feed" data-default="1000" value="1000" min="1" step="100"></label>
@@ -108,6 +119,13 @@
       <div class="stat"><div class="stat-label">Czas</div><div class="stat-value" id="st-time">–</div><div class="stat-sub" id="st-time-sub"></div></div>
     </section>
     <div id="breakdown" class="breakdown"></div>
+    <div id="robot-bar" class="robot-bar hidden">
+      <span id="robot-name" class="rb-name"></span>
+      <span id="robot-reach" class="rb-item"></span>
+      <span id="robot-limit" class="rb-item"></span>
+      <span class="spacer"></span>
+      <span id="robot-axes" class="rb-axes"></span>
+    </div>
 
     <nav class="tabs">
       <button class="tab active" data-tab="view">Podgląd 3D</button>
@@ -118,11 +136,18 @@
     <section id="pane-view" class="pane active">
       <div class="toolbar">
         <button id="btn-fit" title="F">dopasuj</button>
+        <button id="btn-cell" title="C">cela</button>
         <button id="btn-iso" title="I">izo</button>
         <button id="btn-top" title="T">z góry</button>
         <button id="btn-front">z przodu</button>
         <button id="btn-ortho">orto</button>
         <button id="btn-png">PNG</button>
+        <span class="sep"></span>
+        <label class="tb-check"><input type="checkbox" id="show-robot" checked> robot</label>
+        <label class="tb-check"><input type="checkbox" id="show-reach" checked> zasięg</label>
+        <button id="btn-play" title="Spacja">▶</button>
+        <input type="range" id="anim" min="0" max="0" value="0" step="0.01" class="anim">
+        <select id="anim-speed" title="prędkość animacji"><option value="20">0.5×</option><option value="40" selected>1×</option><option value="100">2.5×</option><option value="300">8×</option></select>
         <span class="spacer"></span>
         <span id="bounds" class="muted mono"></span>
         <span id="cam-info" class="muted"></span>
@@ -132,6 +157,11 @@
         <div id="viewer-error" class="viewer-error"></div>
         <div id="legend" class="legend"></div>
         <div class="hint muted">LPM obrót · PPM / Shift przesuwanie · kółko zoom · 2× klik dopasuj</div>
+        <div id="joints" class="joints hidden">
+          <div class="joints-title">Osie <span id="joints-mode" class="muted"></span></div>
+          <div id="joint-rows"></div>
+          <div id="tcp-pos" class="muted mono"></div>
+        </div>
       </div>
     </section>
 
@@ -154,6 +184,7 @@
   </div>
 </main>
 <script src="/viewer.js"></script>
+<script src="/robot.js"></script>
 <script src="/app.js"></script>
 </body>
 </html>

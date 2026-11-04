@@ -313,3 +313,26 @@ class Translator:
 
 def translate(parsed: ParseResult, opts: TranslateOptions | None = None) -> tuple[list, Stats]:
     return Translator(opts or TranslateOptions()).translate(parsed)
+
+
+def sample_items(items: list, arc_points: int = 8, max_samples: int = 3000) -> np.ndarray:
+    """Representative TCP positions along the output path (for reach checks)."""
+    from .geometry import sample_arc
+
+    pts: list[np.ndarray] = []
+    for it in items:
+        if isinstance(it, RapidItem):
+            pts.append(it.target)
+        elif isinstance(it, LineItem):
+            pts.append(it.end)
+        elif isinstance(it, ArcItem):
+            pts.extend(sample_arc(it.fit, 1e9, min_points=arc_points)[1:])
+        elif isinstance(it, SplItem):
+            pts.extend(it.points[1:])
+    if not pts:
+        return np.zeros((0, 3))
+    arr = np.array(pts)
+    if len(arr) > max_samples:
+        idx = np.unique(np.linspace(0, len(arr) - 1, max_samples).astype(int))
+        arr = arr[idx]
+    return arr

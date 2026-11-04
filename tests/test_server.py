@@ -93,3 +93,31 @@ def test_run_translation_options_roundtrip():
     src = res["files"]["MY_FILE.src"]
     assert "LIN {X 11.000, Y 2.000, Z 3.000" in src and "C_DIS" in src
     assert res["stats"]["time_total"] >= 0
+
+
+def test_robot_report_in_response(server):
+    gcode = open(EXAMPLE, encoding="utf-8").read()
+    opts = {"robot": "KR90R2700PRO", "base_frame": "1200 0 500 0 0 0", "tool_frame": "0 0 150 0 0 0", "abc": "0 180 0",
+            "base_literal": True}
+    status, data = post_json(server + "/api/translate", {"gcode": gcode, "filename": "f.nc", "options": opts})
+    assert status == 200, data
+    rep = data["robot"]
+    assert rep["robot"] == "KR90R2700PRO" and rep["n_unreachable"] == 0 and rep["n_limit"] == 0
+    assert rep["n_samples"] > 10 and len(rep["joint_min"]) == 6
+    import base64
+    import numpy as np
+    joints = np.frombuffer(base64.b64decode(rep["joints"]), dtype=np.float32).reshape(-1, 6)
+    assert joints.shape[0] == rep["n_samples"]
+    assert "$BASE = {X 1200.000, Y 0.000, Z 500.000" in data["files"]["F.src"]
+    assert "$TOOL = TOOL_DATA[1]" in data["files"]["F.src"]
+    # far away base -> unreachable, warning, bad points
+    opts["base_frame"] = "4000 0 500 0 0 0"
+    status, data = post_json(server + "/api/translate", {"gcode": gcode, "filename": "f.nc", "options": opts})
+    assert data["robot"]["n_unreachable"] == data["robot"]["n_samples"]
+    assert any("out of reach" in w for w in data["warnings"])
+    assert len(base64.b64decode(data["robot"]["bad_points"])) == data["robot"]["n_samples"] * 12
+    # robot none -> no report
+    status, data = post_json(server + "/api/translate", {"gcode": gcode, "filename": "f.nc", "options": {"robot": "none"}})
+    assert data["robot"] is None
+    status, _, body = get(server + "/api/robots")
+    assert any(r["key"] == "KR90R2700PRO" for r in json.loads(body)["robots"])

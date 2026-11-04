@@ -1,0 +1,184 @@
+/* Simplified KUKA robot: forward kinematics (same conventions as gcode2krl/robot.py),
+   procedural link meshes and reach envelope for the PathViewer. */
+'use strict';
+(() => {
+  const DEG = Math.PI / 180;
+  // ---- mat4 helpers (column-major, like WebGL) ----
+  const I4 = () => new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]);
+  function mul(a, b) {
+    const o = new Float32Array(16);
+    for (let c = 0; c < 4; c++) for (let r = 0; r < 4; r++)
+      o[c*4+r] = a[r]*b[c*4] + a[4+r]*b[c*4+1] + a[8+r]*b[c*4+2] + a[12+r]*b[c*4+3];
+    return o;
+  }
+  const T = (x, y, z) => new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, x,y,z,1]);
+  const RX = a => { const c = Math.cos(a), s = Math.sin(a); return new Float32Array([1,0,0,0, 0,c,s,0, 0,-s,c,0, 0,0,0,1]); };
+  const RY = a => { const c = Math.cos(a), s = Math.sin(a); return new Float32Array([c,0,-s,0, 0,1,0,0, s,0,c,0, 0,0,0,1]); };
+  const RZ = a => { const c = Math.cos(a), s = Math.sin(a); return new Float32Array([c,s,0,0, -s,c,0,0, 0,0,1,0, 0,0,0,1]); };
+  const apply = (m, p) => [m[0]*p[0]+m[4]*p[1]+m[8]*p[2]+m[12], m[1]*p[0]+m[5]*p[1]+m[9]*p[2]+m[13], m[2]*p[0]+m[6]*p[1]+m[10]*p[2]+m[14]];
+  function fromRowMajor(a) { const o = new Float32Array(16); for (let r = 0; r < 4; r++) for (let c = 0; c < 4; c++) o[c*4+r] = a[r*4+c]; return o; }
+  const FLANGE0 = RY(Math.PI / 2);
+
+  /** frames: [base, A2 axis, A3 axis, A5 centre, flange] for joints in degrees */
+  function forward(R, q) {
+    const a = q.map(v => v * DEG);
+    let t = I4();
+    const f = [t];
+    t = mul(t, RZ(-a[0])); t = mul(t, T(R.a1, 0, R.d1)); f.push(t);
+    t = mul(t, RY(a[1])); const upper = t; t = mul(t, T(R.a2, 0, 0)); f.push(t);
+    t = mul(t, RY(a[2])); const fore = t; t = mul(t, T(R.d4, 0, -R.a3)); f.push(t);
+    t = mul(t, RX(-a[3])); const w4 = t;
+    t = mul(t, RY(a[4])); const w5 = t;
+    t = mul(t, RX(-a[5])); t = mul(t, FLANGE0); t = mul(t, T(0, 0, R.d6)); f.push(t);
+    return { frames: f, upper, fore, w4, w5 };
+  }
+
+  // ---- procedural meshes ----
+  function box(sx, sy, sz, cx, cy, cz) {
+    const P = [], N = [];
+    const h = [sx/2, sy/2, sz/2], c = [cx||0, cy||0, cz||0];
+    const faces = [[0,1],[0,-1],[1,1],[1,-1],[2,1],[2,-1]];
+    for (const [ax, sg] of faces) {
+      const u = (ax + 1) % 3, v = (ax + 2) % 3;
+      const n = [0,0,0]; n[ax] = sg;
+      const quad = [];
+      for (const [su, sv] of [[-1,-1],[1,-1],[1,1],[-1,1]]) { const p = [0,0,0]; p[ax] = sg*h[ax]; p[u] = su*h[u]; p[v] = sv*h[v]; quad.push(p.map((x,i)=>x+c[i])); }
+      const order = sg > 0 ? [0,1,2,0,2,3] : [0,2,1,0,3,2];
+      for (const i of order) { P.push(...quad[i]); N.push(...n); }
+    }
+    return { positions: new Float32Array(P), normals: new Float32Array(N) };
+  }
+  /** cylinder of radius r from along axis (0:x,1:y,2:z) between a0 and a1, centred at (cx,cy,cz) in the other axes */
+  function cylinder(r, axis, a0, a1, cx, cy, cz, seg) {
+    seg = seg || 28;
+    const P = [], N = [], c = [cx||0, cy||0, cz||0];
+    const u = (axis + 1) % 3, v = (axis + 2) % 3;
+    const pt = (ang, h) => { const p = [0,0,0]; p[axis] = h; p[u] = r*Math.cos(ang); p[v] = r*Math.sin(ang); return p.map((x,i)=>x+c[i]); };
+    const nr = ang => { const n = [0,0,0]; n[u] = Math.cos(ang); n[v] = Math.sin(ang); return n; };
+    for (let i = 0; i < seg; i++) {
+      const t0 = 2*Math.PI*i/seg, t1 = 2*Math.PI*(i+1)/seg;
+      const p00 = pt(t0, a0), p01 = pt(t0, a1), p10 = pt(t1, a0), p11 = pt(t1, a1);
+      const n0 = nr(t0), n1 = nr(t1);
+      P.push(...p00, ...p10, ...p11, ...p00, ...p11, ...p01); N.push(...n0, ...n1, ...n1, ...n0, ...n1, ...n0);
+      const nc = [0,0,0]; nc[axis] = 1; const nc0 = [0,0,0]; nc0[axis] = -1;
+      const c1 = [0,0,0]; c1[axis] = a1; const c0 = [0,0,0]; c0[axis] = a0;
+      P.push(...c1.map((x,i)=>x+c[i]), ...p01, ...p11); N.push(...nc, ...nc, ...nc);
+      P.push(...c0.map((x,i)=>x+c[i]), ...p10, ...p00); N.push(...nc0, ...nc0, ...nc0);
+    }
+    return { positions: new Float32Array(P), normals: new Float32Array(N) };
+  }
+  function merge(...geoms) {
+    const P = [], N = [];
+    for (const g of geoms) { P.push(...g.positions); N.push(...g.normals); }
+    return { positions: new Float32Array(P), normals: new Float32Array(N) };
+  }
+
+  const ORANGE = '#f0862a', DARK = '#3a3f4b', GREY = '#8a919f', TOOL = '#c0c6d2';
+
+  class RobotView {
+    constructor(viewer) { this.viewer = viewer; this.model = null; this.robotInBase = I4(); this.tool = I4(); this.visible = true; this.reachVisible = true; this.joints = null; }
+
+    setModel(R) {
+      const v = this.viewer;
+      v.removeGroup('robot');
+      this.model = R;
+      const V = R.visual || {}, br = V.base_r || 300, bh = V.base_h || 250, col = V.column || 400, arm = V.arm || 240, fa = V.forearm || 190, wr = V.wrist || 150;
+      const g = 'robot';
+      v.setMesh('rb_base', cylinder(br, 2, 0, bh, 0, 0, 0), DARK, I4(), { group: g });
+      v.setMesh('rb_plate', box(br*2.2, br*2.2, 20, 0, 0, 10), '#2a2f3a', I4(), { group: g });
+      // column (link 1): from the base to the A2 axis, in the A1 frame (origin at base)
+      const colGeom = merge(box(col, col, R.d1 - bh + col*0.3, R.a1*0.35, 0, (bh + R.d1 + col*0.3)/2 - col*0.15), cylinder(arm*0.7, 1, -col*0.6, col*0.6, R.a1, 0, R.d1));
+      v.setMesh('rb_column', colGeom, ORANGE, I4(), { group: g });
+      // upper arm (link 2): frame at A2 axis, +X along the arm
+      v.setMesh('rb_upper', merge(box(R.a2, arm*0.8, arm, R.a2/2, 0, 0), cylinder(arm*0.75, 1, -col*0.62, col*0.62, R.a2, 0, 0)), ORANGE, I4(), { group: g });
+      // forearm (link 3): frame at A3 axis, +X along forearm, A4 axis a3 below
+      v.setMesh('rb_fore', merge(cylinder(fa*0.5, 0, fa*0.2, R.d4 - wr*0.9, 0, 0, -R.a3), box(fa*1.2, fa*1.1, fa*1.1 + R.a3, fa*0.3, 0, -R.a3/2)), ORANGE, I4(), { group: g });
+      // wrist (A4 frame at A5 centre): hub around A5 axis (Y)
+      v.setMesh('rb_wrist', cylinder(wr*0.55, 1, -wr*0.7, wr*0.7, 0, 0, 0), DARK, I4(), { group: g });
+      // A5 frame: housing to the flange along +X
+      v.setMesh('rb_w5', cylinder(wr*0.38, 0, 0, R.d6 - 12, 0, 0, 0), ORANGE, I4(), { group: g });
+      // flange (in the flange frame, Z out)
+      v.setMesh('rb_flange', cylinder(wr*0.42, 2, -12, 0, 0, 0, 0), GREY, I4(), { group: g });
+      this.setTool(this.tool);
+      this.buildReach();
+      this.setPose(this.joints || R.home);
+    }
+
+    setTool(toolMat) {
+      this.tool = toolMat;
+      if (!this.model) return;
+      const tcp = apply(toolMat, [0, 0, 0]);
+      const len = Math.hypot(...tcp);
+      const wr = (this.model.visual && this.model.visual.wrist) || 150;
+      // tool: thin box from flange to TCP, along the tool vector (built in the flange frame)
+      let geom;
+      if (len > 1) {
+        const d = tcp.map(x => x / len);
+        // rotation taking +Z to d
+        const z = d, x0 = Math.abs(z[2]) < 0.9 ? [0,0,1] : [1,0,0];
+        const y = norm(cross(z, x0)), x = cross(y, z);
+        const m = new Float32Array([x[0],x[1],x[2],0, y[0],y[1],y[2],0, z[0],z[1],z[2],0, 0,0,0,1]);
+        const g0 = cylinder(wr*0.18, 2, 0, len, 0, 0, 0, 16);
+        const P = new Float32Array(g0.positions.length), N = new Float32Array(g0.normals.length);
+        for (let i = 0; i < P.length; i += 3) { const p = apply(m, [g0.positions[i], g0.positions[i+1], g0.positions[i+2]]); P[i]=p[0];P[i+1]=p[1];P[i+2]=p[2]; const n = apply(m, [g0.normals[i], g0.normals[i+1], g0.normals[i+2]]); N[i]=n[0];N[i+1]=n[1];N[i+2]=n[2]; }
+        geom = { positions: P, normals: N };
+      } else geom = cylinder(wr*0.2, 2, 0, 20, 0, 0, 0, 12);
+      this.viewer.setMesh('rb_tool', geom, TOOL, I4(), { group: 'robot' });
+    }
+
+    buildReach() {
+      const R = this.model, v = this.viewer;
+      const n = 96, ground = [], arc = [];
+      const rg = R.a1 + R.wrist_reach;
+      for (let i = 0; i < n; i++) { const t0 = 2*Math.PI*i/n, t1 = 2*Math.PI*(i+1)/n; ground.push(rg*Math.cos(t0), rg*Math.sin(t0), 0, rg*Math.cos(t1), rg*Math.sin(t1), 0); }
+      v.setLayer('rb_reach', new Float32Array(ground), '#f0862a', { alpha: 0.5, order: 3, group: 'robot' });
+      this.reachArc = arc;
+    }
+
+    setBasePlacement(robotInBase) { this.robotInBase = robotInBase; if (this.joints) this.setPose(this.joints); }
+
+    setPose(q) {
+      if (!this.model) return;
+      this.joints = q;
+      const R = this.model, v = this.viewer, B = this.robotInBase;
+      const k = forward(R, q);
+      const f = k.frames;
+      const a1 = RZ(-q[0]*DEG);
+      v.setMeshTransform('rb_base', B);
+      v.setMeshTransform('rb_plate', B);
+      v.setMeshTransform('rb_column', mul(B, a1));
+      v.setMeshTransform('rb_upper', mul(B, k.upper));
+      v.setMeshTransform('rb_fore', mul(B, k.fore));
+      v.setMeshTransform('rb_wrist', mul(B, k.w4));
+      v.setMeshTransform('rb_w5', mul(B, k.w5));
+      v.setMeshTransform('rb_flange', mul(B, f[4]));
+      v.setMeshTransform('rb_tool', mul(B, f[4]));
+      v.setMeshTransform('rb_reach', B);
+      // reach arc of the wrist centre in the current arm plane + TCP axes
+      const lines = [];
+      const c = apply(mul(B, a1), [R.a1, 0, R.d1]);
+      const dir = apply(mul(B, a1), [1, 0, 0]).map((x, i) => x - apply(B, [0,0,0])[i]);
+      const up = [B[8], B[9], B[10]];
+      const rr = R.wrist_reach, n = 48;
+      for (let i = 0; i < n; i++) {
+        const t0 = -Math.PI/2 + Math.PI*i/n, t1 = -Math.PI/2 + Math.PI*(i+1)/n;
+        for (const t of [t0, t1]) lines.push(c[0] + rr*(Math.cos(t)*dir[0] + Math.sin(t)*up[0]), c[1] + rr*(Math.cos(t)*dir[1] + Math.sin(t)*up[1]), c[2] + rr*(Math.cos(t)*dir[2] + Math.sin(t)*up[2]));
+      }
+      v.setLayer('rb_reach_arc', new Float32Array(lines), '#f0862a', { alpha: 0.35, order: 3, group: 'robot', visible: this.reachVisible });
+      const tcpM = mul(mul(B, f[4]), this.tool);
+      const o = apply(tcpM, [0,0,0]), L = Math.max(40, (R.visual && R.visual.wrist || 150) * 0.6);
+      const ax = [], cols = ['#e5484d', '#46a758', '#3e8cff'];
+      [[L,0,0],[0,L,0],[0,0,L]].forEach((e, i) => { const p = apply(tcpM, e); v.setLayer('rb_tcp' + i, new Float32Array([...o, ...p]), cols[i], { order: 12, group: 'robot' }); });
+      this.tcp = o;
+      v.setGroupVisible('robot', this.visible);
+      if (!this.reachVisible) { v.setVisible('rb_reach', false); v.setVisible('rb_reach_arc', false); }
+    }
+    setVisible(vis) { this.visible = vis; this.viewer.setGroupVisible('robot', vis); if (vis && !this.reachVisible) { this.viewer.setVisible('rb_reach', false); this.viewer.setVisible('rb_reach_arc', false); } }
+    setReachVisible(vis) { this.reachVisible = vis; this.viewer.setVisible('rb_reach', vis && this.visible); this.viewer.setVisible('rb_reach_arc', vis && this.visible); }
+  }
+  function cross(a, b) { return [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]]; }
+  function norm(a) { const l = Math.hypot(a[0], a[1], a[2]) || 1; return [a[0]/l, a[1]/l, a[2]/l]; }
+
+  window.RobotView = RobotView;
+  window.robotMath = { forward, fromRowMajor, mul, apply };
+})();

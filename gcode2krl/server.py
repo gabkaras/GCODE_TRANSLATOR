@@ -33,7 +33,8 @@ import numpy as np
 from . import __version__
 from .gcode_parser import parse_gcode
 from .krl_writer import KrlOptions, write_krl
-from .translator import ArcItem, EventItem, LineItem, RapidItem, SplItem, TranslateOptions, translate
+from .robot import DEFAULT_ROBOT, ROBOTS, check_path, forward, frame
+from .translator import ArcItem, EventItem, LineItem, RapidItem, SplItem, TranslateOptions, sample_items, translate
 
 WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
 EXAMPLES_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "examples")
@@ -66,13 +67,21 @@ def _opt(options: dict, key: str, default, cast):
         raise ValueError(f"invalid value for {key}: {val!r}")
 
 
-def _triple(options: dict, key: str, default):
+def _ntuple(options: dict, key: str, default, n: int):
     val = options.get(key, default)
+    if val is None or val == "":
+        val = default
     if isinstance(val, str):
         val = [float(x) for x in val.replace(",", " ").split()]
-    if len(val) != 3:
-        raise ValueError(f"{key} needs three numbers")
+    if val is None:
+        return None
+    if len(val) != n:
+        raise ValueError(f"{key} needs {n} numbers")
     return tuple(float(x) for x in val)
+
+
+def _triple(options: dict, key: str, default):
+    return _ntuple(options, key, default, 3)
 
 
 def build_options(options: dict, filename: str) -> tuple[TranslateOptions, KrlOptions, dict]:
@@ -116,6 +125,8 @@ def build_options(options: dict, filename: str) -> tuple[TranslateOptions, KrlOp
         advance=_opt(options, "advance", 3, int),
         source_name=os.path.basename(filename or ""),
         halt_on_tool_change=_opt(options, "halt_tool_change", True, bool),
+        base_frame=_ntuple(options, "base_frame", None, 6) if _opt(options, "base_literal", False, bool) else None,
+        tool_frame=_ntuple(options, "tool_frame", None, 6) if _opt(options, "tool_literal", False, bool) else None,
     )
     if kopts.mode not in ("spline", "lin"):
         raise ValueError("mode must be 'spline' or 'lin'")
@@ -183,6 +194,32 @@ def preview_geometry(parsed, items, offset) -> dict:
     }
 
 
+def robot_report(items, options: dict, abc) -> dict | None:
+    """IK along the output path: reach / axis-limit report and joint trace for animation."""
+    key = str(options.get("robot", DEFAULT_ROBOT) or "none").upper()
+    if key == "NONE":
+        return None
+    robot = ROBOTS.get(key)
+    if robot is None:
+        raise ValueError(f"unknown robot {key}; known: {', '.join(ROBOTS)}")
+    base = frame(_ntuple(options, "base_frame", (0, 0, 0, 0, 0, 0), 6))
+    tool = frame(_ntuple(options, "tool_frame", (0, 0, 0, 0, 0, 0), 6))
+    pts = sample_items(items, max_samples=_opt(options, "robot_samples", 3000, int))
+    rep = check_path(robot, pts, abc, base, tool)
+    d = rep.to_dict()
+    d["robot"] = robot.key
+    d["points"] = _f32(pts.ravel())
+    d["joints"] = _f32(np.nan_to_num(rep.joints, nan=0.0).ravel()) if rep.joints is not None else ""
+    d["ok"] = base64.b64encode(np.asarray(rep.ok_mask, dtype=np.uint8).tobytes()).decode("ascii") if rep.ok_mask is not None else ""
+    bad = pts[~rep.ok_mask] if rep.ok_mask is not None else np.zeros((0, 3))
+    d["bad_points"] = _f32(bad.ravel())
+    # robot base placement expressed in BASE coordinates (for drawing): T_robot_in_base = inv(base)
+    from .robot import inv_frame
+    d["robot_in_base"] = inv_frame(base).ravel().tolist()
+    d["tool"] = tool.ravel().tolist()
+    return d
+
+
 def run_translation(gcode: str, filename: str, options: dict) -> dict:
     t0 = time.perf_counter()
     topts, kopts, parser_kw = build_options(options or {}, filename)
@@ -193,6 +230,14 @@ def run_translation(gcode: str, filename: str, options: dict) -> dict:
     prog = write_krl(items, kopts, stats)
     t3 = time.perf_counter()
     token = _remember(prog.files)
+    robot = robot_report(items, options or {}, kopts.abc)
+    t4 = time.perf_counter()
+    if robot:
+        if robot["n_unreachable"]:
+            stats.warnings.append(f"robot {robot['robot']}: {robot['n_unreachable']} of {robot['n_samples']} path samples are out of reach")
+        if robot["n_limit"]:
+            axes = ", ".join(f"A{k + 1}" for k, v in enumerate(robot["axis_violations"]) if v)
+            stats.warnings.append(f"robot {robot['robot']}: {robot['n_limit']} samples exceed axis limits ({axes})")
     ic = stats.input_counts
     n_in = sum(ic.values())
     result = {
@@ -218,10 +263,12 @@ def run_translation(gcode: str, filename: str, options: dict) -> dict:
             "time_parse": t1 - t0,
             "time_fit": t2 - t1,
             "time_write": t3 - t2,
-            "time_total": t3 - t0,
+            "time_robot": t4 - t3,
+            "time_total": t4 - t0,
         },
         "warnings": stats.warnings,
         "preview": preview_geometry(parsed, items, topts.offset),
+        "robot": robot,
     }
     return result
 
@@ -294,6 +341,9 @@ class Handler(SimpleHTTPRequestHandler):
             return
         if path == "/api/version":
             self.send_json({"version": __version__})
+            return
+        if path == "/api/robots":
+            self.send_json({"default": DEFAULT_ROBOT, "robots": [r.to_dict() for r in ROBOTS.values()]})
             return
         if path == "/":
             self.path = "/index.html"

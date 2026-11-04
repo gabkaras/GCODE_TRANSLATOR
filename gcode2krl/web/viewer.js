@@ -14,6 +14,35 @@ const FS = `
 precision mediump float;
 uniform vec4 uColor;
 void main() { gl_FragColor = uColor; }`;
+const MVS = `
+attribute vec3 aPos;
+attribute vec3 aNormal;
+uniform mat4 uMVP;
+uniform mat4 uModel;
+varying vec3 vN;
+varying vec3 vP;
+void main() {
+  vec4 wp = uModel * vec4(aPos, 1.0);
+  vP = wp.xyz;
+  vN = mat3(uModel) * aNormal;
+  gl_Position = uMVP * wp;
+}`;
+const MFS = `
+precision mediump float;
+uniform vec4 uColor;
+uniform vec3 uLight;
+uniform vec3 uEye;
+varying vec3 vN;
+varying vec3 vP;
+void main() {
+  vec3 n = normalize(vN);
+  float d = max(dot(n, normalize(uLight)), 0.0);
+  float d2 = max(dot(n, normalize(vec3(-0.3, -0.5, 0.8))), 0.0);
+  vec3 v = normalize(uEye - vP);
+  float spec = pow(max(dot(normalize(normalize(uLight) + v), n), 0.0), 24.0) * 0.25;
+  vec3 col = uColor.rgb * (0.28 + 0.6 * d + 0.25 * d2) + spec;
+  gl_FragColor = vec4(col, uColor.a);
+}`;
 
 const M4 = {
   identity() { return new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]); },
@@ -57,7 +86,7 @@ function hexToRgba(hex, alpha) {
 class PathViewer {
   constructor(canvas) {
     this.canvas = canvas;
-    const gl = canvas.getContext('webgl', { antialias: true, alpha: false, preserveDrawingBuffer: true });
+    const gl = canvas.getContext('webgl', { antialias: true, alpha: false, depth: true, preserveDrawingBuffer: true });
     if (!gl) throw new Error('WebGL is not available');
     this.gl = gl;
     this.prog = this._program(VS, FS);
@@ -65,6 +94,14 @@ class PathViewer {
     this.uMVP = gl.getUniformLocation(this.prog, 'uMVP');
     this.uColor = gl.getUniformLocation(this.prog, 'uColor');
     this.uPointSize = gl.getUniformLocation(this.prog, 'uPointSize');
+    this.mprog = this._program(MVS, MFS);
+    this.m = {
+      aPos: gl.getAttribLocation(this.mprog, 'aPos'), aNormal: gl.getAttribLocation(this.mprog, 'aNormal'),
+      uMVP: gl.getUniformLocation(this.mprog, 'uMVP'), uModel: gl.getUniformLocation(this.mprog, 'uModel'),
+      uColor: gl.getUniformLocation(this.mprog, 'uColor'), uLight: gl.getUniformLocation(this.mprog, 'uLight'),
+      uEye: gl.getUniformLocation(this.mprog, 'uEye'),
+    };
+    this.meshes = new Map();   // name -> {pbuf, nbuf, count, color, model, visible, group}
     this.layers = new Map();   // name -> {buf, count, color, visible, mode, order, size}
     this.bounds = { min: [0, 0, 0], max: [100, 100, 10] };
     this.cam = { target: [50, 50, 0], dist: 250, yaw: -0.6, pitch: 0.9, ortho: false, fov: Math.PI / 4 };
@@ -116,9 +153,39 @@ class PathViewer {
     L.size = opts.size || 6;
     if (opts.order !== undefined) L.order = opts.order;
     if (opts.visible !== undefined) L.visible = opts.visible;
+    if (opts.group) L.group = opts.group;
     this.invalidate();
   }
   setVisible(name, v) { const L = this.layers.get(name); if (L) { L.visible = v; this.invalidate(); } }
+
+  /** Shaded triangle mesh. geom: {positions: Float32Array, normals: Float32Array}; model: mat4 (column-major). */
+  setMesh(name, geom, color, model, opts) {
+    const gl = this.gl;
+    opts = opts || {};
+    let M = this.meshes.get(name);
+    if (!M) { M = { pbuf: gl.createBuffer(), nbuf: gl.createBuffer(), visible: true }; this.meshes.set(name, M); }
+    if (geom) {
+      gl.bindBuffer(gl.ARRAY_BUFFER, M.pbuf); gl.bufferData(gl.ARRAY_BUFFER, geom.positions, gl.STATIC_DRAW);
+      gl.bindBuffer(gl.ARRAY_BUFFER, M.nbuf); gl.bufferData(gl.ARRAY_BUFFER, geom.normals, gl.STATIC_DRAW);
+      M.count = geom.positions.length / 3;
+    }
+    if (color) M.color = typeof color === 'string' ? hexToRgba(color, opts.alpha) : color;
+    if (model) M.model = model;
+    if (opts.group) M.group = opts.group;
+    if (opts.visible !== undefined) M.visible = opts.visible;
+    this.invalidate();
+  }
+  setMeshTransform(name, model) { const M = this.meshes.get(name); if (M) { M.model = model; this.invalidate(); } }
+  setGroupVisible(group, v) {
+    for (const M of this.meshes.values()) if (M.group === group) M.visible = v;
+    for (const [n, L] of this.layers) if (L.group === group) L.visible = v;
+    this.invalidate();
+  }
+  removeGroup(group) {
+    for (const [n, M] of [...this.meshes]) if (M.group === group) { this.gl.deleteBuffer(M.pbuf); this.gl.deleteBuffer(M.nbuf); this.meshes.delete(n); }
+    for (const [n, L] of [...this.layers]) if (L.group === group) { this.gl.deleteBuffer(L.buf); this.layers.delete(n); }
+    this.invalidate();
+  }
   clearLayers() { for (const L of this.layers.values()) this.gl.deleteBuffer(L.buf); this.layers.clear(); this.invalidate(); }
 
   setBounds(min, max) {
@@ -195,8 +262,33 @@ class PathViewer {
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
     gl.enable(gl.BLEND);
     gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+    gl.enable(gl.DEPTH_TEST);
+    gl.depthFunc(gl.LEQUAL);
+    const mvp = this._mvp();
+    const meshes = [...this.meshes.values()].filter(M => M.visible && M.count > 0 && M.model);
+    if (meshes.length) {
+      gl.useProgram(this.mprog);
+      gl.uniformMatrix4fv(this.m.uMVP, false, mvp);
+      gl.uniform3fv(this.m.uLight, [0.4, -0.6, 1.0]);
+      gl.uniform3fv(this.m.uEye, this._eye());
+      gl.enable(gl.CULL_FACE);
+      gl.cullFace(gl.BACK);
+      for (const M of meshes) {
+        gl.bindBuffer(gl.ARRAY_BUFFER, M.pbuf);
+        gl.enableVertexAttribArray(this.m.aPos);
+        gl.vertexAttribPointer(this.m.aPos, 3, gl.FLOAT, false, 0, 0);
+        gl.bindBuffer(gl.ARRAY_BUFFER, M.nbuf);
+        gl.enableVertexAttribArray(this.m.aNormal);
+        gl.vertexAttribPointer(this.m.aNormal, 3, gl.FLOAT, false, 0, 0);
+        gl.uniformMatrix4fv(this.m.uModel, false, M.model);
+        gl.uniform4fv(this.m.uColor, M.color);
+        gl.drawArrays(gl.TRIANGLES, 0, M.count);
+      }
+      gl.disable(gl.CULL_FACE);
+      gl.disableVertexAttribArray(this.m.aNormal);
+    }
     gl.useProgram(this.prog);
-    gl.uniformMatrix4fv(this.uMVP, false, this._mvp());
+    gl.uniformMatrix4fv(this.uMVP, false, mvp);
     const layers = [...this.layers.values()].filter(L => L.visible && L.count > 0).sort((a, b) => a.order - b.order);
     for (const L of layers) {
       gl.bindBuffer(gl.ARRAY_BUFFER, L.buf);
@@ -265,3 +357,4 @@ class PathViewer {
 }
 
 window.PathViewer = PathViewer;
+window.M4 = M4;

@@ -57,6 +57,13 @@ def build_parser() -> argparse.ArgumentParser:
     k.add_argument("--dwell-ms", action="store_true", help="interpret G4 P as milliseconds instead of seconds")
     k.add_argument("--start", type=float, nargs=3, default=(0.0, 0.0, 0.0), metavar=("X", "Y", "Z"),
                    help="assumed tool position before the first G-code move (default 0 0 0)")
+    r = p.add_argument_group("robot check")
+    r.add_argument("--robot", default="none", help="robot model for the reach/axis-limit check, e.g. KR90R2700PRO (default none; 'list' prints models)")
+    r.add_argument("--base-frame", type=float, nargs=6, default=None, metavar=("X", "Y", "Z", "A", "B", "C"),
+                   help="$BASE in robot coordinates (also written literally into the program)")
+    r.add_argument("--tool-frame", type=float, nargs=6, default=None, metavar=("X", "Y", "Z", "A", "B", "C"),
+                   help="$TOOL in flange coordinates (also written literally into the program)")
+    r.add_argument("--robot-samples", type=int, default=3000, help="max path samples for the IK check (default 3000)")
     p.add_argument("-q", "--quiet", action="store_true", help="no report on stdout")
     return p
 
@@ -71,6 +78,11 @@ def derive_name(path: str) -> str:
 
 def run(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if args.robot.lower() == "list":
+        from .robot import ROBOTS
+        for r in ROBOTS.values():
+            print(f"{r.key:18s} {r.name}  reach {r.reach:g} mm, payload {r.payload:g} kg")
+        return 0
     with open(args.input, "r", encoding="utf-8", errors="replace") as fh:
         text = fh.read()
     parsed = parse_gcode(text, start=tuple(args.start), dwell_in_ms=args.dwell_ms)
@@ -87,8 +99,20 @@ def run(argv: list[str] | None = None) -> int:
                        block_approx=not args.no_block_approx, spindle_out=args.spindle_out,
                        coolant_out=args.coolant_out, spindle_anout=args.spindle_anout,
                        spindle_max_rpm=args.spindle_max_rpm, bco_ptp=not args.no_bco, advance=args.advance,
-                       source_name=os.path.basename(args.input), halt_on_tool_change=not args.no_halt_tool_change)
+                       source_name=os.path.basename(args.input), halt_on_tool_change=not args.no_halt_tool_change,
+                       base_frame=tuple(args.base_frame) if args.base_frame else None,
+                       tool_frame=tuple(args.tool_frame) if args.tool_frame else None)
     prog = write_krl(items, kopts, stats)
+    robot_rep = None
+    if args.robot.lower() != "none":
+        from .robot import ROBOTS, check_path, frame
+        from .translator import sample_items
+        robot = ROBOTS.get(args.robot.upper())
+        if robot is None:
+            print(f"unknown robot {args.robot}; use --robot list", file=sys.stderr)
+            return 2
+        pts = sample_items(items, max_samples=args.robot_samples)
+        robot_rep = check_path(robot, pts, kopts.abc, frame(args.base_frame or (0,) * 6), frame(args.tool_frame or (0,) * 6))
     os.makedirs(args.out_dir, exist_ok=True)
     for fname, content in prog.files.items():
         with open(os.path.join(args.out_dir, fname), "w", encoding="utf-8", newline="\r\n") as fh:
@@ -103,9 +127,16 @@ def run(argv: list[str] | None = None) -> int:
         ratio = (n_in / stats.motions_out) if stats.motions_out else 0.0
         print(f"compression {ratio:.1f}x, max deviation {stats.max_dev:.4f} mm (tolerance {args.tol:g})")
         print("files : " + ", ".join(os.path.join(args.out_dir, f) for f in prog.files))
+        if robot_rep is not None:
+            print(f"robot : {args.robot.upper()} - {robot_rep.n_samples} samples, {robot_rep.n_unreachable} out of reach, "
+                  f"{robot_rep.n_limit} beyond axis limits")
+            for k in range(6):
+                lo, hi = robot_rep.joint_min[k], robot_rep.joint_max[k]
+                if lo != float("inf"):
+                    print(f"        A{k + 1}: {lo:8.2f} .. {hi:8.2f} deg" + (f"  ({robot_rep.axis_violations[k]} violations)" if robot_rep.axis_violations[k] else ""))
         for w in stats.warnings:
             print("warning: " + w, file=sys.stderr)
-    return 0
+    return 0 if (robot_rep is None or (robot_rep.n_unreachable == 0 and robot_rep.n_limit == 0)) else 3
 
 
 def main() -> None:

@@ -42,6 +42,8 @@ class KrlOptions:
     advance: int = 3
     source_name: str = ""
     halt_on_tool_change: bool = True
+    base_frame: tuple[float, ...] | None = None  # literal $BASE {X Y Z A B C} instead of BASE_DATA[n]
+    tool_frame: tuple[float, ...] | None = None  # literal $TOOL {X Y Z A B C} instead of TOOL_DATA[n]
 
 
 @dataclass
@@ -265,10 +267,17 @@ class KrlWriter:
                          f" rapids={stats.rapids}  max_dev={stats.max_dev:.4f} mm")
         return lines
 
+    @staticmethod
+    def frame_literal(f) -> str:
+        x, y, z, a, b, c = f
+        return f"{{X {fnum(x)}, Y {fnum(y)}, Z {fnum(z)}, A {fnum(a)}, B {fnum(b)}, C {fnum(c)}}}"
+
     def settings_lines(self) -> list[str]:
+        tool = self.frame_literal(self.o.tool_frame) if self.o.tool_frame else f"TOOL_DATA[{self.o.tool}]"
+        base = self.frame_literal(self.o.base_frame) if self.o.base_frame else f"BASE_DATA[{self.o.base}]"
         return [
-            f"$TOOL = TOOL_DATA[{self.o.tool}]",
-            f"$BASE = BASE_DATA[{self.o.base}]",
+            f"$TOOL = {tool}",
+            f"$BASE = {base}",
             f"$VEL.CP = {fvel(self.o.rapid_vel)}",
             f"$ACC.CP = {fnum(self.o.acc, 2)}",
             f"$APO.CDIS = {fnum(self.o.cdis, 2)}",

@@ -17,7 +17,7 @@ G-code (.nc) ──parser──> ruchy ──dopasowanie łuków──> SLIN / S
 ```bash
 pip install -e .          # wymaga Python >= 3.10 i numpy
 pip install -e .[test]    # dodatkowo pytest
-pytest                    # 47 testów
+pytest                    # 60 testów
 ```
 
 ## GUI
@@ -53,8 +53,63 @@ API JSON serwera (do własnej automatyzacji):
 | metoda | ścieżka | opis |
 |---|---|---|
 | GET | `/api/examples`, `/api/example/<nazwa>` | przykładowe pliki |
-| POST | `/api/translate` | `{gcode, filename, options}` → statystyki, ostrzeżenia, pliki, geometria podglądu (float32 w base64) |
+| GET | `/api/robots` | modele robotów (wymiary, limity, prędkości) |
+| POST | `/api/translate` | `{gcode, filename, options}` → statystyki, ostrzeżenia, pliki, geometria podglądu (float32 w base64), raport robota ze śladem osi |
 | GET | `/api/zip/<token>` | zip z plikami ostatniego tłumaczenia |
+
+## Model robota (KR 90 R2700 pro i inne)
+
+![robot w podglądzie 3D](docs/gui_robot.png)
+
+Translator ma uproszczony model kinematyczny robotów KUKA
+(`gcode2krl/robot.py`, `web/robot.js`): kinematykę prostą i odwrotną w
+postaci zamkniętej (8 rozwiązań: bark przód/tył, łokieć góra/dół, nadgarstek
+z przewrotem i bez), wybór rozwiązania w limitach osi i najbliższego poprzedniej
+pozie, oraz sprawdzenie całej ścieżki.
+
+| klucz | model | zasięg | udźwig |
+|---|---|---|---|
+| `KR90R2700PRO` | KR 90 R2700 pro (QUANTEC), domyślny | 2696 mm | 90 kg |
+| `KR120R2700EXTRA` | KR 120 R2700 extra | 2701 mm | 120 kg |
+| `KR210R2700EXTRA` | KR 210 R2700 extra | 2701 mm | 210 kg |
+| `KR60R2033` | KR 60-3 | 2033 mm | 60 kg |
+| `KR16R1610` | KR 16-2 | 1611 mm | 16 kg |
+| `KR6R900` | KR 6 R900 sixx (AGILUS) | 901 mm | 6 kg |
+
+Parametry członów (wysokość osi A2, przesunięcie A1–A2, ramię, przedramię,
+offset nadgarstka 41 mm, odległość A5–kołnierz) i limity osi pochodzą z kart
+katalogowych KUKA i są **przybliżone**: wystarczają do sprawdzenia zasięgu,
+limitów i wizualizacji, nie do kalibracji. Pozycja HOME modelu KR 90
+(A1 0, A2 -90, A3 90, A4 0, A5 0, A6 0) daje kołnierz w X 1765, Z 1784,
+B 90, zgodnie z odczytem na rzeczywistym KR QUANTEC. Konwencje osi są takie
+jak w KSS (A1 dodatnie = zgodnie z ruchem wskazówek zegara patrząc z góry,
+A2 = 0 ramię poziome do przodu, A3 = 0 przedramię w osi ramienia).
+
+Co robi sprawdzenie (`--robot`, w GUI panel *Robot*):
+
+* `$BASE` podajesz w układzie robota (X Y Z A B C), `$TOOL` w układzie
+  kołnierza; orientacja narzędzia na ścieżce to `--abc`. Oba układy można
+  zapisać literalnie w programie zamiast `BASE_DATA[n]` / `TOOL_DATA[n]`.
+* Dla próbek wzdłuż wygenerowanej ścieżki (wierzchołki, punkty na łukach, do
+  3000 próbek) liczona jest kinematyka odwrotna. Raport: liczba próbek poza
+  zasięgiem, poza limitami osi (z podziałem na osie) oraz zakres min/max
+  każdej osi. CLI zwraca kod wyjścia 3, gdy coś jest poza zasięgiem.
+* W GUI robot jest rysowany w podglądzie 3D (bryły cieniowane w barwach KUKA,
+  kołnierz, narzędzie, układ TCP, okrąg zasięgu nadgarstka na posadzce i łuk
+  zasięgu w płaszczyźnie ramienia). Przycisk ▶ albo spacja animuje przejazd po
+  ścieżce, suwak przewija próbki, panel *Osie* pokazuje kąty (na czerwono
+  poza limitem) i pozwala ustawić robota ręcznie suwakami. Punkty ścieżki
+  poza zasięgiem są zaznaczone na czerwono. Przycisk *cela* (`C`) dopasowuje
+  widok do całego robota.
+
+```bash
+gcode2krl sciezka.nc -o out/ --robot KR90R2700PRO --base-frame 1200 0 500 0 0 0 --tool-frame 0 0 150 0 0 0
+gcode2krl x.nc --robot list
+```
+
+Dodanie własnego modelu: nowy wpis `RobotModel(...)` w `gcode2krl/robot.py`
+(wymiary, limity, prędkości, podpowiedzi wizualne) pojawia się automatycznie
+w CLI i w GUI.
 
 ## Wydajność
 
@@ -196,6 +251,8 @@ na kawałki, bo CAM zapisuje wierzchołki z błędem do ±0,0007 mm.
 
 * Orientacja narzędzia jest stała (3-osiowy G-code). Brak obsługi osi A/B/C
   z G-code i kinematyk zewnętrznych (E1–E6).
+* Model robota nie sprawdza kolizji ani osobliwości, a jego wymiary są
+  przybliżone; nie zastępuje testu na sterowniku.
 * `PTP $POS_ACT` jako ruch BCO na początku (`--no-bco` wyłącza); wejście na
   ścieżkę z pozycji HOME trzeba dopisać w programie nadrzędnym.
 * Limit liczby punktów w bloku `SPLINE` zależy od wersji KSS; domyślne 500
@@ -228,9 +285,10 @@ gcode2krl/
   simplify.py       Douglas-Peucker (przerzedzanie punktów SPL)
   translator.py     łańcuchy G1 -> elementy ruchu, helisy, pełne okręgi, grupowanie SPL
   krl_writer.py     generowanie .src/.dat, bloki SPLINE, LIN/CIRC, podział na podprogramy
+  robot.py          modele KUKA, kinematyka prosta/odwrotna, sprawdzenie zasięgu i limitów
   cli.py            interfejs wiersza poleceń (gcode2krl)
   server.py         lokalny serwer HTTP + API JSON (gcode2krl-gui)
-  web/              GUI: index.html, app.js, viewer.js (WebGL), style.css
+  web/              GUI: index.html, app.js, viewer.js (WebGL), robot.js (model robota), style.css
 examples/           fillet_rect.nc, circle_g1.nc, mixed.nc
 tests/              pytest (rdzeń, parser, writer, CLI, serwer)
 .github/workflows/  CI: pytest na Ubuntu i Windows, Python 3.10 i 3.12
