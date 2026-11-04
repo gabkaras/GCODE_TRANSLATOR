@@ -33,7 +33,8 @@ import numpy as np
 from . import __version__
 from .gcode_parser import parse_gcode
 from .krl_writer import KrlOptions, write_krl
-from .robot import DEFAULT_ROBOT, ROBOTS, check_path, forward, frame
+from .collision import OBSTACLE_HELP, obstacle_from_dict, parse_obstacles
+from .robot import DEFAULT_ROBOT, ROBOTS, check_path, check_path_collisions, forward, frame
 from .translator import ArcItem, EventItem, LineItem, RapidItem, SplItem, TranslateOptions, sample_items, translate
 
 WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
@@ -195,7 +196,7 @@ def preview_geometry(parsed, items, offset) -> dict:
 
 
 def robot_report(items, options: dict, abc) -> dict | None:
-    """IK along the output path: reach / axis-limit report and joint trace for animation."""
+    """IK along the output path: reach / axis-limit report, collisions and joint trace for animation."""
     key = str(options.get("robot", DEFAULT_ROBOT) or "none").upper()
     if key == "NONE":
         return None
@@ -204,19 +205,45 @@ def robot_report(items, options: dict, abc) -> dict | None:
         raise ValueError(f"unknown robot {key}; known: {', '.join(ROBOTS)}")
     base = frame(_ntuple(options, "base_frame", (0, 0, 0, 0, 0, 0), 6))
     tool = frame(_ntuple(options, "tool_frame", (0, 0, 0, 0, 0, 0), 6))
-    pts = sample_items(items, max_samples=_opt(options, "robot_samples", 3000, int))
+    step = _opt(options, "path_step", 5.0, float)
+    max_samples = _opt(options, "robot_samples", 20000, int)
+    pts = sample_items(items, max_samples=max_samples, step=step if step > 0 else None)
     rep = check_path(robot, pts, abc, base, tool)
     d = rep.to_dict()
     d["robot"] = robot.key
+    d["step"] = step
     d["points"] = _f32(pts.ravel())
     d["joints"] = _f32(np.nan_to_num(rep.joints, nan=0.0).ravel()) if rep.joints is not None else ""
     d["ok"] = base64.b64encode(np.asarray(rep.ok_mask, dtype=np.uint8).tobytes()).decode("ascii") if rep.ok_mask is not None else ""
     bad = pts[~rep.ok_mask] if rep.ok_mask is not None else np.zeros((0, 3))
     d["bad_points"] = _f32(bad.ravel())
-    # robot base placement expressed in BASE coordinates (for drawing): T_robot_in_base = inv(base)
     from .robot import inv_frame
     d["robot_in_base"] = inv_frame(base).ravel().tolist()
     d["tool"] = tool.ravel().tolist()
+    # ---- collisions
+    obs_src = options.get("obstacles", None)
+    if obs_src is None:
+        obs_dicts = parse_obstacles(OBSTACLE_HELP)
+    elif isinstance(obs_src, str):
+        obs_dicts = parse_obstacles(obs_src)
+    else:
+        obs_dicts = list(obs_src)
+    obstacles = [obstacle_from_dict(o, base) for o in obs_dicts]
+    margin = _opt(options, "margin", 10.0, float)
+    col, caps = check_path_collisions(robot, pts, abc, base, tool, rep, obstacles, margin=margin,
+                                      tool_radius=_opt(options, "tool_radius", 25.0, float),
+                                      cutter_len=_opt(options, "cutter_len", 20.0, float),
+                                      cutter_radius=_opt(options, "cutter_radius", 6.0, float),
+                                      max_refine=_opt(options, "max_refine", 6, int))
+    cd = col.to_dict()
+    cd["clearance"] = _f32(np.nan_to_num(col.clearance, nan=1e9).ravel())
+    cd["worst_pair"] = col.worst_pair
+    cd["collision_points"] = _f32(pts[col.collision_mask].ravel())
+    cd["margin_points"] = _f32(pts[col.margin_mask].ravel())
+    cd["obstacles"] = [o.to_dict() for o in obstacles]
+    cd["capsules"] = [{"name": c.name, "link": c.link, "a": c.a.tolist(), "b": c.b.tolist(), "radius": c.radius, "kind": c.kind} for c in caps]
+    cd["pair_names"] = [[p.a, p.b, p.kind] for p in col.pairs]
+    d["collision"] = cd
     return d
 
 
@@ -238,6 +265,15 @@ def run_translation(gcode: str, filename: str, options: dict) -> dict:
         if robot["n_limit"]:
             axes = ", ".join(f"A{k + 1}" for k, v in enumerate(robot["axis_violations"]) if v)
             stats.warnings.append(f"robot {robot['robot']}: {robot['n_limit']} samples exceed axis limits ({axes})")
+        c = robot["collision"]
+        if c["n_collision"]:
+            worst = c["pairs"][0]
+            stats.warnings.append(f"COLLISION: {c['n_collision']} samples collide (worst {worst['a']} vs {worst['b']}, "
+                                  f"{worst['min_clearance']:.1f} mm)")
+        elif c["n_margin"]:
+            stats.warnings.append(f"collision margin {c['margin']:g} mm violated at {c['n_margin']} samples (min clearance {c['min_clearance']:.1f} mm)")
+        for note in c["notes"]:
+            stats.warnings.append(f"robot: {note}")
     ic = stats.input_counts
     n_in = sum(ic.values())
     result = {
@@ -343,7 +379,8 @@ class Handler(SimpleHTTPRequestHandler):
             self.send_json({"version": __version__})
             return
         if path == "/api/robots":
-            self.send_json({"default": DEFAULT_ROBOT, "robots": [r.to_dict() for r in ROBOTS.values()]})
+            self.send_json({"default": DEFAULT_ROBOT, "robots": [r.to_dict() for r in ROBOTS.values()],
+                            "obstacle_help": OBSTACLE_HELP})
             return
         if path == "/":
             self.path = "/index.html"

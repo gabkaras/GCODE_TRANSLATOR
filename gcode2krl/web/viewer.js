@@ -265,7 +265,8 @@ class PathViewer {
     gl.enable(gl.DEPTH_TEST);
     gl.depthFunc(gl.LEQUAL);
     const mvp = this._mvp();
-    const meshes = [...this.meshes.values()].filter(M => M.visible && M.count > 0 && M.model);
+    const meshes = [...this.meshes.values()].filter(M => M.visible && M.count > 0 && M.model)
+      .sort((a, b) => (a.color[3] < 1 ? 1 : 0) - (b.color[3] < 1 ? 1 : 0));
     if (meshes.length) {
       gl.useProgram(this.mprog);
       gl.uniformMatrix4fv(this.m.uMVP, false, mvp);
@@ -274,6 +275,9 @@ class PathViewer {
       gl.enable(gl.CULL_FACE);
       gl.cullFace(gl.BACK);
       for (const M of meshes) {
+        const translucent = M.color[3] < 1;
+        gl.depthMask(!translucent);
+        if (translucent) gl.disable(gl.CULL_FACE); else gl.enable(gl.CULL_FACE);
         gl.bindBuffer(gl.ARRAY_BUFFER, M.pbuf);
         gl.enableVertexAttribArray(this.m.aPos);
         gl.vertexAttribPointer(this.m.aPos, 3, gl.FLOAT, false, 0, 0);
@@ -285,6 +289,7 @@ class PathViewer {
         gl.drawArrays(gl.TRIANGLES, 0, M.count);
       }
       gl.disable(gl.CULL_FACE);
+      gl.depthMask(true);
       gl.disableVertexAttribArray(this.m.aNormal);
     }
     gl.useProgram(this.prog);

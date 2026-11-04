@@ -69,8 +69,14 @@
       <label class="row"><span>$TOOL w ukł. kołnierza<br><small>X Y Z A B C</small></span><input type="text" id="opt_tool_frame" data-default="0 0 150 0 0 0" value="0 0 150 0 0 0"></label>
       <label class="row check"><input type="checkbox" id="opt_base_literal" data-default="false"><span>Zapisz $BASE literalnie w KRL</span></label>
       <label class="row check"><input type="checkbox" id="opt_tool_literal" data-default="false"><span>Zapisz $TOOL literalnie w KRL</span></label>
-      <label class="row"><span>Próbki IK (maks.)</span><input type="number" id="opt_robot_samples" data-default="3000" value="3000" min="10" step="500"></label>
-      <div class="row-note muted">Model uproszczony: wymiary i limity z kart katalogowych, do sprawdzenia zasięgu i wizualizacji, nie do kalibracji.</div>
+      <label class="row"><span>Krok próbkowania [mm]</span><input type="number" id="opt_path_step" data-default="5" value="5" min="0.5" step="1"></label>
+      <label class="row"><span>Próbki IK (maks.)</span><input type="number" id="opt_robot_samples" data-default="20000" value="20000" min="10" step="1000"></label>
+      <label class="row"><span>Wymagany prześwit [mm]</span><input type="number" id="opt_margin" data-default="10" value="10" min="0" step="1"></label>
+      <label class="row"><span>Promień uchwytu [mm]</span><input type="number" id="opt_tool_radius" data-default="25" value="25" min="1" step="1"></label>
+      <label class="row"><span>Ostrze: długość / promień</span><span class="pair2"><input type="number" id="opt_cutter_len" data-default="20" value="20" min="0" step="1"><input type="number" id="opt_cutter_radius" data-default="6" value="6" min="0.5" step="0.5"></span></label>
+      <label class="col"><span>Przeszkody <small>(jedna na linię, <code>#</code> komentarz)</small></span>
+        <textarea id="opt_obstacles" rows="7" spellcheck="false" data-default=""></textarea></label>
+      <div class="row-note muted">Model uproszczony: wymiary i limity z kart katalogowych, kapsuły kolizyjne zgodne z bryłami w podglądzie. Ostrze może wchodzić w przeszkody oznaczone <code>workpiece</code>, uchwyt nie.</div>
     </details>
 
     <details>
@@ -130,6 +136,7 @@
     <nav class="tabs">
       <button class="tab active" data-tab="view">Podgląd 3D</button>
       <button class="tab" data-tab="krl">KRL</button>
+      <button class="tab" data-tab="col">Kolizje <span id="tab-col-count"></span></button>
       <button class="tab" data-tab="warn">Ostrzeżenia <span id="tab-warn-count"></span></button>
     </nav>
 
@@ -145,6 +152,8 @@
         <span class="sep"></span>
         <label class="tb-check"><input type="checkbox" id="show-robot" checked> robot</label>
         <label class="tb-check"><input type="checkbox" id="show-reach" checked> zasięg</label>
+        <label class="tb-check"><input type="checkbox" id="show-obstacles" checked> przeszkody</label>
+        <label class="tb-check"><input type="checkbox" id="show-capsules"> kapsuły</label>
         <button id="btn-play" title="Spacja">▶</button>
         <input type="range" id="anim" min="0" max="0" value="0" step="0.01" class="anim">
         <select id="anim-speed" title="prędkość animacji"><option value="20">0.5×</option><option value="40" selected>1×</option><option value="100">2.5×</option><option value="300">8×</option></select>
@@ -161,6 +170,7 @@
           <div class="joints-title">Osie <span id="joints-mode" class="muted"></span></div>
           <div id="joint-rows"></div>
           <div id="tcp-pos" class="muted mono"></div>
+          <div id="clear-now" class="mono"></div>
         </div>
       </div>
     </section>
@@ -175,6 +185,18 @@
         <a id="btn-zip" class="button primary" href="#" download>pobierz .zip (.src + .dat)</a>
       </div>
       <pre id="krl" class="krl"></pre>
+    </section>
+
+    <section id="pane-col" class="pane">
+      <div class="col-summary" id="col-summary"></div>
+      <canvas id="col-chart" class="col-chart" height="140"></canvas>
+      <div class="col-tablewrap">
+        <table class="col-table" id="col-table">
+          <thead><tr><th>człon</th><th>przeszkoda / człon</th><th>rodzaj</th><th>min. prześwit</th><th>kolizje</th><th>&lt; prześwit</th><th>próbka</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <ul id="col-notes" class="warnings"></ul>
     </section>
 
     <section id="pane-warn" class="pane">

@@ -336,3 +336,43 @@ def check_path(robot: RobotModel, points: np.ndarray, abc: tuple[float, float, f
     rep.joints = joints
     rep.ok_mask = ok
     return rep
+
+
+def check_path_collisions(robot: RobotModel, points: np.ndarray, abc, base: np.ndarray, tool: np.ndarray,
+                          reach: "ReachReport", obstacles: list, margin: float = 10.0, tool_radius: float = 25.0,
+                          cutter_len: float = 20.0, cutter_radius: float = 6.0, max_refine: int = 6):
+    """Collision report along ``points`` using the IK results of ``reach`` (check_path)."""
+    from .collision import check_collisions, robot_capsules
+
+    caps = robot_capsules(robot, tool, tool_radius, cutter_len, cutter_radius)
+    r_path = abc_to_rot(*abc)
+    tool_inv = inv_frame(tool)
+    t_path = np.eye(4)
+    t_path[:3, :3] = r_path
+
+    def refine(i0: int, i1: int, qa, qb):
+        mid = (points[i0] + points[i1]) / 2.0
+        t_path[:3, 3] = mid
+        q, viol = inverse(robot, base @ t_path @ tool_inv, list(qa))
+        if q is None:
+            return None
+        return np.array(q, dtype=float)
+
+    # refinement positions are halved each round: keep a per-interval midpoint
+    # by closing over the interval end points
+    def refine_fn(i0, i1, qa, qb):
+        # the Cartesian midpoint between the *poses* qa/qb: both lie on the
+        # straight line between points[i0] and points[i1]; recover their
+        # parameter from the TCP positions
+        pa = forward(robot, qa)[-1] @ tool
+        pb = forward(robot, qb)[-1] @ tool
+        mid_robot = (pa[:3, 3] + pb[:3, 3]) / 2.0
+        flange = np.eye(4)
+        flange[:3, :3] = (base @ t_path)[:3, :3]
+        flange[:3, 3] = mid_robot
+        q, viol = inverse(robot, flange @ tool_inv, list(qa))
+        return None if q is None else np.array(q, dtype=float)
+
+    q = reach.joints if reach.joints is not None else np.full((len(points), 6), np.nan)
+    ok = reach.ok_mask if reach.ok_mask is not None else np.zeros(len(points), dtype=bool)
+    return check_collisions(robot, q, ok, caps, obstacles, margin, refine_fn=refine_fn, max_refine=max_refine), caps

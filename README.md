@@ -17,7 +17,7 @@ G-code (.nc) ──parser──> ruchy ──dopasowanie łuków──> SLIN / S
 ```bash
 pip install -e .          # wymaga Python >= 3.10 i numpy
 pip install -e .[test]    # dodatkowo pytest
-pytest                    # 60 testów
+pytest                    # 69 testów
 ```
 
 ## GUI
@@ -106,6 +106,71 @@ Co robi sprawdzenie (`--robot`, w GUI panel *Robot*):
 gcode2krl sciezka.nc -o out/ --robot KR90R2700PRO --base-frame 1200 0 500 0 0 0 --tool-frame 0 0 150 0 0 0
 gcode2krl x.nc --robot list
 ```
+
+### Kolizje
+
+![zakładka Kolizje](docs/gui_collisions.png)
+
+Sprawdzanie kolizji (`gcode2krl/collision.py`) jest liczone dla całej ścieżki
+i ma być wiarygodne, dlatego:
+
+* **Geometria dokładna, nie próbkowana.** Członki robota to kapsuły
+  (odcinek + promień) zgodne z bryłami w podglądzie: podstawa, kolumna,
+  ramię, przedramię, nadgarstek, obudowa A6, uchwyt narzędzia i ostrze.
+  Przeszkody to bryły wypukłe: pudełka (także obrócone), pionowe walce, kule i
+  podłoga. Odległość kapsuła–kapsuła to dokładna odległość odcinek–odcinek,
+  a kapsuła–przeszkoda to minimum wypukłej funkcji odległości wzdłuż odcinka
+  (złoty podział, zbieżność do 1e-6 mm). Wszystko jest zwektoryzowane w numpy
+  dla wszystkich próbek naraz.
+* **Ostrze a materiał.** Przeszkoda oznaczona `workpiece` jest ignorowana
+  tylko dla kapsuły ostrza (ostatnie `--cutter-len` mm narzędzia). Uchwyt,
+  obudowa A6 i reszta robota muszą od materiału trzymać prześwit, więc za
+  głębokie wejście albo za krótkie narzędzie wychodzi jako kolizja.
+* **Autokolizje.** Pary członków nieprzylegających (przedramię, nadgarstek,
+  A6, narzędzie i ostrze przeciw podstawie, kolumnie, ramieniu; narzędzie
+  przeciw przedramieniu).
+* **Ciągłość między próbkami.** Ścieżka jest próbkowana co `--path-step`
+  (domyślnie 5 mm, wszystkie wierzchołki, łuki i G0 włącznie). Między
+  sąsiednimi próbkami żaden punkt członu nie przemieszcza się dalej niż jego
+  końce kapsuły (plus zapas na obrót), więc przedział jest *udowodniony* jako
+  wolny, gdy `max(c_i, c_i+1) − δ_i ≥ prześwit`. Przedziały, których nie da się
+  udowodnić, są dzielone na pół (IK w punkcie środkowym) do 6 razy; to, co
+  nadal nie jest rozstrzygnięte, jest raportowane jako *nierozstrzygnięte*,
+  nigdy nie jest po cichu uznane za bezpieczne. Test z cienką ścianką między
+  dwiema próbkami odległymi o 200 mm pokazuje, że zagęszczanie ją znajduje.
+* **Skoki konfiguracji i osobliwości.** Zmiana o ponad 30° na A1–A3 między
+  sąsiednimi próbkami (łokieć/bark przeskoczył do innego rozwiązania, czego
+  sterownik w bloku SPLINE nie wykona) i próbki z |A5| < 5° (osobliwość
+  nadgarstka) są liczone i wypisywane w notatkach.
+* **Raport.** Liczba próbek w kolizji i poniżej wymaganego prześwitu
+  (`--margin`, domyślnie 10 mm), minimalny prześwit, tabela par (człon,
+  przeszkoda, min. prześwit, próbka), wykres prześwitu wzdłuż ścieżki, punkty
+  kolizji na czerwono w podglądzie, prześwit przy bieżącej pozie w panelu
+  osi. CLI zwraca kod 3 przy kolizji lub nierozstrzygniętych przedziałach.
+
+Przeszkody podaje się tekstem, jedna na linię, w układzie robota (`robot`)
+albo obrabianego detalu (`base`):
+
+```
+floor posadzka robot 0
+box stol robot 1200 0 240 1200 900 480          # środek x y z, wymiary sx sy sz [a b c]
+box material base 50 30 -10 140 100 20 workpiece
+cylinder slupek base 150 30 60 15 120            # środek, promień, wysokość
+sphere kamera robot 800 -600 1500 120
+```
+
+```bash
+gcode2krl sciezka.nc -o out/ --robot KR90R2700PRO --base-frame 1200 0 500 0 0 0 \
+    --tool-frame 0 0 150 0 0 0 --obstacles cela.txt --margin 10 --path-step 5
+gcode2krl x.nc --obstacles help     # opis formatu
+```
+
+Czego model **nie** obejmuje: kolizji z kablami i osprzętem na ramieniu,
+dokładnych kształtów obudów (kapsuły są nieco większe od brył, więc wynik jest
+po stronie bezpiecznej), ruchów PTP (sprawdzane są tylko ruchy po ścieżce) i
+dynamiki. Przy dokładnych wymiarach własnego robota i narzędzia popraw wpis
+`RobotModel` (pole `visual` steruje też promieniami kapsuł) i parametry
+`--tool-radius`, `--cutter-len`, `--cutter-radius`.
 
 Dodanie własnego modelu: nowy wpis `RobotModel(...)` w `gcode2krl/robot.py`
 (wymiary, limity, prędkości, podpowiedzi wizualne) pojawia się automatycznie
@@ -251,8 +316,8 @@ na kawałki, bo CAM zapisuje wierzchołki z błędem do ±0,0007 mm.
 
 * Orientacja narzędzia jest stała (3-osiowy G-code). Brak obsługi osi A/B/C
   z G-code i kinematyk zewnętrznych (E1–E6).
-* Model robota nie sprawdza kolizji ani osobliwości, a jego wymiary są
-  przybliżone; nie zastępuje testu na sterowniku.
+* Model robota ma przybliżone wymiary, kapsuły zamiast dokładnych obudów i
+  nie zna osprzętu na ramieniu; nie zastępuje testu na sterowniku.
 * `PTP $POS_ACT` jako ruch BCO na początku (`--no-bco` wyłącza); wejście na
   ścieżkę z pozycji HOME trzeba dopisać w programie nadrzędnym.
 * Limit liczby punktów w bloku `SPLINE` zależy od wersji KSS; domyślne 500
@@ -286,6 +351,7 @@ gcode2krl/
   translator.py     łańcuchy G1 -> elementy ruchu, helisy, pełne okręgi, grupowanie SPL
   krl_writer.py     generowanie .src/.dat, bloki SPLINE, LIN/CIRC, podział na podprogramy
   robot.py          modele KUKA, kinematyka prosta/odwrotna, sprawdzenie zasięgu i limitów
+  collision.py      kapsuły, przeszkody, dokładne odległości, sprawdzanie ciągłe, raport kolizji
   cli.py            interfejs wiersza poleceń (gcode2krl)
   server.py         lokalny serwer HTTP + API JSON (gcode2krl-gui)
   web/              GUI: index.html, app.js, viewer.js (WebGL), robot.js (model robota), style.css

@@ -13,6 +13,8 @@
     { key: 'spl', label: 'SPL', color: '#f59e0b', order: 8, on: true },
     { key: 'arc_points', label: 'punkty pomocnicze łuków', color: '#c084fc', order: 9, on: false, mode: 'points', size: 7 },
     { key: 'bad_points', label: 'poza zasięgiem / limitem osi', color: '#ff3b3b', order: 11, on: true, mode: 'points', size: 9 },
+    { key: 'collision_points', label: 'kolizja', color: '#ff1744', order: 12, on: true, mode: 'points', size: 11 },
+    { key: 'margin_points', label: 'poniżej prześwitu', color: '#fb923c', order: 11, on: true, mode: 'points', size: 8 },
   ];
 
   let viewer, robotView;
@@ -24,11 +26,15 @@
     for (const r of d.robots) { ROBOTS[r.key] = r; const o = document.createElement('option'); o.value = r.key; o.textContent = r.name; sel.appendChild(o); }
     if (!sel.value || sel.value === 'none') sel.value = d.default;
     sel.dataset.ready = '1';
+    const ta = $('#opt_obstacles');
+    ta.dataset.default = d.obstacle_help;
+    if (!ta.value) ta.value = d.obstacle_help;
     updateRobotModel();
   }).catch(() => {});
 
   // ----------------------------------------------------------------- options
-  const OPTION_IDS = ['robot','base_frame','tool_frame','base_literal','tool_literal','robot_samples','tol','max_radius','min_radius','min_arc_points','refine_shift','spl_max_segment','corner_angle',
+  const OPTION_IDS = ['robot','base_frame','tool_frame','base_literal','tool_literal','robot_samples','path_step','margin',
+    'tool_radius','cutter_len','cutter_radius','obstacles','tol','max_radius','min_radius','min_arc_points','refine_shift','spl_max_segment','corner_angle',
     'default_feed','offset','fit_arcs','use_spl','name','mode','tool','base','abc','rapid_vel','max_vel','acc','cdis',
     'round_corners','max_block_segments','max_motions_per_file','block_approx','spindle_out','coolant_out','spindle_anout',
     'spindle_max_rpm','bco','advance','halt_tool_change','dwell_ms','start'];
@@ -110,7 +116,7 @@
     clearTimeout(autoTimer);
     autoTimer = setTimeout(translate, 350);
   }
-  $$('#options input, #options select').forEach(el => {
+  $$('#options input, #options select, #options textarea').forEach(el => {
     el.addEventListener('change', () => { if (el.id === 'opt_name') el.dataset.auto = '0'; saveOptions(); scheduleAuto(); });
     el.addEventListener('input', () => { if (el.type === 'range' || el.type === 'number') { saveOptions(); scheduleAuto(); } });
   });
@@ -208,7 +214,10 @@
     if (viewer) {
       const p = data.preview;
       for (const L of LAYERS) {
-        const src = L.key === 'bad_points' ? (data.robot ? data.robot.bad_points : '') : p[L.key];
+        const col = data.robot && data.robot.collision;
+        const src = L.key === 'bad_points' ? (data.robot ? data.robot.bad_points : '')
+          : L.key === 'collision_points' ? (col ? col.collision_points : '')
+          : L.key === 'margin_points' ? (col ? col.margin_points : '') : p[L.key];
         const arr = decode(src);
         viewer.setLayer(L.key, arr, L.color, { alpha: L.alpha, order: L.order, mode: L.mode, size: L.size, visible: $('#layer-' + L.key).checked });
       }
@@ -319,12 +328,81 @@
     lim.textContent = rep.n_limit ? `${rep.n_limit} próbek poza limitami osi` : 'limity osi OK';
     lim.className = 'rb-item ' + (rep.n_limit ? 'bad' : 'ok');
     $('#robot-axes').innerHTML = rep.joint_min.map((lo, i) => lo === null ? '' : `<span class="${rep.axis_violations[i] ? 'viol' : ''}">A${i+1} <b>${lo.toFixed(0)}…${rep.joint_max[i].toFixed(0)}°</b></span>`).join('');
+    showCollisions(rep.collision, rep);
     // animation data
     anim.joints = decode(rep.joints); anim.ok = Uint8Array.from(atob(rep.ok), c => c.charCodeAt(0)); anim.n = anim.joints.length / 6; anim.pos = 0;
     $('#anim').max = Math.max(0, anim.n - 1); $('#anim').value = 0;
     updateRobotModel();
     if (anim.n) poseAt(0);
   }
+  let colData = null;
+  function showCollisions(col, rep) {
+    const badge = $('#tab-col-count');
+    if (!col || !robotView) { colData = null; badge.textContent = ''; $('#col-summary').innerHTML = ''; $('#col-table tbody').innerHTML = ''; return; }
+    colData = { clearance: decode(col.clearance), margin: col.margin, worst: col.worst_pair, pairs: col.pairs };
+    badge.textContent = col.n_collision ? `(${col.n_collision}!)` : (col.n_margin ? `(${col.n_margin})` : '');
+    badge.style.color = col.n_collision ? 'var(--bad)' : (col.n_margin ? 'var(--warn)' : '');
+    const cls = col.n_collision ? 'bad' : (col.n_margin || col.unresolved ? 'warn' : 'ok');
+    const minc = col.min_clearance === null ? '–' : col.min_clearance.toFixed(1) + ' mm';
+    $('#col-summary').innerHTML = `
+      <span class="${cls}"><b>${col.n_collision ? col.n_collision + ' kolizji' : 'brak kolizji'}</b></span>
+      <span class="${col.n_margin ? 'warn' : ''}"><b>${col.n_margin}</b> próbek poniżej prześwitu ${col.margin} mm</span>
+      <span>min. prześwit <b class="${cls}">${minc}</b></span>
+      <span class="muted">${col.n_samples} próbek co ${rep.step} mm · ${col.refined_samples} zagęszczeń IK · <b class="${col.unresolved ? 'warn' : ''}">${col.unresolved}</b> nierozstrzygniętych</span>
+      <span class="${col.config_jumps ? 'warn' : 'muted'}">skoki konfiguracji: <b>${col.config_jumps}</b></span>
+      <span class="${col.singular ? 'warn' : 'muted'}">osobliwość nadgarstka: <b>${col.singular}</b></span>`;
+    const tb = $('#col-table tbody');
+    tb.innerHTML = '';
+    for (const p of col.pairs) {
+      const tr = document.createElement('tr');
+      tr.className = p.min_clearance <= 0 ? 'bad' : (p.min_clearance < col.margin ? 'warn' : '');
+      tr.innerHTML = `<td>${p.a}</td><td>${p.b}</td><td>${p.kind === 'self' ? 'autokolizja' : 'przeszkoda'}</td><td class="num">${p.min_clearance.toFixed(1)} mm</td><td class="num">${p.n_collision}</td><td class="num">${p.n_margin}</td><td class="num">${p.argmin + 1}</td>`;
+      tr.addEventListener('click', () => { stopAnim(); anim.pos = p.argmin; poseAt(anim.pos); $$('.tab')[0].click(); });
+      tb.appendChild(tr);
+    }
+    const notes = $('#col-notes');
+    notes.innerHTML = '';
+    for (const n of col.notes) { const li = document.createElement('li'); li.textContent = n; notes.appendChild(li); }
+    robotView.setObstacles(col.obstacles);
+    robotView.setCapsules(col.capsules);
+    drawClearanceChart();
+  }
+  function drawClearanceChart() {
+    const cv = $('#col-chart'); if (!colData) return;
+    const dpr = window.devicePixelRatio || 1;
+    const W = cv.clientWidth || 800, H = 140;
+    cv.width = W * dpr; cv.height = H * dpr;
+    const g = cv.getContext('2d'); g.scale(dpr, dpr);
+    g.clearRect(0, 0, W, H);
+    const c = colData.clearance, n = c.length; if (!n) return;
+    let maxv = 0; for (let i = 0; i < n; i++) if (c[i] < 1e8) maxv = Math.max(maxv, c[i]);
+    maxv = Math.max(maxv, colData.margin * 2, 1);
+    let minv = 0; for (let i = 0; i < n; i++) minv = Math.min(minv, c[i]);
+    const top = 10, bottom = H - 18, left = 44, right = W - 10;
+    const y = v => bottom - (Math.min(v, maxv) - minv) / (maxv - minv) * (bottom - top);
+    const x = i => left + (right - left) * i / Math.max(1, n - 1);
+    g.strokeStyle = '#263044'; g.lineWidth = 1;
+    g.beginPath(); g.moveTo(left, y(0)); g.lineTo(right, y(0)); g.stroke();
+    g.strokeStyle = '#f59e0b'; g.setLineDash([4, 4]); g.beginPath(); g.moveTo(left, y(colData.margin)); g.lineTo(right, y(colData.margin)); g.stroke(); g.setLineDash([]);
+    g.fillStyle = '#8b95a7'; g.font = '11px system-ui'; g.textAlign = 'right';
+    g.fillText('0', left - 6, y(0) + 4); g.fillText(colData.margin + '', left - 6, y(colData.margin) + 4); g.fillText(maxv.toFixed(0), left - 6, top + 4);
+    g.textAlign = 'left'; g.fillText('prześwit [mm] wzdłuż ścieżki', left, H - 5);
+    g.lineWidth = 1.5; g.strokeStyle = '#34d399'; g.beginPath();
+    let started = false;
+    for (let i = 0; i < n; i++) { if (c[i] > 1e8) { started = false; continue; } const px = x(i), py = y(c[i]); if (!started) { g.moveTo(px, py); started = true; } else g.lineTo(px, py); }
+    g.stroke();
+    g.fillStyle = 'rgba(255,23,68,.9)';
+    for (let i = 0; i < n; i++) if (c[i] <= 0) g.fillRect(x(i) - 1, top, 2, bottom - top);
+    g.fillStyle = 'rgba(251,146,60,.5)';
+    for (let i = 0; i < n; i++) if (c[i] > 0 && c[i] < colData.margin) g.fillRect(x(i) - 1, y(colData.margin), 2, y(c[i]) - y(colData.margin));
+    if (anim.n) { g.strokeStyle = '#e7eaf0'; g.beginPath(); g.moveTo(x(anim.pos), top); g.lineTo(x(anim.pos), bottom); g.stroke(); }
+  }
+  window.addEventListener('resize', drawClearanceChart);
+  $('#col-chart').addEventListener('click', e => {
+    if (!colData || !anim.n) return;
+    const r = e.target.getBoundingClientRect(); const f = (e.clientX - r.left - 44) / (r.width - 54);
+    stopAnim(); anim.pos = Math.max(0, Math.min(anim.n - 1, Math.round(f * (anim.n - 1)))); poseAt(anim.pos); drawClearanceChart();
+  });
   function poseAt(x) {
     if (!anim.joints || !anim.n) return;
     x = Math.max(0, Math.min(anim.n - 1, x));
@@ -338,6 +416,17 @@
     }
     setPose(q, `ścieżka ${Math.round(x) + 1} / ${anim.n}` + (!ok0 ? ' · poza zasięgiem' : ''));
     $('#anim').value = x;
+    const cn = $('#clear-now');
+    if (colData) {
+      const c = colData.clearance[i];
+      if (c > 1e8) { cn.textContent = ''; }
+      else {
+        const w = colData.worst[i] >= 0 && colData.pairs.length ? '' : '';
+        cn.textContent = `prześwit ${c.toFixed(1)} mm` + (c <= 0 ? ' · KOLIZJA' : (c < colData.margin ? ' · poniżej prześwitu' : ''));
+        cn.className = 'mono ' + (c <= 0 ? 'bad' : (c < colData.margin ? 'warn' : 'ok'));
+      }
+      if (document.querySelector('#pane-col').classList.contains('active')) drawClearanceChart();
+    } else cn.textContent = '';
   }
   function tick(ts) {
     if (!anim.playing) return;
@@ -353,6 +442,8 @@
   $('#anim').addEventListener('input', e => { stopAnim(); anim.pos = Number(e.target.value); poseAt(anim.pos); });
   $('#show-robot').addEventListener('change', e => robotView && robotView.setVisible(e.target.checked));
   $('#show-reach').addEventListener('change', e => robotView && robotView.setReachVisible(e.target.checked));
+  $('#show-obstacles').addEventListener('change', e => robotView && robotView.setObstaclesVisible(e.target.checked));
+  $('#show-capsules').addEventListener('change', e => robotView && robotView.setCapsulesVisible(e.target.checked));
   $('#opt_robot').addEventListener('change', updateRobotModel);
   $('#opt_base_frame').addEventListener('input', applyFrames);
   $('#opt_tool_frame').addEventListener('input', applyFrames);
@@ -366,6 +457,7 @@
     $$('.tab').forEach(x => x.classList.toggle('active', x === t));
     $$('.pane').forEach(p => p.classList.toggle('active', p.id === 'pane-' + t.dataset.tab));
     if (t.dataset.tab === 'view' && viewer) viewer.invalidate();
+    if (t.dataset.tab === 'col') drawClearanceChart();
   }));
 
   // ----------------------------------------------------------------- viewer UI

@@ -135,7 +135,7 @@
       this.reachArc = arc;
     }
 
-    setBasePlacement(robotInBase) { this.robotInBase = robotInBase; if (this.joints) this.setPose(this.joints); }
+    setBasePlacement(robotInBase) { this.robotInBase = robotInBase; if (this.joints) this.setPose(this.joints); if (this.obstacles) this.setObstacles(this.obstacles); }
 
     setPose(q) {
       if (!this.model) return;
@@ -170,11 +170,79 @@
       const ax = [], cols = ['#e5484d', '#46a758', '#3e8cff'];
       [[L,0,0],[0,L,0],[0,0,L]].forEach((e, i) => { const p = apply(tcpM, e); v.setLayer('rb_tcp' + i, new Float32Array([...o, ...p]), cols[i], { order: 12, group: 'robot' }); });
       this.tcp = o;
+      if (this.capsulesVisible) this.drawCapsules();
       v.setGroupVisible('robot', this.visible);
       if (!this.reachVisible) { v.setVisible('rb_reach', false); v.setVisible('rb_reach_arc', false); }
     }
     setVisible(vis) { this.visible = vis; this.viewer.setGroupVisible('robot', vis); if (vis && !this.reachVisible) { this.viewer.setVisible('rb_reach', false); this.viewer.setVisible('rb_reach_arc', false); } }
     setReachVisible(vis) { this.reachVisible = vis; this.viewer.setVisible('rb_reach', vis && this.visible); this.viewer.setVisible('rb_reach_arc', vis && this.visible); }
+  }
+  /** obstacles: list from the server (robot frame); drawn in BASE coords via robotInBase */
+  RobotView.prototype.setObstacles = function (obs) {
+    const v = this.viewer;
+    v.removeGroup('obstacles');
+    this.obstacles = obs || [];
+    (obs || []).forEach((o, i) => {
+      let geom, model;
+      const R = o.rot; // row-major 3x3
+      const base = new Float32Array([R[0],R[3],R[6],0, R[1],R[4],R[7],0, R[2],R[5],R[8],0, o.center[0],o.center[1],o.center[2],1]);
+      if (o.kind === 'box') geom = box(o.half[0]*2, o.half[1]*2, o.half[2]*2, 0, 0, 0);
+      else if (o.kind === 'cylinder') geom = cylinder(o.radius, 2, -o.height/2, o.height/2, 0, 0, 0, 40);
+      else if (o.kind === 'sphere') geom = sphere(o.radius);
+      else if (o.kind === 'floor') geom = box(8000, 8000, 2, 0, 0, -1);
+      else return;
+      const color = o.workpiece ? '#60a5fa' : (o.kind === 'floor' ? '#4b5563' : '#a3a9b7');
+      v.setMesh('ob_' + i, geom, color, mul(this.robotInBase, base), { group: 'obstacles', alpha: o.kind === 'floor' ? 0.25 : 0.42 });
+      // outline edges for boxes
+      if (o.kind === 'box') {
+        const h = o.half, E = [];
+        const c = [[-1,-1,-1],[1,-1,-1],[1,1,-1],[-1,1,-1],[-1,-1,1],[1,-1,1],[1,1,1],[-1,1,1]].map(s => [s[0]*h[0], s[1]*h[1], s[2]*h[2]]);
+        const edges = [[0,1],[1,2],[2,3],[3,0],[4,5],[5,6],[6,7],[7,4],[0,4],[1,5],[2,6],[3,7]];
+        const M = mul(this.robotInBase, base);
+        for (const [a, b] of edges) E.push(...apply(M, c[a]), ...apply(M, c[b]));
+        v.setLayer('obe_' + i, new Float32Array(E), o.workpiece ? '#93c5fd' : '#d1d5db', { alpha: 0.8, order: 4, group: 'obstacles' });
+      }
+    });
+    v.setGroupVisible('obstacles', this.obstaclesVisible !== false);
+  };
+  RobotView.prototype.setObstaclesVisible = function (vis) { this.obstaclesVisible = vis; this.viewer.setGroupVisible('obstacles', vis); };
+  /** capsules: list {name, link, a, b, radius}; drawn as axis + end circles in the current pose */
+  RobotView.prototype.setCapsules = function (caps) { this.capsules = caps || []; this.drawCapsules(); };
+  RobotView.prototype.drawCapsules = function () {
+    const v = this.viewer;
+    v.removeGroup('capsules');
+    if (!this.capsules || !this.capsules.length || !this.model || !this.joints || !this.capsulesVisible) return;
+    const k = forward(this.model, this.joints), B = this.robotInBase;
+    const linkM = [B, mul(B, RZ(-this.joints[0]*DEG)), mul(B, k.upper), mul(B, k.fore), mul(B, k.w4), mul(B, k.w5), mul(B, k.frames[4])];
+    const L = [];
+    for (const c of this.capsules) {
+      const M = linkM[c.link]; if (!M) continue;
+      const a = apply(M, c.a), b = apply(M, c.b);
+      L.push(...a, ...b);
+      // three circles at each end + silhouette lines
+      const d = norm([b[0]-a[0], b[1]-a[1], b[2]-a[2]]);
+      const x0 = Math.abs(d[2]) < 0.9 ? [0,0,1] : [1,0,0];
+      const u = norm(cross(d, x0)), w = cross(d, u);
+      for (const p of [a, b]) for (let i = 0; i < 24; i++) {
+        const t0 = 2*Math.PI*i/24, t1 = 2*Math.PI*(i+1)/24;
+        L.push(p[0] + c.radius*(Math.cos(t0)*u[0] + Math.sin(t0)*w[0]), p[1] + c.radius*(Math.cos(t0)*u[1] + Math.sin(t0)*w[1]), p[2] + c.radius*(Math.cos(t0)*u[2] + Math.sin(t0)*w[2]));
+        L.push(p[0] + c.radius*(Math.cos(t1)*u[0] + Math.sin(t1)*w[0]), p[1] + c.radius*(Math.cos(t1)*u[1] + Math.sin(t1)*w[1]), p[2] + c.radius*(Math.cos(t1)*u[2] + Math.sin(t1)*w[2]));
+      }
+      for (const e of [u, w, u.map(x => -x), w.map(x => -x)]) L.push(a[0]+c.radius*e[0], a[1]+c.radius*e[1], a[2]+c.radius*e[2], b[0]+c.radius*e[0], b[1]+c.radius*e[1], b[2]+c.radius*e[2]);
+    }
+    v.setLayer('caps', new Float32Array(L), '#facc15', { alpha: 0.7, order: 13, group: 'capsules' });
+  };
+  RobotView.prototype.setCapsulesVisible = function (vis) { this.capsulesVisible = vis; this.drawCapsules(); };
+  function sphere(r, seg) {
+    seg = seg || 20;
+    const P = [], N = [];
+    for (let i = 0; i < seg; i++) for (let j = 0; j < seg * 2; j++) {
+      const t0 = Math.PI*i/seg, t1 = Math.PI*(i+1)/seg, p0 = 2*Math.PI*j/(seg*2), p1 = 2*Math.PI*(j+1)/(seg*2);
+      const pt = (t, p) => [Math.sin(t)*Math.cos(p), Math.sin(t)*Math.sin(p), Math.cos(t)];
+      const q = [pt(t0,p0), pt(t1,p0), pt(t1,p1), pt(t0,p1)];
+      for (const i2 of [0,1,2,0,2,3]) { P.push(...q[i2].map(x => x*r)); N.push(...q[i2]); }
+    }
+    return { positions: new Float32Array(P), normals: new Float32Array(N) };
   }
   function cross(a, b) { return [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]]; }
   function norm(a) { const l = Math.hypot(a[0], a[1], a[2]) || 1; return [a[0]/l, a[1]/l, a[2]/l]; }

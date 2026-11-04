@@ -315,20 +315,38 @@ def translate(parsed: ParseResult, opts: TranslateOptions | None = None) -> tupl
     return Translator(opts or TranslateOptions()).translate(parsed)
 
 
-def sample_items(items: list, arc_points: int = 8, max_samples: int = 3000) -> np.ndarray:
-    """Representative TCP positions along the output path (for reach checks)."""
+def sample_items(items: list, arc_points: int = 8, max_samples: int = 3000, step: float | None = None) -> np.ndarray:
+    """Representative TCP positions along the output path (for reach / collision checks).
+
+    With ``step`` every line, arc and SPL segment is subdivided so that
+    consecutive samples are at most ``step`` mm apart (rapids included).
+    """
     from .geometry import sample_arc
 
     pts: list[np.ndarray] = []
+
+    def seg(a: np.ndarray, b: np.ndarray) -> None:
+        if step is None or step <= 0:
+            pts.append(b)
+            return
+        n = max(1, int(math.ceil(float(np.linalg.norm(b - a)) / step)))
+        for k in range(1, n + 1):
+            pts.append(a + (b - a) * (k / n))
+
     for it in items:
         if isinstance(it, RapidItem):
-            pts.append(it.target)
+            seg(it.start, it.target)
         elif isinstance(it, LineItem):
-            pts.append(it.end)
+            seg(it.start, it.end)
         elif isinstance(it, ArcItem):
-            pts.extend(sample_arc(it.fit, 1e9, min_points=arc_points)[1:])
+            if step is None or step <= 0:
+                pts.extend(sample_arc(it.fit, 1e9, min_points=arc_points)[1:])
+            else:
+                n = max(arc_points, int(math.ceil(it.fit.radius * it.fit.sweep / step)) + 1)
+                pts.extend(sample_arc(it.fit, 1e9, min_points=n)[1:])
         elif isinstance(it, SplItem):
-            pts.extend(it.points[1:])
+            for a, b in zip(it.points[:-1], it.points[1:]):
+                seg(a, b)
     if not pts:
         return np.zeros((0, 3))
     arr = np.array(pts)

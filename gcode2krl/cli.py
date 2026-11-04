@@ -63,7 +63,14 @@ def build_parser() -> argparse.ArgumentParser:
                    help="$BASE in robot coordinates (also written literally into the program)")
     r.add_argument("--tool-frame", type=float, nargs=6, default=None, metavar=("X", "Y", "Z", "A", "B", "C"),
                    help="$TOOL in flange coordinates (also written literally into the program)")
-    r.add_argument("--robot-samples", type=int, default=3000, help="max path samples for the IK check (default 3000)")
+    r.add_argument("--robot-samples", type=int, default=20000, help="max path samples for the IK check (default 20000)")
+    r.add_argument("--path-step", type=float, default=5.0, help="max distance between path samples, mm (default 5)")
+    r.add_argument("--obstacles", default=None, help="obstacle file (one per line: box/cylinder/sphere/floor ...; 'help' prints the format)")
+    r.add_argument("--margin", type=float, default=10.0, help="required clearance, mm (default 10)")
+    r.add_argument("--tool-radius", type=float, default=25.0, help="tool holder radius for collisions, mm (default 25)")
+    r.add_argument("--cutter-len", type=float, default=20.0, help="cutting length at the tool tip, mm (default 20)")
+    r.add_argument("--cutter-radius", type=float, default=6.0, help="cutter radius, mm (default 6)")
+    r.add_argument("--no-collisions", action="store_true", help="only reach/axis limits, no collision check")
     p.add_argument("-q", "--quiet", action="store_true", help="no report on stdout")
     return p
 
@@ -82,6 +89,10 @@ def run(argv: list[str] | None = None) -> int:
         from .robot import ROBOTS
         for r in ROBOTS.values():
             print(f"{r.key:18s} {r.name}  reach {r.reach:g} mm, payload {r.payload:g} kg")
+        return 0
+    if args.obstacles == "help":
+        from .collision import OBSTACLE_HELP
+        print(OBSTACLE_HELP)
         return 0
     with open(args.input, "r", encoding="utf-8", errors="replace") as fh:
         text = fh.read()
@@ -111,8 +122,18 @@ def run(argv: list[str] | None = None) -> int:
         if robot is None:
             print(f"unknown robot {args.robot}; use --robot list", file=sys.stderr)
             return 2
-        pts = sample_items(items, max_samples=args.robot_samples)
-        robot_rep = check_path(robot, pts, kopts.abc, frame(args.base_frame or (0,) * 6), frame(args.tool_frame or (0,) * 6))
+        pts = sample_items(items, max_samples=args.robot_samples, step=args.path_step if args.path_step > 0 else None)
+        base_t = frame(args.base_frame or (0,) * 6)
+        tool_t = frame(args.tool_frame or (0,) * 6)
+        robot_rep = check_path(robot, pts, kopts.abc, base_t, tool_t)
+        col_rep = None
+        if not args.no_collisions:
+            from .collision import OBSTACLE_HELP, obstacle_from_dict, parse_obstacles
+            from .robot import check_path_collisions
+            text = open(args.obstacles, encoding="utf-8").read() if args.obstacles else OBSTACLE_HELP
+            obstacles = [obstacle_from_dict(o, base_t) for o in parse_obstacles(text)]
+            col_rep, _ = check_path_collisions(robot, pts, kopts.abc, base_t, tool_t, robot_rep, obstacles, margin=args.margin,
+                                               tool_radius=args.tool_radius, cutter_len=args.cutter_len, cutter_radius=args.cutter_radius)
     os.makedirs(args.out_dir, exist_ok=True)
     for fname, content in prog.files.items():
         with open(os.path.join(args.out_dir, fname), "w", encoding="utf-8", newline="\r\n") as fh:
@@ -134,9 +155,19 @@ def run(argv: list[str] | None = None) -> int:
                 lo, hi = robot_rep.joint_min[k], robot_rep.joint_max[k]
                 if lo != float("inf"):
                     print(f"        A{k + 1}: {lo:8.2f} .. {hi:8.2f} deg" + (f"  ({robot_rep.axis_violations[k]} violations)" if robot_rep.axis_violations[k] else ""))
+            if col_rep is not None:
+                print(f"collis: margin {col_rep.margin:g} mm, {col_rep.n_collision} colliding samples, {col_rep.n_margin} below margin, "
+                      f"min clearance {col_rep.min_clearance:.1f} mm, {col_rep.refined_samples} refinement IK calls, {col_rep.unresolved} unresolved")
+                for pr in col_rep.pairs[:8]:
+                    flag = "COLLISION" if pr.min_clearance <= 0 else ("margin" if pr.min_clearance < col_rep.margin else "ok")
+                    print(f"        {pr.a:12s} vs {pr.b:14s} min {pr.min_clearance:8.1f} mm  @sample {pr.argmin:6d}  {flag}")
+                for note in col_rep.notes:
+                    print("        note: " + note)
         for w in stats.warnings:
             print("warning: " + w, file=sys.stderr)
-    return 0 if (robot_rep is None or (robot_rep.n_unreachable == 0 and robot_rep.n_limit == 0)) else 3
+    bad_robot = robot_rep is not None and (robot_rep.n_unreachable or robot_rep.n_limit)
+    bad_col = args.robot.lower() != "none" and not args.no_collisions and col_rep is not None and (col_rep.n_collision or col_rep.unresolved)
+    return 3 if (bad_robot or bad_col) else 0
 
 
 def main() -> None:

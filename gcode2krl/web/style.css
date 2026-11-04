@@ -113,3 +113,20 @@ button.ghost { background: transparent; }
 .jrow input[type=range] { width: 100%; accent-color: #f0862a; height: 14px; }
 .jrow .jv { font-family: var(--mono); text-align: right; font-variant-numeric: tabular-nums; }
 .jrow .jv.viol { color: var(--bad); }
+
+/* collisions */
+.row .pair2 { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.col { display: flex; flex-direction: column; gap: 4px; padding: 4px 12px; font-size: 12.5px; }
+.col > span { color: var(--muted); } .col small { font-size: 10.5px; } .col code, .row-note code { font-family: var(--mono); color: var(--text); }
+#options textarea { width: 100%; background: #0b0e13; color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 6px 7px; font: 11.5px/1.4 var(--mono); resize: vertical; }
+.col-summary { padding: 10px 16px; display: flex; gap: 18px; flex-wrap: wrap; font-size: 13px; }
+.col-summary b { font-size: 16px; } .col-summary .ok { color: var(--ok); } .col-summary .bad { color: var(--bad); } .col-summary .warn { color: var(--warn); }
+.col-chart { width: calc(100% - 32px); margin: 0 16px 10px; height: 140px; background: #0b0e13; border: 1px solid var(--line); border-radius: 10px; }
+.col-tablewrap { flex: 1; min-height: 0; overflow: auto; margin: 0 16px 10px; border: 1px solid var(--line); border-radius: 10px; }
+.col-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.col-table th, .col-table td { padding: 6px 10px; text-align: left; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.col-table th { position: sticky; top: 0; background: var(--panel); color: var(--muted); font-weight: 600; font-size: 11.5px; text-transform: uppercase; }
+.col-table td.num { font-family: var(--mono); text-align: right; }
+.col-table tr.bad td { color: var(--bad); } .col-table tr.warn td { color: var(--warn); }
+.col-table tbody tr { cursor: pointer; } .col-table tbody tr:hover td { background: #1b2130; }
+#clear-now { margin-top: 4px; } #clear-now.bad { color: var(--bad); } #clear-now.warn { color: var(--warn); } #clear-now.ok { color: var(--ok); }
