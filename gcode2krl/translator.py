@@ -1,0 +1,315 @@
+"""Pipeline: parsed G-code commands -> KRL motion items."""
+from __future__ import annotations
+
+import math
+from dataclasses import dataclass, field
+
+import numpy as np
+
+from .arc_fitter import ArcElement, FitParams, LineElement, dedupe_points, segment_polyline
+from .gcode_parser import (ArcMove, Comment, Coolant, Dwell, LinearMove, ParseResult, Pause,
+                           ProgramEnd, Spindle, SpindleSpeed, ToolChange)
+from .geometry import ArcFit, arc_from_center, sample_arc, unit
+from .simplify import douglas_peucker
+
+
+@dataclass
+class TranslateOptions:
+    tol: float = 0.05
+    max_radius: float = 5000.0
+    min_radius: float = 0.1
+    min_arc_points: int = 4
+    refine_shift: int = 3
+    spl_max_segment: float = 3.0  # lines shorter than this (and 2 vertices only) become SPL points
+    corner_angle_deg: float = 10.0
+    default_feed: float = 1000.0  # mm/min when the G-code never sets F
+    offset: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    fit_arcs: bool = True
+    use_spl: bool = True
+
+
+# ---------------------------------------------------------------- items
+@dataclass
+class RapidItem:
+    target: np.ndarray
+    start: np.ndarray
+
+
+@dataclass
+class LineItem:
+    start: np.ndarray
+    end: np.ndarray
+    feed: float
+    n_points: int = 2
+
+    @property
+    def t_in(self):
+        return unit(self.end - self.start)
+
+    t_out = t_in
+
+
+@dataclass
+class ArcItem:
+    start: np.ndarray
+    mid: np.ndarray
+    end: np.ndarray
+    feed: float
+    fit: ArcFit
+
+    @property
+    def t_in(self):
+        return self.fit.t_in
+
+    @property
+    def t_out(self):
+        return self.fit.t_out
+
+
+@dataclass
+class SplItem:
+    points: np.ndarray  # includes the start point as row 0
+    feed: float
+
+    @property
+    def start(self):
+        return self.points[0]
+
+    @property
+    def end(self):
+        return self.points[-1]
+
+    @property
+    def t_in(self):
+        return unit(self.points[1] - self.points[0])
+
+    @property
+    def t_out(self):
+        return unit(self.points[-1] - self.points[-2])
+
+
+@dataclass
+class EventItem:
+    kind: str  # dwell, spindle_on, spindle_off, spindle_speed, coolant_on, coolant_off, tool_change, pause, end, comment
+    value: object = None
+
+
+MotionItem = LineItem | ArcItem | SplItem
+
+
+@dataclass
+class Stats:
+    input_counts: dict = field(default_factory=dict)
+    chains: int = 0
+    chain_vertices: int = 0
+    lines_out: int = 0
+    arcs_out: int = 0
+    spl_runs: int = 0
+    spl_points: int = 0
+    rapids: int = 0
+    max_dev: float = 0.0
+    warnings: list[str] = field(default_factory=list)
+
+    @property
+    def motions_out(self) -> int:
+        return self.lines_out + self.arcs_out + self.spl_points + self.rapids
+
+
+class Translator:
+    def __init__(self, opts: TranslateOptions):
+        self.o = opts
+        self.items: list = []
+        self.stats = Stats()
+        self.chain: list[np.ndarray] = []
+        self.chain_feed = 0.0
+        self.pending_comments: list[EventItem] = []
+        self.offset = np.array(opts.offset, dtype=float)
+        self.fit_params = FitParams(tol=opts.tol, max_radius=opts.max_radius, min_radius=opts.min_radius,
+                                    min_arc_points=opts.min_arc_points, refine_shift=opts.refine_shift)
+
+    # ------------------------------------------------------------ chains
+    def feed_of(self, f: float) -> float:
+        if f <= 0:
+            if "no-feed" not in self.stats.warnings:
+                self.stats.warnings.append("no-feed")
+            return self.o.default_feed
+        return f
+
+    def push_linear(self, start: np.ndarray, end: np.ndarray, feed: float) -> None:
+        feed = self.feed_of(feed)
+        if self.chain and (feed != self.chain_feed or float(np.linalg.norm(self.chain[-1] - start)) > 1e-9):
+            self.flush()
+        if not self.chain:
+            self.chain = [start]
+            self.chain_feed = feed
+        self.chain.append(end)
+
+    def flush(self) -> None:
+        if len(self.chain) < 2:
+            self.chain = []
+            self.items.extend(self.pending_comments)
+            self.pending_comments = []
+            return
+        pts = dedupe_points(np.array(self.chain))
+        feed = self.chain_feed
+        self.chain = []
+        if len(pts) < 2:
+            return
+        self.stats.chains += 1
+        self.stats.chain_vertices += len(pts)
+        if len(pts) == 2 or not self.o.fit_arcs:
+            elems = [LineElement(k, k + 1, pts[k], pts[k + 1], 0.0) for k in range(len(pts) - 1)]
+        else:
+            elems = segment_polyline(pts, self.fit_params)
+        motion: list[MotionItem] = []
+        for e in elems:
+            self.stats.max_dev = max(self.stats.max_dev, e.max_dev)
+            if isinstance(e, ArcElement):
+                motion.extend(self.arc_items(e.fit, e.start, e.end, feed))
+            else:
+                motion.append(LineItem(e.start, e.end, feed, e.n_points))
+        if self.o.use_spl:
+            motion = self.group_spl(motion, pts)
+        for m in motion:
+            self.add_motion(m)
+        self.items.extend(self.pending_comments)
+        self.pending_comments = []
+
+    def add_motion(self, m: MotionItem) -> None:
+        if isinstance(m, LineItem):
+            self.stats.lines_out += 1
+        elif isinstance(m, ArcItem):
+            self.stats.arcs_out += 1
+        else:
+            self.stats.spl_runs += 1
+            self.stats.spl_points += len(m.points) - 1
+        self.items.append(m)
+
+    def arc_items(self, fit: ArcFit, start: np.ndarray, end: np.ndarray, feed: float) -> list[ArcItem]:
+        """One ArcItem for open arcs, two half arcs for a full circle."""
+        if not fit.closed:
+            return [ArcItem(start, fit.mid, end, feed, fit)]
+        half = ArcFit(fit.center, fit.radius, fit.normal, fit.u, fit.v, fit.theta0, math.pi, fit.max_dev, False)
+        p_half = fit.point_at(fit.theta0 + math.pi)
+        second = ArcFit(fit.center, fit.radius, fit.normal, fit.u, fit.v, fit.theta0 + math.pi, math.pi,
+                        fit.max_dev, False)
+        return [ArcItem(start, half.mid, p_half, feed, half), ArcItem(p_half, second.mid, end, feed, second)]
+
+    def group_spl(self, motion: list[MotionItem], pts: np.ndarray) -> list[MotionItem]:
+        """Collapse runs of short two-vertex lines into SPL point runs."""
+        corner = math.radians(self.o.corner_angle_deg)
+        out: list[MotionItem] = []
+        run: list[LineItem] = []
+
+        def is_spl_candidate(m) -> bool:
+            return isinstance(m, LineItem) and m.n_points == 2 and float(np.linalg.norm(m.end - m.start)) <= self.o.spl_max_segment
+
+        def flush_run():
+            nonlocal run
+            if len(run) >= 2:
+                points = np.array([run[0].start] + [m.end for m in run])
+                thin = douglas_peucker(points, self.o.tol)
+                if len(thin) >= 3:
+                    out.append(SplItem(thin, run[0].feed))
+                else:
+                    out.append(LineItem(thin[0], thin[-1], run[0].feed, len(points)))
+            else:
+                out.extend(run)
+            run = []
+
+        for m in motion:
+            if is_spl_candidate(m):
+                if run and self._angle(run[-1].t_out, m.t_in) > corner:
+                    flush_run()
+                run.append(m)
+            else:
+                flush_run()
+                out.append(m)
+        flush_run()
+        return out
+
+    @staticmethod
+    def _angle(a, b) -> float:
+        d = float(np.clip(unit(a) @ unit(b), -1.0, 1.0))
+        return math.acos(d)
+
+    # ------------------------------------------------------------- arcs
+    def push_arc(self, mv: ArcMove) -> None:
+        feed = self.feed_of(mv.feed)
+        start = mv.start + self.offset
+        end = mv.end + self.offset
+        center = mv.center + self.offset
+        fit = arc_from_center(start, end, center, mv.normal, mv.ccw)
+        if fit.radius < self.o.min_radius:
+            self.push_linear(start, end, feed)
+            return
+        if mv.helical:
+            rise = end - start
+            rise_n = float(rise @ fit.normal)
+            planar_end = end - rise_n * fit.normal
+            fit = arc_from_center(start, planar_end, center, mv.normal, mv.ccw)
+            samples = sample_arc(fit, self.o.tol / 2.0, min_points=3)
+            k = len(samples) - 1
+            for idx in range(1, len(samples)):
+                p = samples[idx] + fit.normal * (rise_n * idx / k)
+                self.push_linear(samples[idx - 1] + fit.normal * (rise_n * (idx - 1) / k), p, feed)
+            return
+        self.flush()
+        for item in self.arc_items(fit, start, end, feed):
+            self.add_motion(item)
+
+    # -------------------------------------------------------------- run
+    def translate(self, parsed: ParseResult) -> tuple[list, Stats]:
+        self.stats.input_counts = dict(parsed.counts)
+        self.stats.warnings.extend(parsed.warnings)
+        for cmd in parsed.commands:
+            if isinstance(cmd, LinearMove):
+                if cmd.rapid:
+                    self.flush()
+                    self.items.append(RapidItem(cmd.end + self.offset, cmd.start + self.offset))
+                    self.stats.rapids += 1
+                else:
+                    self.push_linear(cmd.start + self.offset, cmd.end + self.offset, cmd.feed)
+            elif isinstance(cmd, ArcMove):
+                self.push_arc(cmd)
+            elif isinstance(cmd, Comment):
+                # comments never break a chain (CAM output is full of them);
+                # they are emitted right after the chain they interrupt
+                if self.chain:
+                    self.pending_comments.append(self.event(cmd))
+                else:
+                    self.items.append(self.event(cmd))
+            else:
+                self.flush()
+                self.items.append(self.event(cmd))
+        self.flush()
+        if not any(isinstance(i, EventItem) and i.kind == "end" for i in self.items):
+            self.items.append(EventItem("end"))
+        if "no-feed" in self.stats.warnings:
+            self.stats.warnings.remove("no-feed")
+            self.stats.warnings.append(f"feed never set in G-code; default {self.o.default_feed:g} mm/min used")
+        return self.items, self.stats
+
+    @staticmethod
+    def event(cmd) -> EventItem:
+        if isinstance(cmd, Dwell):
+            return EventItem("dwell", cmd.seconds)
+        if isinstance(cmd, Spindle):
+            return EventItem("spindle_on" if cmd.on else "spindle_off", (cmd.rpm, cmd.ccw))
+        if isinstance(cmd, SpindleSpeed):
+            return EventItem("spindle_speed", cmd.rpm)
+        if isinstance(cmd, Coolant):
+            return EventItem("coolant_on" if cmd.on else "coolant_off")
+        if isinstance(cmd, ToolChange):
+            return EventItem("tool_change", cmd.tool)
+        if isinstance(cmd, Pause):
+            return EventItem("pause", cmd.optional)
+        if isinstance(cmd, ProgramEnd):
+            return EventItem("end")
+        if isinstance(cmd, Comment):
+            return EventItem("comment", cmd.text)
+        raise TypeError(f"unknown command {cmd!r}")
+
+
+def translate(parsed: ParseResult, opts: TranslateOptions | None = None) -> tuple[list, Stats]:
+    return Translator(opts or TranslateOptions()).translate(parsed)

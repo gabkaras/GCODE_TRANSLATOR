@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gcode2krl"
+version = "0.1.0"
+description = "G-code (G0/G1/G2/G3) to KUKA KRL translator with arc reconstruction (G1 polylines -> SCIRC/CIRC, SLIN/LIN, SPL)"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = ["numpy>=1.22"]
+
+[project.optional-dependencies]
+test = ["pytest>=7"]
+
+[project.scripts]
+gcode2krl = "gcode2krl.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["gcode2krl*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
