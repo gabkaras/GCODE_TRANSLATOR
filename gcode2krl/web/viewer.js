@@ -78,7 +78,18 @@ function dot3(a, b) { return a[0]*b[0] + a[1]*b[1] + a[2]*b[2]; }
 function cross3(a, b) { return [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]]; }
 function norm3(a) { const l = Math.hypot(a[0], a[1], a[2]) || 1; return [a[0]/l, a[1]/l, a[2]/l]; }
 
+function cssVar(name, fallback) {
+  const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  return v || fallback;
+}
 function hexToRgba(hex, alpha) {
+  hex = hex.trim();
+  if (hex.startsWith('var(')) hex = cssVar(hex.slice(4, -1).trim(), '#888888');
+  if (hex.startsWith('rgb')) {
+    const m = hex.match(/[\d.]+/g).map(Number);
+    return [m[0] / 255, m[1] / 255, m[2] / 255, alpha === undefined ? (m[3] === undefined ? 1 : m[3]) : alpha];
+  }
+  if (hex.length === 4) hex = '#' + hex[1] + hex[1] + hex[2] + hex[2] + hex[3] + hex[3];
   const v = parseInt(hex.slice(1), 16);
   return [((v >> 16) & 255) / 255, ((v >> 8) & 255) / 255, (v & 255) / 255, alpha === undefined ? 1 : alpha];
 }
@@ -105,9 +116,7 @@ class PathViewer {
     this.layers = new Map();   // name -> {buf, count, color, visible, mode, order, size}
     this.bounds = { min: [0, 0, 0], max: [100, 100, 10] };
     this.cam = { target: [50, 50, 0], dist: 250, yaw: -0.6, pitch: 0.9, ortho: false, fov: Math.PI / 4 };
-    this.bg = [0.07, 0.08, 0.1, 1];
-    this.gridColor = hexToRgba('#2a3140');
-    this.gridMajor = hexToRgba('#3a4357');
+    this.applyTheme();
     this._dirty = true;
     this._raf = null;
     this.onChange = null;
@@ -116,6 +125,20 @@ class PathViewer {
     this._bindEvents();
     this._resize();
     new ResizeObserver(() => { this._resize(); this.invalidate(); }).observe(canvas);
+  }
+
+  /** Re-read background / grid colours from the CSS tokens (call after a theme change). */
+  applyTheme() {
+    this.bg = hexToRgba(cssVar('--viewer-bg', '#12151c'));
+    this.gridColor = hexToRgba(cssVar('--grid', '#2a3140'));
+    this.gridMajor = hexToRgba(cssVar('--grid-major', '#3a4357'));
+    const g = this.layers && this.layers.get('_grid');
+    if (g) { g.color = this.gridColor; this.layers.get('_gridMajor').color = this.gridMajor; }
+    if (this.layers) {
+      for (const [n, L] of this.layers) if (L.cssColor) L.color = hexToRgba(L.cssColor, L.alpha);
+      for (const M of this.meshes ? this.meshes.values() : []) if (M.cssColor) M.color = hexToRgba(M.cssColor, M.alpha);
+    }
+    this.invalidate();
   }
 
   _program(vs, fs) {
@@ -149,6 +172,8 @@ class PathViewer {
     gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW);
     L.count = data.length / 3;
     L.color = typeof color === 'string' ? hexToRgba(color, opts.alpha) : color;
+    L.cssColor = typeof color === 'string' ? color : null;
+    L.alpha = opts.alpha;
     L.mode = opts.mode || 'lines';
     L.size = opts.size || 6;
     if (opts.order !== undefined) L.order = opts.order;
@@ -169,7 +194,7 @@ class PathViewer {
       gl.bindBuffer(gl.ARRAY_BUFFER, M.nbuf); gl.bufferData(gl.ARRAY_BUFFER, geom.normals, gl.STATIC_DRAW);
       M.count = geom.positions.length / 3;
     }
-    if (color) M.color = typeof color === 'string' ? hexToRgba(color, opts.alpha) : color;
+    if (color) { M.color = typeof color === 'string' ? hexToRgba(color, opts.alpha) : color; M.cssColor = typeof color === 'string' ? color : null; M.alpha = opts.alpha; }
     if (model) M.model = model;
     if (opts.group) M.group = opts.group;
     if (opts.visible !== undefined) M.visible = opts.visible;
@@ -221,9 +246,9 @@ class PathViewer {
     this.setLayer('_grid', new Float32Array(minor), this.gridColor, { order: -20 });
     this.setLayer('_gridMajor', new Float32Array(major), this.gridMajor, { order: -19 });
     const a = Math.max(nice * 2, span * 0.08);
-    this.setLayer('_axX', new Float32Array([0,0,z, a,0,z]), '#e5484d', { order: -18 });
-    this.setLayer('_axY', new Float32Array([0,0,z, 0,a,z]), '#46a758', { order: -17 });
-    this.setLayer('_axZ', new Float32Array([0,0,z, 0,0,z+a]), '#3e8cff', { order: -16 });
+    this.setLayer('_axX', new Float32Array([0,0,z, a,0,z]), 'var(--c-ax-x)', { order: -18 });
+    this.setLayer('_axY', new Float32Array([0,0,z, 0,a,z]), 'var(--c-ax-y)', { order: -17 });
+    this.setLayer('_axZ', new Float32Array([0,0,z, 0,0,z+a]), 'var(--c-ax-z)', { order: -16 });
     this.gridStep = nice;
   }
 
@@ -362,4 +387,5 @@ class PathViewer {
 }
 
 window.PathViewer = PathViewer;
+window.cssVar = cssVar;
 window.M4 = M4;

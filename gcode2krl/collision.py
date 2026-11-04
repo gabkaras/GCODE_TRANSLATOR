@@ -474,6 +474,22 @@ def motion_bound(robot: RobotModel, q0: np.ndarray, q1: np.ndarray, caps: list[C
     return 2.0 * (disp + 0.5 * dq * dq * reach)
 
 
+def _unresolved(c0: np.ndarray, c1: np.ndarray, delta: np.ndarray, margin: float) -> np.ndarray:
+    """Intervals that still need refinement.
+
+    Inside an interval every clearance is >= max(c0, c1) - delta. An interval is
+    settled when that bound proves the margin, when an end point already
+    collides, or when both ends are already below the margin and the bound
+    proves there is no collision inside (its verdict is then "below margin").
+    """
+    lo = np.minimum(c0, c1)
+    hi = np.maximum(c0, c1)
+    bound = hi - delta
+    possible_collision = (bound <= 0) & (lo > 0)
+    margin_unknown = (lo >= margin) & (bound < margin)
+    return possible_collision | margin_unknown
+
+
 def check_collisions(robot: RobotModel, q: np.ndarray, ok: np.ndarray, caps: list[Capsule], obstacles: list[Obstacle],
                      margin: float, refine_fn=None, max_refine: int = 6, singular_deg: float = 5.0,
                      jump_deg: float = 30.0) -> CollisionReport:
@@ -515,8 +531,7 @@ def check_collisions(robot: RobotModel, q: np.ndarray, ok: np.ndarray, caps: lis
             c0 = np.array([it[4] for it in intervals])
             c1 = np.array([it[5] for it in intervals])
             delta = motion_bound(robot, q0, q1, caps)
-            safe = (np.maximum(c0, c1) - delta >= margin) | (np.minimum(c0, c1) <= 0)
-            todo = [it for it, s in zip(intervals, safe) if not s]
+            todo = [it for it, u in zip(intervals, _unresolved(c0, c1, delta, margin)) if u]
             if not todo:
                 intervals = []
                 break
@@ -560,8 +575,7 @@ def check_collisions(robot: RobotModel, q: np.ndarray, ok: np.ndarray, caps: lis
             c0 = np.array([it[4] for it in intervals])
             c1 = np.array([it[5] for it in intervals])
             delta = motion_bound(robot, q0, q1, caps)
-            safe = (np.maximum(c0, c1) - delta >= margin) | (np.minimum(c0, c1) <= 0)
-            unresolved = int((~safe).sum())
+            unresolved = int(_unresolved(c0, c1, delta, margin).sum())
     rep.unresolved = unresolved
     rep.refine_rounds = rounds
     rep.refined_samples = refined

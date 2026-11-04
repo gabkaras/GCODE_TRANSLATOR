@@ -70,7 +70,7 @@
     return { positions: new Float32Array(P), normals: new Float32Array(N) };
   }
 
-  const ORANGE = '#f0862a', DARK = '#3a3f4b', GREY = '#8a919f', TOOL = '#c0c6d2';
+  const ORANGE = 'var(--brand)', DARK = 'var(--brand-dark)', GREY = 'var(--brand-grey)', TOOL = 'var(--c-obstacle)';
 
   class RobotView {
     constructor(viewer) { this.viewer = viewer; this.model = null; this.robotInBase = I4(); this.tool = I4(); this.visible = true; this.reachVisible = true; this.joints = null; }
@@ -96,7 +96,7 @@
       }
       const V = R.visual || {}, br = V.base_r || 300, bh = V.base_h || 250, col = V.column || 400, arm = V.arm || 240, fa = V.forearm || 190, wr = V.wrist || 150;
       v.setMesh('rb_base', cylinder(br, 2, 0, bh, 0, 0, 0), DARK, I4(), { group: g });
-      v.setMesh('rb_plate', box(br*2.2, br*2.2, 20, 0, 0, 10), '#2a2f3a', I4(), { group: g });
+      v.setMesh('rb_plate', box(br*2.2, br*2.2, 20, 0, 0, 10), DARK, I4(), { group: g });
       // column (link 1): from the base to the A2 axis, in the A1 frame (origin at base)
       // column in the link_1 frame (origin at the A2 height d1, so shift down by d1)
       const colGeom = merge(box(col, col, R.d1 - bh + col*0.3, R.a1*0.35, 0, (bh + R.d1 + col*0.3)/2 - col*0.15 - R.d1), cylinder(arm*0.7, 1, -col*0.6, col*0.6, R.a1, 0, 0));
@@ -143,7 +143,7 @@
       const n = 96, ground = [], arc = [];
       const rg = R.a1 + R.wrist_reach;
       for (let i = 0; i < n; i++) { const t0 = 2*Math.PI*i/n, t1 = 2*Math.PI*(i+1)/n; ground.push(rg*Math.cos(t0), rg*Math.sin(t0), 0, rg*Math.cos(t1), rg*Math.sin(t1), 0); }
-      v.setLayer('rb_reach', new Float32Array(ground), '#f0862a', { alpha: 0.5, order: 3, group: 'robot' });
+      v.setLayer('rb_reach', new Float32Array(ground), ORANGE, { alpha: 0.5, order: 3, group: 'robot' });
       this.reachArc = arc;
     }
 
@@ -180,10 +180,10 @@
         const t0 = -Math.PI/2 + Math.PI*i/n, t1 = -Math.PI/2 + Math.PI*(i+1)/n;
         for (const t of [t0, t1]) lines.push(c[0] + rr*(Math.cos(t)*dir[0] + Math.sin(t)*up[0]), c[1] + rr*(Math.cos(t)*dir[1] + Math.sin(t)*up[1]), c[2] + rr*(Math.cos(t)*dir[2] + Math.sin(t)*up[2]));
       }
-      v.setLayer('rb_reach_arc', new Float32Array(lines), '#f0862a', { alpha: 0.35, order: 3, group: 'robot', visible: this.reachVisible });
+      v.setLayer('rb_reach_arc', new Float32Array(lines), ORANGE, { alpha: 0.35, order: 3, group: 'robot', visible: this.reachVisible });
       const tcpM = mul(mul(B, f[7]), this.tool);
       const o = apply(tcpM, [0,0,0]), L = Math.max(40, (R.visual && R.visual.wrist || 150) * 0.6);
-      const ax = [], cols = ['#e5484d', '#46a758', '#3e8cff'];
+      const ax = [], cols = ['var(--c-ax-x)', 'var(--c-ax-y)', 'var(--c-ax-z)'];
       [[L,0,0],[0,L,0],[0,0,L]].forEach((e, i) => { const p = apply(tcpM, e); v.setLayer('rb_tcp' + i, new Float32Array([...o, ...p]), cols[i], { order: 12, group: 'robot' }); });
       this.tcp = o;
       if (this.capsulesVisible) this.drawCapsules();
@@ -207,7 +207,7 @@
       else if (o.kind === 'sphere') geom = sphere(o.radius);
       else if (o.kind === 'floor') geom = box(8000, 8000, 2, 0, 0, -1);
       else return;
-      const color = o.workpiece ? '#60a5fa' : (o.kind === 'floor' ? '#4b5563' : '#a3a9b7');
+      const color = o.workpiece ? 'var(--c-workpiece)' : (o.kind === 'floor' ? 'var(--brand-grey)' : 'var(--c-obstacle)');
       v.setMesh('ob_' + i, geom, color, mul(this.robotInBase, base), { group: 'obstacles', alpha: o.kind === 'floor' ? 0.25 : 0.42 });
       // outline edges for boxes
       if (o.kind === 'box') {
@@ -216,7 +216,7 @@
         const edges = [[0,1],[1,2],[2,3],[3,0],[4,5],[5,6],[6,7],[7,4],[0,4],[1,5],[2,6],[3,7]];
         const M = mul(this.robotInBase, base);
         for (const [a, b] of edges) E.push(...apply(M, c[a]), ...apply(M, c[b]));
-        v.setLayer('obe_' + i, new Float32Array(E), o.workpiece ? '#93c5fd' : '#d1d5db', { alpha: 0.8, order: 4, group: 'obstacles' });
+        v.setLayer('obe_' + i, new Float32Array(E), o.workpiece ? 'var(--c-workpiece)' : 'var(--c-obstacle)', { alpha: 0.9, order: 4, group: 'obstacles' });
       }
     });
     v.setGroupVisible('obstacles', this.obstaclesVisible !== false);
@@ -246,7 +246,7 @@
       }
       for (const e of [u, w, u.map(x => -x), w.map(x => -x)]) L.push(a[0]+c.radius*e[0], a[1]+c.radius*e[1], a[2]+c.radius*e[2], b[0]+c.radius*e[0], b[1]+c.radius*e[1], b[2]+c.radius*e[2]);
     }
-    v.setLayer('caps', new Float32Array(L), '#facc15', { alpha: 0.7, order: 13, group: 'capsules' });
+    v.setLayer('caps', new Float32Array(L), 'var(--c-caps)', { alpha: 0.7, order: 13, group: 'capsules' });
   };
   RobotView.prototype.setCapsulesVisible = function (vis) { this.capsulesVisible = vis; this.drawCapsules(); };
   function sphere(r, seg) {

@@ -1,0 +1,9 @@
+/* Brand overrides for gcode2krl. Loaded after style.css: put the company palette,
+   fonts and radii here (tokens are listed at the top of style.css).
+   Example (replace with the real brand values):
+
+:root, :root[data-theme="light"], :root[data-theme="dark"] {
+  --font: "YourSans", system-ui, sans-serif;
+  --accent: #0057ff; --accent2: #0040c0; --brand: #0057ff;
+}
+*/

@@ -5,20 +5,31 @@
 
   const state = { gcode: '', filename: '', result: null, busy: false, currentFile: null, auto: true };
   const LAYERS = [
-    { key: 'input', label: 'G-code wejściowy', color: '#7c8599', alpha: 0.55, order: 0, on: true },
-    { key: 'input_rapid', label: 'G0 wejściowe', color: '#7c8599', alpha: 0.25, order: 1, on: false },
-    { key: 'rapid', label: 'G0 → LIN (szybkie)', color: '#ef4444', order: 5, on: true },
-    { key: 'slin', label: 'SLIN / LIN', color: '#60a5fa', order: 6, on: true },
-    { key: 'scirc', label: 'SCIRC / CIRC', color: '#34d399', order: 7, on: true },
-    { key: 'spl', label: 'SPL', color: '#f59e0b', order: 8, on: true },
-    { key: 'arc_points', label: 'punkty pomocnicze łuków', color: '#c084fc', order: 9, on: false, mode: 'points', size: 7 },
-    { key: 'bad_points', label: 'poza zasięgiem / limitem osi', color: '#ff3b3b', order: 11, on: true, mode: 'points', size: 9 },
-    { key: 'collision_points', label: 'kolizja', color: '#ff1744', order: 12, on: true, mode: 'points', size: 11 },
-    { key: 'margin_points', label: 'poniżej prześwitu', color: '#fb923c', order: 11, on: true, mode: 'points', size: 8 },
+    { key: 'input', label: 'G-code wejściowy', color: 'var(--c-input)', alpha: 0.55, order: 0, on: true },
+    { key: 'input_rapid', label: 'G0 wejściowe', color: 'var(--c-input)', alpha: 0.25, order: 1, on: false },
+    { key: 'rapid', label: 'G0 → LIN (szybkie)', color: 'var(--c-rapid)', order: 5, on: true },
+    { key: 'slin', label: 'SLIN / LIN', color: 'var(--c-slin)', order: 6, on: true },
+    { key: 'scirc', label: 'SCIRC / CIRC', color: 'var(--c-scirc)', order: 7, on: true },
+    { key: 'spl', label: 'SPL', color: 'var(--c-spl)', order: 8, on: true },
+    { key: 'arc_points', label: 'punkty pomocnicze łuków', color: 'var(--c-aux)', order: 9, on: false, mode: 'points', size: 7 },
+    { key: 'bad_points', label: 'poza zasięgiem / limitem osi', color: 'var(--c-bad)', order: 11, on: true, mode: 'points', size: 9 },
+    { key: 'collision_points', label: 'kolizja', color: 'var(--c-collision)', order: 12, on: true, mode: 'points', size: 11 },
+    { key: 'margin_points', label: 'poniżej prześwitu', color: 'var(--c-margin)', order: 11, on: true, mode: 'points', size: 8 },
   ];
+  // ---------------------------------------------------------------- theme
+  function setTheme(mode, save) {
+    const root = document.documentElement;
+    if (mode === 'auto') root.removeAttribute('data-theme'); else root.setAttribute('data-theme', mode);
+    $$('.theme-switch button').forEach(b => b.classList.toggle('active', b.dataset.theme === mode));
+    if (save) { try { localStorage.setItem('gcode2krl.theme', mode); } catch (e) {} }
+    if (window.__viewer) window.__viewer.applyTheme();
+    if (typeof drawClearanceChart === 'function') drawClearanceChart();
+    if (state.result) showBreakdown(state.result.stats);
+  }
+
 
   let viewer, robotView;
-  try { viewer = new PathViewer($('#view')); robotView = new RobotView(viewer); }
+  try { viewer = new PathViewer($('#view')); robotView = new RobotView(viewer); window.__viewer = viewer; }
   catch (e) { $('#viewer-error').textContent = 'WebGL niedostępny: ' + e.message; }
   const ROBOTS = {};
   const robotsReady = fetch('/api/robots').then(r => r.json()).then(d => {
@@ -183,16 +194,7 @@
     $('#st-time').textContent = fmt(s.time_total, 2) + ' s';
     $('#st-time-sub').textContent = `parser ${fmt(s.time_parse, 2)} · łuki ${fmt(s.time_fit, 2)} · KRL ${fmt(s.time_write, 2)}`;
 
-    const total = Math.max(1, s.lines_out + s.arcs_out + s.spl_points + s.rapids);
-    const bar = $('#breakdown');
-    bar.innerHTML = '';
-    for (const [k, v, c] of [['SLIN', s.lines_out, '#60a5fa'], ['SCIRC', s.arcs_out, '#34d399'], ['SPL', s.spl_points, '#f59e0b'], ['G0', s.rapids, '#ef4444']]) {
-      if (!v) continue;
-      const d = document.createElement('div');
-      d.style.width = (100 * v / total) + '%'; d.style.background = c; d.title = `${k}: ${v}`;
-      d.textContent = (100 * v / total) > 8 ? `${k} ${v}` : '';
-      bar.appendChild(d);
-    }
+    showBreakdown(s);
 
     // warnings
     const wl = $('#warnings');
@@ -226,6 +228,19 @@
       if (!state.fitted) { viewer.viewIso(); state.fitted = true; } else viewer.invalidate();
       const b = p.bounds;
       $('#bounds').textContent = `X ${fmt(b.min[0], 2)} … ${fmt(b.max[0], 2)}   Y ${fmt(b.min[1], 2)} … ${fmt(b.max[1], 2)}   Z ${fmt(b.min[2], 2)} … ${fmt(b.max[2], 2)} mm`;
+    }
+  }
+
+  function showBreakdown(s) {
+    const total = Math.max(1, s.lines_out + s.arcs_out + s.spl_points + s.rapids);
+    const bar = $('#breakdown');
+    bar.innerHTML = '';
+    for (const [k, v, c] of [['SLIN', s.lines_out, 'var(--c-slin)'], ['SCIRC', s.arcs_out, 'var(--c-scirc)'], ['SPL', s.spl_points, 'var(--c-spl)'], ['G0', s.rapids, 'var(--c-rapid)']]) {
+      if (!v) continue;
+      const d = document.createElement('div');
+      d.style.width = (100 * v / total) + '%'; d.style.background = c; d.title = `${k}: ${v}`;
+      d.textContent = (100 * v / total) > 8 ? `${k} ${v}` : '';
+      bar.appendChild(d);
     }
   }
 
@@ -386,21 +401,23 @@
     const top = 10, bottom = H - 18, left = 44, right = W - 10;
     const y = v => bottom - (Math.min(v, maxv) - minv) / (maxv - minv) * (bottom - top);
     const x = i => left + (right - left) * i / Math.max(1, n - 1);
-    g.strokeStyle = '#263044'; g.lineWidth = 1;
+    const tk = n => cssVar(n, '#888');
+    g.strokeStyle = tk('--line'); g.lineWidth = 1;
     g.beginPath(); g.moveTo(left, y(0)); g.lineTo(right, y(0)); g.stroke();
-    g.strokeStyle = '#f59e0b'; g.setLineDash([4, 4]); g.beginPath(); g.moveTo(left, y(colData.margin)); g.lineTo(right, y(colData.margin)); g.stroke(); g.setLineDash([]);
-    g.fillStyle = '#8b95a7'; g.font = '11px system-ui'; g.textAlign = 'right';
+    g.strokeStyle = tk('--warn'); g.setLineDash([4, 4]); g.beginPath(); g.moveTo(left, y(colData.margin)); g.lineTo(right, y(colData.margin)); g.stroke(); g.setLineDash([]);
+    g.fillStyle = tk('--muted'); g.font = '11px ' + tk('--font'); g.textAlign = 'right';
     g.fillText('0', left - 6, y(0) + 4); g.fillText(colData.margin + '', left - 6, y(colData.margin) + 4); g.fillText(maxv.toFixed(0), left - 6, top + 4);
     g.textAlign = 'left'; g.fillText('prześwit [mm] wzdłuż ścieżki', left, H - 5);
-    g.lineWidth = 1.5; g.strokeStyle = '#34d399'; g.beginPath();
+    g.lineWidth = 1.5; g.strokeStyle = tk('--ok'); g.beginPath();
     let started = false;
     for (let i = 0; i < n; i++) { if (c[i] > 1e8) { started = false; continue; } const px = x(i), py = y(c[i]); if (!started) { g.moveTo(px, py); started = true; } else g.lineTo(px, py); }
     g.stroke();
-    g.fillStyle = 'rgba(255,23,68,.9)';
+    g.fillStyle = tk('--c-collision');
     for (let i = 0; i < n; i++) if (c[i] <= 0) g.fillRect(x(i) - 1, top, 2, bottom - top);
-    g.fillStyle = 'rgba(251,146,60,.5)';
+    g.globalAlpha = 0.5; g.fillStyle = tk('--c-margin');
     for (let i = 0; i < n; i++) if (c[i] > 0 && c[i] < colData.margin) g.fillRect(x(i) - 1, y(colData.margin), 2, y(c[i]) - y(colData.margin));
-    if (anim.n) { g.strokeStyle = '#e7eaf0'; g.beginPath(); g.moveTo(x(anim.pos), top); g.lineTo(x(anim.pos), bottom); g.stroke(); }
+    g.globalAlpha = 1;
+    if (anim.n) { g.strokeStyle = tk('--text'); g.beginPath(); g.moveTo(x(anim.pos), top); g.lineTo(x(anim.pos), bottom); g.stroke(); }
   }
   window.addEventListener('resize', drawClearanceChart);
   $('#col-chart').addEventListener('click', e => {
@@ -504,5 +521,10 @@
   loadOptions();
   $('#opt_tol_range').value = $('#opt_tol').value;
   robotsReady.then(() => { loadOptions(); updateRobotModel(); });
+  let savedTheme = 'auto';
+  try { savedTheme = localStorage.getItem('gcode2krl.theme') || 'auto'; } catch (e) {}
+  setTheme(savedTheme, false);
+  $$('.theme-switch button').forEach(b => b.addEventListener('click', () => setTheme(b.dataset.theme, true)));
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => setTheme(document.documentElement.getAttribute('data-theme') || 'auto', false));
   fetch('/api/version').then(r => r.json()).then(d => { $('#version').textContent = 'v' + d.version; }).catch(() => {});
 })();
