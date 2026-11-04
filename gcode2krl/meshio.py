@@ -46,3 +46,47 @@ def flat_normals(tris: np.ndarray) -> np.ndarray:
     ln = np.linalg.norm(n, axis=1)
     n = n / np.where(ln < 1e-12, 1.0, ln)[:, None]
     return np.repeat(n[:, None, :], 3, axis=1)
+
+
+def load_obj(path: str) -> np.ndarray:
+    """Minimal Wavefront OBJ reader (v / f lines, polygons fan-triangulated)."""
+    verts: list[list[float]] = []
+    tris: list[list[list[float]]] = []
+    with open(path, "r", encoding="utf-8", errors="replace") as fh:
+        for line in fh:
+            if line.startswith("v "):
+                parts = line.split()
+                verts.append([float(parts[1]), float(parts[2]), float(parts[3])])
+            elif line.startswith("f "):
+                idx = []
+                for tok in line.split()[1:]:
+                    i = int(tok.split("/")[0])
+                    idx.append(i - 1 if i > 0 else len(verts) + i)
+                for k in range(1, len(idx) - 1):
+                    tris.append([verts[idx[0]], verts[idx[k]], verts[idx[k + 1]]])
+    if not tris:
+        raise ValueError(f"{path}: no faces found")
+    return np.array(tris, dtype=float)
+
+
+UNIT_SCALE = {"mm": 1.0, "cm": 10.0, "m": 1000.0, "in": 25.4, "inch": 25.4}
+
+
+def load_mesh(path: str, units: str = "mm") -> np.ndarray:
+    """Load STL or OBJ and return triangles in millimetres."""
+    ext = path.lower().rsplit(".", 1)[-1]
+    if ext == "obj":
+        tris = load_obj(path)
+    elif ext == "stl":
+        tris = load_stl(path)
+    else:
+        raise ValueError(f"unsupported mesh format .{ext} (use STL or OBJ; export STEP from CAD as STL)")
+    scale = UNIT_SCALE.get(str(units).lower())
+    if scale is None:
+        raise ValueError(f"unknown units {units!r}")
+    return tris * scale
+
+
+def mesh_stats(tris: np.ndarray) -> dict:
+    v = tris.reshape(-1, 3)
+    return {"tris": int(len(tris)), "min": v.min(axis=0).tolist(), "max": v.max(axis=0).tolist()}

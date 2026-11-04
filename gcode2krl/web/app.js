@@ -46,7 +46,7 @@
 
   // ----------------------------------------------------------------- options
   const OPTION_IDS = ['robot','base_frame','tool_frame','base_literal','tool_literal','robot_samples','path_step','margin',
-    'tbl_sx','tbl_sy','tbl_cx','tbl_cy','mat_t','mat_pad',
+    'tbl_sx','tbl_sy','tbl_cx','tbl_cy','mat_t','mat_pad','tool_mesh','tool_mesh_units',
     'tool_radius','cutter_len','cutter_radius','obstacles','tol','max_radius','min_radius','min_arc_points','refine_shift','spl_max_segment','corner_angle',
     'default_feed','offset','fit_arcs','use_spl','name','mode','tool','base','abc','rapid_vel','max_vel','acc','cdis',
     'round_corners','max_block_segments','max_motions_per_file','block_approx','spindle_out','coolant_out','spindle_anout',
@@ -412,6 +412,108 @@
     if (text !== ta.value) { ta.value = text; saveOptions(); scheduleAuto(); }
   }
   ['#auto-table', '#tbl_sx', '#tbl_sy', '#tbl_cx', '#tbl_cy', '#mat_t', '#mat_pad'].forEach(sel => $(sel).addEventListener('input', updateAutoObstacles));
+  // ---- imported meshes (tables, fixtures, tools) ------------------------
+  function readFileB64(file) {
+    return new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result).split(',')[1]); r.onerror = rej; r.readAsDataURL(file); });
+  }
+  async function uploadMesh(file) {
+    const data = await readFileB64(file);
+    const res = await fetch('/api/mesh', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: file.name, data }) });
+    const meta = await res.json();
+    if (!res.ok || meta.error) throw new Error(meta.error || res.statusText);
+    return meta;
+  }
+  const UNIT_MM = { mm: 1, cm: 10, m: 1000, in: 25.4 };
+  const MESH_LINE = /^mesh\s+(\S+)\s+(robot|base)\s+([-\d.eE+]+)\s+([-\d.eE+]+)\s+([-\d.eE+]+)\s+([-\d.eE+]+)\s+([-\d.eE+]+)\s+([-\d.eE+]+)\s+(\S+)(?:\s+(mm|cm|m|in))?(\s+workpiece)?\s*$/i;
+  function parseMeshLines() {
+    const out = [];
+    $('#opt_obstacles').value.split('\n').forEach((line, idx) => {
+      const m = line.split('#')[0].trim().match(MESH_LINE);
+      if (m) out.push({ idx, name: m[1], frame: m[2].toLowerCase(), v: m.slice(3, 9).map(Number), file: m[9], units: m[10] || 'mm', workpiece: !!m[11], raw: line });
+    });
+    return out;
+  }
+  function writeMeshLine(e) {
+    return `mesh ${e.name} ${e.frame} ${e.v.map(x => +Number(x).toFixed(3)).join(' ')} ${e.file} ${e.units}${e.workpiece ? ' workpiece' : ''}`;
+  }
+  function replaceObstacleLine(idx, text) {
+    const ta = $('#opt_obstacles');
+    const lines = ta.value.split('\n');
+    if (text === null) lines.splice(idx, 1); else lines[idx] = text;
+    ta.value = lines.join('\n');
+    saveOptions(); renderMeshList(); scheduleAuto();
+  }
+  let meshMeta = {};
+  async function refreshMeshMeta() {
+    try { const d = await (await fetch('/api/meshes')).json(); meshMeta = {}; for (const m of d.meshes) meshMeta[m.id] = m; } catch (e) {}
+    renderMeshList();
+  }
+  function renderMeshList() {
+    const box = $('#mesh-list'); if (!box) return;
+    box.innerHTML = '';
+    const entries = parseMeshLines();
+    if (!entries.length) { box.innerHTML = '<div class="muted" style="font-size:11.5px">Brak modeli. Dodaj plik STL/OBJ stołu, uchwytu lub osłony.</div>'; return; }
+    for (const e of entries) {
+      const meta = meshMeta[e.file];
+      const div = document.createElement('div');
+      div.className = 'mesh-item';
+      div.innerHTML = `<span class="mi-name" title="${e.file}">${e.name}</span>
+        <span class="mi-actions"><label class="wp"><input type="checkbox" ${e.workpiece ? 'checked' : ''} data-k="wp"> materiał</label><button type="button" class="mini" data-k="del" title="usuń z przeszkód">×</button></span>
+        <span class="mi-meta">${meta ? meta.name + ' · ' + meta.tris.toLocaleString('pl-PL') + ' trójkątów · ' + meta.min.map((v, i) => ((meta.max[i] - v) * UNIT_MM[e.units]).toFixed(0)).join('×') + ' mm' : e.file} · układ ${e.frame} · plik w ${e.units}</span>
+        <span class="mi-frame">${['X','Y','Z','A','B','C'].map((ax, i) => `<input type="number" step="${i < 3 ? 10 : 1}" value="${e.v[i]}" data-k="${i}" title="${ax} w układzie ${e.frame}">`).join('')}</span>`;
+      div.querySelectorAll('input[type=number]').forEach(inp => inp.addEventListener('change', () => { e.v[Number(inp.dataset.k)] = Number(inp.value) || 0; replaceObstacleLine(e.idx, writeMeshLine(e)); }));
+      div.querySelector('[data-k=wp]').addEventListener('change', ev => { e.workpiece = ev.target.checked; replaceObstacleLine(e.idx, writeMeshLine(e)); });
+      div.querySelector('[data-k=del]').addEventListener('click', () => replaceObstacleLine(e.idx, null));
+      box.appendChild(div);
+    }
+  }
+  $('#obstacle-mesh-file').addEventListener('change', async ev => {
+    const files = [...ev.target.files]; ev.target.value = '';
+    for (const f of files) {
+      try {
+        setStatus(`Wgrywanie ${f.name}…`, 'busy');
+        const meta = await uploadMesh(f);
+        meshMeta[meta.id] = meta;
+        const name = f.name.replace(/\.[^.]+$/, '').replace(/[^\w-]+/g, '_').slice(0, 24) || 'model';
+        const units = $('#obstacle-mesh-units').value;
+        const b = state.result ? state.result.preview.bounds : { min: [0, 0, 0], max: [0, 0, 0] };
+        const line = writeMeshLine({ name, frame: 'base', v: [(b.min[0] + b.max[0]) / 2, (b.min[1] + b.max[1]) / 2, 0, 0, 0, 0], file: meta.id, units, workpiece: false });
+        const ta = $('#opt_obstacles'); ta.value = ta.value.replace(/\s*$/, '') + '\n' + line;
+        saveOptions(); renderMeshList(); scheduleAuto();
+        setStatus(`Dodano model ${meta.name} (${meta.tris} trójkątów)`, 'ok');
+      } catch (err) { setStatus('Błąd wgrywania: ' + err.message, 'err'); }
+    }
+  });
+  $('#opt_obstacles').addEventListener('input', renderMeshList);
+  $('#tool-mesh-file').addEventListener('change', async ev => {
+    const f = ev.target.files[0]; ev.target.value = ''; if (!f) return;
+    try {
+      setStatus(`Wgrywanie ${f.name}…`, 'busy');
+      const meta = await uploadMesh(f);
+      meshMeta[meta.id] = meta;
+      $('#opt_tool_mesh').value = meta.id;
+      updateToolMeshInfo();
+      saveOptions(); scheduleAuto();
+      setStatus(`Model narzędzia: ${meta.name}`, 'ok');
+    } catch (err) { setStatus('Błąd wgrywania: ' + err.message, 'err'); }
+  });
+  $('#tool-mesh-clear').addEventListener('click', () => { $('#opt_tool_mesh').value = ''; updateToolMeshInfo(); saveOptions(); if (robotView) robotView.setToolMesh(null); scheduleAuto(); });
+  $('#opt_tool_mesh_units').addEventListener('change', () => { saveOptions(); scheduleAuto(); loadToolMeshGeometry(); });
+  function updateToolMeshInfo() {
+    const id = $('#opt_tool_mesh').value; const meta = meshMeta[id];
+    const u = UNIT_MM[$('#opt_tool_mesh_units').value] || 1;
+    $('#tool-mesh-info').textContent = id ? (meta ? `Model: ${meta.name} · ${meta.tris.toLocaleString('pl-PL')} trójkątów · ${meta.min.map((v, i) => ((meta.max[i] - v) * u).toFixed(0)).join('×')} mm` : `Model: ${id}`) : 'Brak modelu: uchwyt jest kapsułą o promieniu z pola „promień uchwytu”.';
+    loadToolMeshGeometry();
+  }
+  let toolMeshLoaded = '';
+  async function loadToolMeshGeometry() {
+    const id = $('#opt_tool_mesh').value; const units = $('#opt_tool_mesh_units').value;
+    const key = id + '@' + units;
+    if (!robotView) return;
+    if (!id) { robotView.setToolMesh(null); toolMeshLoaded = ''; return; }
+    if (toolMeshLoaded === key) return;
+    try { const g = await (await fetch('/api/mesh/' + id + '?units=' + units)).json(); if (!g.error) { robotView.setToolMesh(g); toolMeshLoaded = key; } } catch (e) {}
+  }
   function drawFrames() {
     if (!viewer) return;
     const b = viewer.bounds; const span = Math.max(b.max[0] - b.min[0], b.max[1] - b.min[1], 50);
@@ -528,8 +630,9 @@
     const notes = $('#col-notes');
     notes.innerHTML = '';
     for (const n of col.notes) { const li = document.createElement('li'); li.textContent = n; notes.appendChild(li); }
-    robotView.setObstacles(col.obstacles);
+    robotView.setObstacles(col.obstacles, (id, units) => fetch('/api/mesh/' + encodeURIComponent(id) + '?units=' + encodeURIComponent(units || 'mm')).then(r => r.json()));
     robotView.setCapsules(col.capsules);
+    updateToolMeshInfo();
     drawClearanceChart();
   }
   function drawClearanceChart() {
@@ -666,7 +769,7 @@
   loadOptions();
   $('#opt_tol_range').value = $('#opt_tol').value;
   syncFramesFromOptions();
-  robotsReady.then(() => { loadOptions(); syncFramesFromOptions(); updateRobotModel(); updateAutoObstacles(); });
+  robotsReady.then(() => { loadOptions(); syncFramesFromOptions(); updateRobotModel(); updateAutoObstacles(); refreshMeshMeta(); updateToolMeshInfo(); });
   let savedTheme = 'dark';  // the brand look is dark; 'auto' and 'light' are available in the header
   try { savedTheme = localStorage.getItem('gcode2krl.theme') || 'dark'; } catch (e) {}
   setTheme(savedTheme, false);

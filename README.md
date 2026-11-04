@@ -132,6 +132,20 @@ materiałem sięgający do posadzki, jako wpisy `# auto` w przeszkodach; można 
 pisać ręcznie. Układ bazy i TCP są rysowane w podglądzie 3D. W CLI:
 `--base-points OX OY OZ XX XY XZ PX PY PZ` liczy bazę z trzech punktów.
 
+**Własne modele stołu, uchwytów i narzędzia (STL/OBJ).** Przycisk *dodaj
+STL/OBJ* w sekcji *Stół roboczy* wgrywa plik do lokalnego magazynu
+(`~/.gcode2krl/meshes`, zmienna `GCODE2KRL_MESH_DIR`) i dodaje go do
+przeszkód jako wiersz `mesh NAZWA base X Y Z A B C ID jednostki [workpiece]`;
+położenie edytuje się polami przy modelu lub w tekście przeszkód, a flaga
+„materiał” zwalnia ostrze z kolizji z tym modelem. *Model narzędzia* wgrywa
+siatkę w układzie kołnierza (mm, cm, m lub cale) i zastępuje parametryczną
+kapsułę uchwytu; część w zasięgu „długości ostrza” od TCP jest traktowana
+jako ostrze. Bryły kolizyjne są liczone z siatki (pudełko albo zestaw kapsuł,
+zawsze z zapasem) i buforowane; siatki są rysowane w podglądzie, a przycisk
+*kapsuły* pokazuje, co dokładnie jest sprawdzane. STEP/IGES trzeba
+wyeksportować z CAD do STL. W CLI: `--tool-mesh plik.stl --tool-mesh-units mm`
+oraz wiersze `mesh` w pliku `--obstacles` ze ścieżką do pliku zamiast ID.
+
 Co robi sprawdzenie (`--robot`, w GUI panel *Robot*):
 
 * `$BASE` podajesz w układzie robota (X Y Z A B C), `$TOOL` w układzie

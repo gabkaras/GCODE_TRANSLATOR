@@ -169,6 +169,7 @@
         v.setMeshTransform('rb_flange', mul(B, f[7]));
       }
       v.setMeshTransform('rb_tool', mul(B, f[7]));
+      if (this.toolMeshOn) { v.setMeshTransform('rb_toolmesh', mul(B, f[7])); v.setVisible('rb_tool', false); const M = v.meshes.get('rb_tool'); if (M) M.visible = false; }
       v.setMeshTransform('rb_reach', B);
       // reach arc of the wrist centre in the current arm plane + TCP axes
       const lines = [];
@@ -190,15 +191,21 @@
       v.setGroupVisible('robot', this.visible);
       if (!this.reachVisible) { v.setVisible('rb_reach', false); v.setVisible('rb_reach_arc', false); }
     }
-    setVisible(vis) { this.visible = vis; this.viewer.setGroupVisible('robot', vis); if (vis && !this.reachVisible) { this.viewer.setVisible('rb_reach', false); this.viewer.setVisible('rb_reach_arc', false); } }
+    setVisible(vis) { this.visible = vis; this.viewer.setGroupVisible('robot', vis); this.viewer.setGroupVisible('toolmesh', vis); if (vis && this.toolMeshOn) { const M = this.viewer.meshes.get('rb_tool'); if (M) M.visible = false; } if (vis && !this.reachVisible) { this.viewer.setVisible('rb_reach', false); this.viewer.setVisible('rb_reach_arc', false); } }
     setReachVisible(vis) { this.reachVisible = vis; this.viewer.setVisible('rb_reach', vis && this.visible); this.viewer.setVisible('rb_reach_arc', vis && this.visible); }
   }
   /** obstacles: list from the server (robot frame); drawn in BASE coords via robotInBase */
-  RobotView.prototype.setObstacles = function (obs) {
+  RobotView.prototype.setObstacles = function (obs, meshLoader) {
     const v = this.viewer;
     v.removeGroup('obstacles');
     this.obstacles = obs || [];
+    if (meshLoader) this.meshLoader = meshLoader;
+    const meshGroups = {};
     (obs || []).forEach((o, i) => {
+      if (o.mesh_id && o.mesh_frame) {
+        if (!meshGroups[o.group || o.name]) meshGroups[o.group || o.name] = o;
+        return;  // primitives of an imported mesh are drawn via the mesh itself (capsules toggle shows them)
+      }
       let geom, model;
       const R = o.rot; // row-major 3x3
       const base = new Float32Array([R[0],R[3],R[6],0, R[1],R[4],R[7],0, R[2],R[5],R[8],0, o.center[0],o.center[1],o.center[2],1]);
@@ -219,7 +226,33 @@
         v.setLayer('obe_' + i, new Float32Array(E), o.workpiece ? 'var(--c-workpiece)' : 'var(--c-obstacle)', { alpha: 0.9, order: 4, group: 'obstacles' });
       }
     });
+    // imported meshes: fetch geometry and place with mesh_frame (robot frame, row-major 4x4)
+    const self = this;
+    Object.values(meshGroups).forEach((o, k) => {
+      if (!self.meshLoader) return;
+      const units = (o.raw && o.raw.match(/\s(mm|cm|m|in)(\s+workpiece)?\s*$/i) || [,'mm'])[1];
+      self.meshLoader(o.mesh_id, units).then(g => {
+        if (!g || g.error || !self.obstacles.includes(o)) return;
+        const geom = { positions: decodeF32(g.positions), normals: decodeF32(g.normals) };
+        const M = mul(self.robotInBase, fromRowMajor(o.mesh_frame));
+        v.setMesh('obm_' + (o.group || o.name), geom, o.workpiece ? 'var(--c-workpiece)' : 'var(--c-obstacle)', M, { group: 'obstacles', alpha: 0.85 });
+        v.setGroupVisible('obstacles', self.obstaclesVisible !== false);
+      }).catch(() => {});
+    });
     v.setGroupVisible('obstacles', this.obstaclesVisible !== false);
+  };
+  /** imported tool mesh (flange frame, mm): replaces the procedural tool cylinder */
+  RobotView.prototype.setToolMesh = function (g) {
+    const v = this.viewer;
+    v.removeGroup('toolmesh');
+    this.toolMeshOn = !!g;
+    if (g) {
+      const geom = { positions: decodeF32(g.positions), normals: decodeF32(g.normals) };
+      v.setMesh('rb_toolmesh', geom, TOOL, I4(), { group: 'toolmesh' });
+      v.setMeshTransform('rb_tool', I4());
+    }
+    v.setGroupVisible('toolmesh', this.visible);
+    if (this.joints) this.setPose(this.joints);
   };
   RobotView.prototype.setObstaclesVisible = function (vis) { this.obstaclesVisible = vis; this.viewer.setGroupVisible('obstacles', vis); };
   /** capsules: list {name, link, a, b, radius}; drawn as axis + end circles in the current pose */

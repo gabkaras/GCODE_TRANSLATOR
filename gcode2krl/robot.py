@@ -411,11 +411,12 @@ def check_path(robot: RobotModel, points: np.ndarray, abc: tuple[float, float, f
 
 def check_path_collisions(robot: RobotModel, points: np.ndarray, abc, base: np.ndarray, tool: np.ndarray,
                           reach: "ReachReport", obstacles: list, margin: float = 10.0, tool_radius: float = 25.0,
-                          cutter_len: float = 20.0, cutter_radius: float = 6.0, max_refine: int = 6):
+                          cutter_len: float = 20.0, cutter_radius: float = 6.0, max_refine: int = 6,
+                          tool_mesh: np.ndarray | None = None, tool_mesh_key=None):
     """Collision report along ``points`` using the IK results of ``reach`` (check_path)."""
     from .collision import check_collisions, robot_capsules
 
-    caps = robot_capsules(robot, tool, tool_radius, cutter_len, cutter_radius)
+    caps = robot_capsules(robot, tool, tool_radius, cutter_len, cutter_radius, tool_mesh=tool_mesh, tool_mesh_key=tool_mesh_key)
     r_path = abc_to_rot(*abc)
     tool_inv = inv_frame(tool)
     t_path = np.eye(4)

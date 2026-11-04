@@ -194,3 +194,14 @@ button.ghost { background: transparent; }
 button.mini { padding: 4px 9px; font-size: 11px; }
 .p3-grid { display: grid; grid-template-columns: 90px 1fr 1fr 1fr; gap: 4px; align-items: center; font-size: 11.5px; color: var(--muted); margin: 4px 0; }
 .p3-grid input { width: 100%; min-width: 0; background: var(--field); color: var(--text); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 4px 6px; font: 12px var(--mono); }
+
+.file-btn { display: inline-flex; align-items: center; cursor: pointer; }
+.mesh-list { display: flex; flex-direction: column; gap: 6px; padding: 4px 12px; }
+.mesh-item { border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 6px 8px; font-size: 11.5px; display: grid; grid-template-columns: 1fr auto; gap: 4px 8px; align-items: center; }
+.mesh-item .mi-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mesh-item .mi-meta { grid-column: 1 / -1; color: var(--muted); font-family: var(--mono); font-size: 10.5px; }
+.mesh-item .mi-frame { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(6, 1fr); gap: 4px; }
+.mesh-item .mi-frame input { width: 100%; min-width: 0; font: 11px var(--mono); padding: 3px 4px; background: var(--field); color: var(--text); border: 1px solid var(--line); border-radius: 4px; }
+.mesh-item .mi-actions { display: flex; gap: 4px; }
+.mesh-item label.wp { display: flex; gap: 4px; align-items: center; color: var(--muted); font-size: 11px; }
+.fb-row select { background: var(--field); color: var(--text); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 3px 6px; font-size: 11.5px; }

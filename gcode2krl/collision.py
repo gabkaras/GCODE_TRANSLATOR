@@ -63,12 +63,24 @@ class Obstacle:
             return np.linalg.norm(q, axis=1) - self.radius
         if self.kind == "floor":
             return q[:, 2]
+        if self.kind == "capsule":
+            # self.center = end point a (robot frame), self.half = b - a (robot frame), self.radius
+            ab = self.half
+            l2 = float(ab @ ab)
+            d = p - self.center
+            t = np.clip((d @ ab) / l2, 0.0, 1.0) if l2 > 1e-12 else np.zeros(len(p))
+            return np.linalg.norm(d - np.outer(t, ab), axis=1) - self.radius
         raise ValueError(self.kind)
+
+    group: str = ""  # mesh obstacles: all primitives of one mesh share the group name
+    mesh_id: str = ""
+    mesh_frame: list | None = None  # 4x4 (row-major) placement of the mesh in the robot frame
 
     def to_dict(self) -> dict:
         return {"name": self.name, "kind": self.kind, "center": self.center.tolist(), "rot": self.rot.ravel().tolist(),
                 "half": self.half.tolist(), "radius": self.radius, "height": self.height, "workpiece": self.workpiece,
-                "frame": self.frame}
+                "frame": self.frame, "group": self.group, "mesh_id": self.mesh_id, "mesh_frame": self.mesh_frame,
+                "raw": self.raw}
 
 
 def _to_robot(frame_name: str, base: np.ndarray, p: np.ndarray, r: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -76,6 +88,53 @@ def _to_robot(frame_name: str, base: np.ndarray, p: np.ndarray, r: np.ndarray) -
         return p, r
     t = base @ np.append(p, 1.0)
     return t[:3], base[:3, :3] @ r
+
+
+_mesh_prims_cache: dict[tuple, list[dict]] = {}
+
+
+def mesh_primitives(tris: np.ndarray, key=None) -> list[dict]:
+    """Convex primitives (one OBB or a capsule set, whichever is tighter) enclosing a mesh (mm, local frame)."""
+    if key is not None and key in _mesh_prims_cache:
+        return _mesh_prims_cache[key]
+    from .robot_import import capsule_volume, fit_capsules, fit_obb
+
+    box = fit_obb(tris)
+    box_vol = 8.0 * float(np.prod(box["half"]))
+    caps = fit_capsules(tris)
+    cap_vol = sum(capsule_volume(c) for c in caps)
+    prims = [box] if box_vol <= cap_vol else [dict(c, type="capsule") for c in caps]
+    if key is not None:
+        _mesh_prims_cache[key] = prims
+    return prims
+
+
+def mesh_obstacles(d: dict, base: np.ndarray, tris: np.ndarray, mesh_id: str = "") -> list[Obstacle]:
+    """Obstacles for a placed mesh: {kind: mesh, name, frame, center, abc, workpiece}."""
+    fr = str(d.get("frame", "robot")).lower()
+    name = str(d.get("name") or "mesh")
+    center = np.array(d.get("center", (0, 0, 0)), dtype=float)
+    rot = abc_to_rot(*[float(v) for v in d.get("abc", (0, 0, 0))])
+    c, r = _to_robot(fr, base, center, rot)
+    placement = np.eye(4)
+    placement[:3, :3] = r
+    placement[:3, 3] = c
+    wp = bool(d.get("workpiece", False))
+    out = []
+    for k, prim in enumerate(mesh_primitives(tris, key=(mesh_id or id(tris), d.get("units", "mm")))):
+        if prim.get("type") == "box":
+            pr = np.array(prim["rot"], float).reshape(3, 3)
+            ob = Obstacle(name, "box", c + r @ np.array(prim["center"], float), r @ pr, np.array(prim["half"], float),
+                          workpiece=wp, frame=fr, raw=d.get("raw", ""))
+        else:
+            a = c + r @ np.array(prim["a"], float)
+            b = c + r @ np.array(prim["b"], float)
+            ob = Obstacle(name, "capsule", a, np.eye(3), b - a, float(prim["radius"]), workpiece=wp, frame=fr, raw=d.get("raw", ""))
+        ob.group = name
+        ob.mesh_id = mesh_id
+        ob.mesh_frame = placement.ravel().tolist()
+        out.append(ob)
+    return out
 
 
 def obstacle_from_dict(d: dict, base: np.ndarray) -> Obstacle:
@@ -118,6 +177,7 @@ OBSTACLE_HELP = """# one obstacle per line:  kind name frame params... [workpiec
 # cylinder NAME robot|base cx cy cz radius height       (vertical, centre = middle)
 # sphere NAME robot|base cx cy cz radius
 # floor NAME robot|base z
+# mesh NAME robot|base x y z a b c FILE [mm|cm|m|in] [workpiece]   (STL/OBJ placed with a frame)
 floor posadzka robot 0
 box stol robot 1300 0 240 900 900 480
 box material base 50 30 -10 140 100 20 workpiece"""
@@ -161,6 +221,14 @@ def parse_obstacles(text: str) -> list[dict]:
                     raise ValueError("sphere needs cx cy cz radius")
                 out.append({"kind": "sphere", "name": name, "frame": fr, "center": nums[0:3], "radius": nums[3],
                             "workpiece": workpiece, "raw": raw.strip()})
+            elif kind == "mesh":
+                name, fr = parts[1], parts[2].lower()
+                nums = [float(v) for v in parts[3:9]]
+                if len(nums) != 6 or len(parts) < 10:
+                    raise ValueError("mesh needs x y z a b c FILE [units] [workpiece]")
+                units = parts[10] if len(parts) > 10 else "mm"
+                out.append({"kind": "mesh", "name": name, "frame": fr, "center": nums[0:3], "abc": nums[3:6],
+                            "file": parts[9], "units": units, "workpiece": workpiece, "raw": raw.strip()})
             else:
                 raise ValueError(f"unknown obstacle kind '{kind}'")
         except (IndexError, ValueError) as exc:
@@ -199,9 +267,36 @@ def procedural_capsules(robot: RobotModel) -> list[Capsule]:
     ]
 
 
+def tool_mesh_capsules(tris: np.ndarray, tool: np.ndarray, cutter_len: float, key=None) -> list[Capsule]:
+    """Capsules for an imported tool mesh (flange frame, mm). Triangles lying entirely within
+    ``cutter_len`` of the TCP along the tool axis are the cutter and are left out (the parametric
+    cutter capsule covers that part and is exempt from workpiece collisions)."""
+    tcp = tool[:3, 3]
+    length = float(np.linalg.norm(tcp))
+    if length > 1e-6 and cutter_len > 0:
+        axis = tcp / length
+        along = tris @ axis  # (N,3) axial coordinate of each vertex
+        keep = (along < length - cutter_len).any(axis=1)
+        body = tris[keep]
+    else:
+        body = tris
+    if len(body) == 0:
+        return []
+    from .robot_import import fit_capsules
+    k = (key, round(cutter_len, 3), tuple(np.round(tcp, 3)))
+    if k in _mesh_prims_cache:
+        caps = _mesh_prims_cache[k]
+    else:
+        caps = fit_capsules(body)
+        _mesh_prims_cache[k] = caps
+    return [Capsule("narzedzie", FLANGE_LINK, np.array(c["a"], float), np.array(c["b"], float), float(c["radius"]), "tool")
+            for c in caps]
+
+
 def robot_capsules(robot: RobotModel, tool: np.ndarray, tool_radius: float = 25.0, cutter_len: float = 20.0,
-                   cutter_radius: float = 6.0) -> list[Capsule]:
-    """Body capsules (mesh-derived when the definition has them) + tool capsules on the flange."""
+                   cutter_radius: float = 6.0, tool_mesh: np.ndarray | None = None, tool_mesh_key=None) -> list[Capsule]:
+    """Body capsules (mesh-derived when the definition has them) + tool capsules on the flange.
+    With ``tool_mesh`` (triangles in the flange frame, mm) the holder capsules come from the mesh."""
     caps: list[Capsule] = []
     if robot.capsules:
         for c in robot.capsules:
@@ -213,6 +308,13 @@ def robot_capsules(robot: RobotModel, tool: np.ndarray, tool_radius: float = 25.
         caps = procedural_capsules(robot)
     tcp = tool[:3, 3]
     length = float(np.linalg.norm(tcp))
+    if tool_mesh is not None and len(tool_mesh):
+        caps.extend(tool_mesh_capsules(tool_mesh, tool, cutter_len, key=tool_mesh_key))
+        if length > 1e-6:
+            d = tcp / length
+            cut = min(cutter_len, length)
+            caps.append(Capsule("ostrze", FLANGE_LINK, d * (length - cut), tcp, cutter_radius, "cutter"))
+        return caps
     if length > 1e-6:
         d = tcp / length
         cut = min(cutter_len, length)
@@ -448,15 +550,28 @@ def pair_clearances(robot: RobotModel, q: np.ndarray, caps: list[Capsule], obsta
             d = seg_convex_distance(ends[:, k, 0], ends[:, k, 1], box.distance) - c.radius
             cols.append(d)
             names.append((c.name, box.name, "self"))
+    groups: dict[str, list[Obstacle]] = {}
+    order: list[str] = []
     for ob in obstacles:
+        key = ob.group or f"#{id(ob)}"
+        if key not in groups:
+            groups[key] = []
+            order.append(key)
+        groups[key].append(ob)
+    for key in order:
+        prims = groups[key]
+        ob0 = prims[0]
         for k, c in enumerate(caps):
-            if ob.workpiece and c.kind == "cutter":
+            if ob0.workpiece and c.kind == "cutter":
                 continue
-            if c.link == 0 or (c.link == 1 and ob.kind == "floor"):
+            if c.link == 0 or (c.link == 1 and ob0.kind == "floor"):
                 continue  # the base is static (set-up error, not a path collision)
-            d = seg_convex_distance(ends[:, k, 0], ends[:, k, 1], ob.distance) - c.radius
+            d = None
+            for ob in prims:
+                dd = seg_convex_distance(ends[:, k, 0], ends[:, k, 1], ob.distance) - c.radius
+                d = dd if d is None else np.minimum(d, dd)
             cols.append(d)
-            names.append((c.name, ob.name, "obstacle"))
+            names.append((c.name, ob0.name, "obstacle"))
     if not cols:
         return np.full((len(q), 0), np.inf), names
     return np.column_stack(cols), names

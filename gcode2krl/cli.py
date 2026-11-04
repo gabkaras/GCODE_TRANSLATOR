@@ -74,6 +74,8 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--cutter-len", type=float, default=20.0, help="cutting length at the tool tip, mm (default 20)")
     r.add_argument("--cutter-radius", type=float, default=6.0, help="cutter radius, mm (default 6)")
     r.add_argument("--no-collisions", action="store_true", help="only reach/axis limits, no collision check")
+    r.add_argument("--tool-mesh", default=None, help="STL/OBJ of the tool in flange coordinates (holder capsules fitted from it)")
+    r.add_argument("--tool-mesh-units", default="mm", help="units of --tool-mesh: mm, cm, m, in (default mm)")
     p.add_argument("-q", "--quiet", action="store_true", help="no report on stdout")
     return p
 
@@ -137,10 +139,16 @@ def run(argv: list[str] | None = None) -> int:
         if not args.no_collisions:
             from .collision import OBSTACLE_HELP, obstacle_from_dict, parse_obstacles
             from .robot import check_path_collisions
+            from .server import build_obstacles
             text = open(args.obstacles, encoding="utf-8").read() if args.obstacles else OBSTACLE_HELP
-            obstacles = [obstacle_from_dict(o, base_t) for o in parse_obstacles(text)]
+            obstacles = build_obstacles(parse_obstacles(text), base_t)
+            tool_mesh = tool_mesh_key = None
+            if args.tool_mesh:
+                from . import meshstore
+                tool_mesh, tool_mesh_key = meshstore.load(args.tool_mesh, args.tool_mesh_units)
             col_rep, _ = check_path_collisions(robot, pts, kopts.abc, base_t, tool_t, robot_rep, obstacles, margin=args.margin,
-                                               tool_radius=args.tool_radius, cutter_len=args.cutter_len, cutter_radius=args.cutter_radius)
+                                               tool_radius=args.tool_radius, cutter_len=args.cutter_len, cutter_radius=args.cutter_radius,
+                                               tool_mesh=tool_mesh, tool_mesh_key=tool_mesh_key)
     os.makedirs(args.out_dir, exist_ok=True)
     for fname, content in prog.files.items():
         with open(os.path.join(args.out_dir, fname), "w", encoding="utf-8", newline="\r\n") as fh:

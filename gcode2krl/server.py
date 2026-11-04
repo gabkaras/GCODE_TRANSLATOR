@@ -33,7 +33,8 @@ import numpy as np
 from . import __version__
 from .gcode_parser import parse_gcode
 from .krl_writer import KrlOptions, write_krl
-from .collision import OBSTACLE_HELP, obstacle_from_dict, parse_obstacles
+from . import meshstore
+from .collision import OBSTACLE_HELP, mesh_obstacles, obstacle_from_dict, parse_obstacles
 from .robot import DEFAULT_ROBOT, ROBOTS, check_path, check_path_collisions, forward, frame
 from .translator import ArcItem, EventItem, LineItem, RapidItem, SplItem, TranslateOptions, sample_items, translate
 
@@ -248,23 +249,51 @@ def robot_report(items, options: dict, abc) -> dict | None:
         obs_dicts = parse_obstacles(obs_src)
     else:
         obs_dicts = list(obs_src)
-    obstacles = [obstacle_from_dict(o, base) for o in obs_dicts]
+    obstacles = build_obstacles(obs_dicts, base)
     margin = _opt(options, "margin", 10.0, float)
+    tool_mesh = None
+    tool_mesh_key = None
+    tool_mesh_ref = str(options.get("tool_mesh") or "").strip()
+    if tool_mesh_ref:
+        tool_mesh, tool_mesh_key = meshstore.load(tool_mesh_ref, _opt(options, "tool_mesh_units", "mm", str))
     col, caps = check_path_collisions(robot, pts, abc, base, tool, rep, obstacles, margin=margin,
                                       tool_radius=_opt(options, "tool_radius", 25.0, float),
                                       cutter_len=_opt(options, "cutter_len", 20.0, float),
                                       cutter_radius=_opt(options, "cutter_radius", 6.0, float),
-                                      max_refine=_opt(options, "max_refine", 6, int))
+                                      max_refine=_opt(options, "max_refine", 6, int),
+                                      tool_mesh=tool_mesh, tool_mesh_key=tool_mesh_key)
     cd = col.to_dict()
     cd["clearance"] = _f32(np.nan_to_num(col.clearance, nan=1e9).ravel())
     cd["worst_pair"] = col.worst_pair
     cd["collision_points"] = _f32(pts[col.collision_mask].ravel())
     cd["margin_points"] = _f32(pts[col.margin_mask].ravel())
     cd["obstacles"] = [o.to_dict() for o in obstacles]
+    cd["tool_mesh"] = tool_mesh_ref or None
+    cd["tool_mesh_units"] = _opt(options, "tool_mesh_units", "mm", str)
     cd["capsules"] = [{"name": c.name, "link": c.link, "a": c.a.tolist(), "b": c.b.tolist(), "radius": c.radius, "kind": c.kind} for c in caps]
     cd["pair_names"] = [[p.a, p.b, p.kind] for p in col.pairs]
     d["collision"] = cd
     return d
+
+
+def build_obstacles(obs_dicts: list, base: np.ndarray) -> list:
+    """Obstacle objects from parsed dicts; mesh entries expand to their convex primitives."""
+    out = []
+    for o in obs_dicts:
+        if str(o.get("kind", "")).lower() == "mesh":
+            tris, key = meshstore.load(o["file"], o.get("units", "mm"))
+            out.extend(mesh_obstacles(o, base, tris, mesh_id=o["file"]))
+        else:
+            out.append(obstacle_from_dict(o, base))
+    return out
+
+
+def mesh_render_payload(ref: str, units: str = "mm") -> dict:
+    from .meshio import flat_normals
+    tris, key = meshstore.load(ref, units)
+    if len(tris) > 400000:
+        tris = tris[:: int(np.ceil(len(tris) / 400000))]
+    return {"id": ref, "positions": _f32(tris.ravel()), "normals": _f32(flat_normals(tris).ravel()), "tris": int(len(tris))}
 
 
 def run_translation(gcode: str, filename: str, options: dict) -> dict:
@@ -398,6 +427,20 @@ class Handler(SimpleHTTPRequestHandler):
         if path == "/api/version":
             self.send_json({"version": __version__})
             return
+        if path == "/api/meshes":
+            self.send_json({"meshes": meshstore.list_meshes(), "dir": meshstore.mesh_dir()})
+            return
+        if path.startswith("/api/mesh/"):
+            ref = path[len("/api/mesh/"):]
+            units = "mm"
+            if "?" in self.path:
+                from urllib.parse import parse_qs
+                units = parse_qs(self.path.split("?", 1)[1]).get("units", ["mm"])[0]
+            try:
+                self.send_json(mesh_render_payload(ref, units))
+            except ValueError as exc:
+                self.send_json({"error": str(exc)}, 404)
+            return
         if path == "/api/robots":
             self.send_json({"default": DEFAULT_ROBOT, "robots": [r.to_dict() for r in ROBOTS.values()],
                             "obstacle_help": OBSTACLE_HELP})
@@ -417,6 +460,27 @@ class Handler(SimpleHTTPRequestHandler):
     # -------------------------------------------------------------- POST
     def do_POST(self) -> None:
         path = unquote(self.path.split("?", 1)[0])
+        if path == "/api/mesh":
+            try:
+                body = self.read_json()
+                data = base64.b64decode(body.get("data", ""))
+                if not data:
+                    raise ValueError("empty file")
+                meta = meshstore.save_mesh(str(body.get("name", "mesh.stl")), data)
+            except ValueError as exc:
+                self.send_json({"error": str(exc)}, 400)
+                return
+            self.send_json(meta)
+            return
+        if path == "/api/mesh/delete":
+            try:
+                body = self.read_json()
+                ok = meshstore.delete_mesh(str(body.get("id", "")))
+            except ValueError as exc:
+                self.send_json({"error": str(exc)}, 400)
+                return
+            self.send_json({"deleted": ok})
+            return
         if path != "/api/translate":
             self.send_json({"error": "not found"}, 404)
             return
