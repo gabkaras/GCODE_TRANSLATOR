@@ -63,6 +63,9 @@ def build_parser() -> argparse.ArgumentParser:
                    help="$BASE in robot coordinates (also written literally into the program)")
     r.add_argument("--tool-frame", type=float, nargs=6, default=None, metavar=("X", "Y", "Z", "A", "B", "C"),
                    help="$TOOL in flange coordinates (also written literally into the program)")
+    r.add_argument("--base-points", type=float, nargs=9, default=None,
+                   metavar=("OX", "OY", "OZ", "XX", "XY", "XZ", "PX", "PY", "PZ"),
+                   help="$BASE from the KUKA 3-point method: origin, point on +X, point in the XY plane (robot coordinates)")
     r.add_argument("--robot-samples", type=int, default=20000, help="max path samples for the IK check (default 20000)")
     r.add_argument("--path-step", type=float, default=5.0, help="max distance between path samples, mm (default 5)")
     r.add_argument("--obstacles", default=None, help="obstacle file (one per line: box/cylinder/sphere/floor ...; 'help' prints the format)")
@@ -96,6 +99,10 @@ def run(argv: list[str] | None = None) -> int:
         return 0
     with open(args.input, "r", encoding="utf-8", errors="replace") as fh:
         text = fh.read()
+    if args.base_points:
+        from .robot import frame_from_3_points
+        bp = args.base_points
+        args.base_frame = list(frame_from_3_points(bp[0:3], bp[3:6], bp[6:9]))
     parsed = parse_gcode(text, start=tuple(args.start), dwell_in_ms=args.dwell_ms)
     topts = TranslateOptions(tol=args.tol, max_radius=args.max_radius, min_radius=args.min_radius,
                              min_arc_points=args.min_arc_points, refine_shift=args.refine_shift,

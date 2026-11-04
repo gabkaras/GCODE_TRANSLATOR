@@ -38,13 +38,15 @@
     if (!sel.value || sel.value === 'none') sel.value = d.default;
     sel.dataset.ready = '1';
     const ta = $('#opt_obstacles');
-    ta.dataset.default = d.obstacle_help;
-    if (!ta.value) ta.value = d.obstacle_help;
+    const helpLines = d.obstacle_help.split('\n').filter(l => !/^box (stol|material) /.test(l));
+    ta.dataset.default = helpLines.join('\n');
+    if (!ta.value) ta.value = helpLines.join('\n');
     updateRobotModel();
   }).catch(() => {});
 
   // ----------------------------------------------------------------- options
   const OPTION_IDS = ['robot','base_frame','tool_frame','base_literal','tool_literal','robot_samples','path_step','margin',
+    'tbl_sx','tbl_sy','tbl_cx','tbl_cy','mat_t','mat_pad',
     'tool_radius','cutter_len','cutter_radius','obstacles','tol','max_radius','min_radius','min_arc_points','refine_shift','spl_max_segment','corner_angle',
     'default_feed','offset','fit_arcs','use_spl','name','mode','tool','base','abc','rapid_vel','max_vel','acc','cdis',
     'round_corners','max_block_segments','max_motions_per_file','block_approx','spindle_out','coolant_out','spindle_anout',
@@ -75,7 +77,10 @@
     $$('#options [data-default]').forEach(el => {
       if (el.type === 'checkbox') el.checked = el.dataset.default === 'true'; else el.value = el.dataset.default;
     });
+    syncFramesFromOptions();
     saveOptions();
+    if (typeof applyFrames === 'function') applyFrames();
+    updateAutoObstacles();
     scheduleAuto();
   }
 
@@ -225,7 +230,9 @@
       }
       showRobot(data.robot);
       viewer.setBounds(p.bounds.min, p.bounds.max);
+      drawFrames();
       if (!state.fitted) { viewer.viewIso(); state.fitted = true; } else viewer.invalidate();
+      updateAutoObstacles();
       const b = p.bounds;
       $('#bounds').textContent = `X ${fmt(b.min[0], 2)} … ${fmt(b.max[0], 2)}   Y ${fmt(b.min[1], 2)} … ${fmt(b.max[1], 2)}   Z ${fmt(b.min[2], 2)} … ${fmt(b.max[2], 2)} mm`;
     }
@@ -274,6 +281,144 @@
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = state.currentFile; a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 2000);
   });
+
+  // ------------------------------------------------------------ cell setup
+  const AXES6 = ['x', 'y', 'z', 'a', 'b', 'c'];
+  function hiddenToFields(prefix, hiddenId) {
+    const v = parse6('#' + hiddenId, [0, 0, 0, 0, 0, 0]);
+    AXES6.forEach((ax, i) => { const el = $('#' + prefix + '_' + ax); if (el && document.activeElement !== el) el.value = +v[i].toFixed(3); });
+  }
+  function fieldsToHidden(prefix, hiddenId) {
+    const v = AXES6.map(ax => Number($('#' + prefix + '_' + ax).value) || 0);
+    const h = $('#' + hiddenId);
+    const text = v.map(x => +x.toFixed(3)).join(' ');
+    if (h.value !== text) { h.value = text; return true; }
+    return false;
+  }
+  function setFrameFields(prefix, hiddenId, v) {
+    $('#' + hiddenId).value = v.map(x => +x.toFixed(3)).join(' ');
+    hiddenToFields(prefix, hiddenId);
+  }
+  function onFrameEdit(prefix, hiddenId) {
+    if (fieldsToHidden(prefix, hiddenId)) {
+      saveOptions(); applyFrames(); updateAutoObstacles(); scheduleAuto();
+    }
+  }
+  AXES6.forEach(ax => {
+    $('#tf_' + ax).addEventListener('input', () => onFrameEdit('tf', 'opt_tool_frame'));
+    $('#bf_' + ax).addEventListener('input', () => onFrameEdit('bf', 'opt_base_frame'));
+  });
+  function syncFramesFromOptions() { hiddenToFields('tf', 'opt_tool_frame'); hiddenToFields('bf', 'opt_base_frame'); }
+
+  // tool presets (browser storage)
+  const BUILTIN_TOOLS = [
+    { name: 'Wrzeciono 150 mm', frame: [0, 0, 150, 0, 0, 0], tool_radius: 25, cutter_len: 20, cutter_radius: 6 },
+    { name: 'Wrzeciono 250 mm', frame: [0, 0, 250, 0, 0, 0], tool_radius: 30, cutter_len: 30, cutter_radius: 8 },
+    { name: 'Kołnierz (bez narzędzia)', frame: [0, 0, 0, 0, 0, 0], tool_radius: 25, cutter_len: 0, cutter_radius: 6 },
+  ];
+  function loadTools() { try { return JSON.parse(localStorage.getItem('gcode2krl.tools') || '[]'); } catch (e) { return []; } }
+  function saveTools(t) { try { localStorage.setItem('gcode2krl.tools', JSON.stringify(t)); } catch (e) {} }
+  function refreshToolPresets() {
+    const sel = $('#tool-presets');
+    sel.innerHTML = '<option value="">narzędzia…</option>';
+    const all = BUILTIN_TOOLS.map(t => ({ ...t, builtin: true })).concat(loadTools());
+    all.forEach((t, i) => { const o = document.createElement('option'); o.value = String(i); o.textContent = t.name + (t.builtin ? '' : ' ·'); sel.appendChild(o); });
+    sel.dataset.all = JSON.stringify(all);
+  }
+  $('#tool-presets').addEventListener('change', e => {
+    const all = JSON.parse(e.target.dataset.all || '[]'); const t = all[Number(e.target.value)];
+    if (!t) return;
+    setFrameFields('tf', 'opt_tool_frame', t.frame);
+    $('#opt_tool_radius').value = t.tool_radius; $('#opt_cutter_len').value = t.cutter_len; $('#opt_cutter_radius').value = t.cutter_radius;
+    $('#tool-name').value = t.name;
+    saveOptions(); applyFrames(); scheduleAuto();
+  });
+  $('#tool-save').addEventListener('click', () => {
+    const name = $('#tool-name').value.trim(); if (!name) { setStatus('Podaj nazwę narzędzia', 'err'); return; }
+    const tools = loadTools().filter(t => t.name !== name);
+    tools.push({ name, frame: parse6('#opt_tool_frame', [0,0,0,0,0,0]), tool_radius: Number($('#opt_tool_radius').value), cutter_len: Number($('#opt_cutter_len').value), cutter_radius: Number($('#opt_cutter_radius').value) });
+    saveTools(tools); refreshToolPresets(); setStatus(`Zapisano narzędzie „${name}”`, 'ok');
+  });
+  $('#tool-del').addEventListener('click', () => {
+    const name = $('#tool-name').value.trim();
+    const tools = loadTools(); if (!tools.some(t => t.name === name)) { setStatus('Takie narzędzie nie jest zapisane (wbudowanych nie można usunąć)', 'err'); return; }
+    saveTools(tools.filter(t => t.name !== name)); refreshToolPresets(); setStatus(`Usunięto „${name}”`, 'ok');
+  });
+  refreshToolPresets();
+
+  // base from 3 points (KSS 3-point method)
+  $('#base-3p-toggle').addEventListener('click', () => $('#base-3p').classList.toggle('hidden'));
+  function rotToABC(x, y, z) { // columns of R
+    const r00 = x[0], r10 = x[1], r20 = x[2], r21 = y[2], r22 = z[2];
+    const d = 180 / Math.PI;
+    const b = Math.atan2(-r20, Math.hypot(r00, r10));
+    let a, c;
+    if (Math.abs(Math.cos(b)) < 1e-9) { a = 0; c = Math.atan2(y[0], y[1]) * (b > 0 ? 1 : -1); }
+    else { a = Math.atan2(r10, r00); c = Math.atan2(r21, r22); }
+    return [a * d, b * d, c * d];
+  }
+  $('#base-3p-apply').addEventListener('click', () => {
+    const P = k => ['x', 'y', 'z'].map(ax => Number($('#p' + k + '_' + ax).value));
+    const o = P(1), px = P(2), pxy = P(3);
+    const sub = (u, v) => u.map((a, i) => a - v[i]), nrm = v => Math.hypot(...v), cr = (u, v) => [u[1]*v[2]-u[2]*v[1], u[2]*v[0]-u[0]*v[2], u[0]*v[1]-u[1]*v[0]];
+    const msg = $('#base-3p-msg');
+    let x = sub(px, o); if (nrm(x) < 1e-9 || [o, px, pxy].flat().some(v => !Number.isFinite(v))) { msg.textContent = 'P2 musi różnić się od P1 (uzupełnij wszystkie pola)'; msg.className = 'bad'; return; }
+    x = x.map(v => v / nrm(x));
+    let z = cr(x, sub(pxy, o)); if (nrm(z) < 1e-9) { msg.textContent = 'P3 leży na osi X'; msg.className = 'bad'; return; }
+    z = z.map(v => v / nrm(z));
+    const y = cr(z, x);
+    const abc = rotToABC(x, y, z);
+    setFrameFields('bf', 'opt_base_frame', [o[0], o[1], o[2], abc[0], abc[1], abc[2]]);
+    msg.textContent = `baza: A ${abc[0].toFixed(2)}° B ${abc[1].toFixed(2)}° C ${abc[2].toFixed(2)}°`; msg.className = 'ok';
+    saveOptions(); applyFrames(); updateAutoObstacles(); scheduleAuto();
+  });
+  $('#base-center').addEventListener('click', () => {
+    const b = state.result ? state.result.preview.bounds : { min: [0, 0, 0], max: [0, 0, 0] };
+    const cx = (b.min[0] + b.max[0]) / 2, cy = (b.min[1] + b.max[1]) / 2;
+    const f = parse6('#opt_base_frame', [1400, 0, 500, 0, 0, 0]);
+    const d = Math.PI / 180, ca = Math.cos(f[3] * d), sa = Math.sin(f[3] * d);
+    // robot-frame position of the path centre = base origin + Rz(A)*(cx, cy): put it at (dist, 0)
+    const dist = Number($('#base-dist').value) || 1400;
+    f[0] = dist - (ca * cx - sa * cy); f[1] = 0 - (sa * cx + ca * cy);
+    setFrameFields('bf', 'opt_base_frame', f);
+    saveOptions(); applyFrames(); updateAutoObstacles(); scheduleAuto();
+  });
+
+  // automatic table and stock obstacles from the base frame and the path bounds
+  function updateAutoObstacles() {
+    const ta = $('#opt_obstacles'); if (!ta) return;
+    const keep = ta.value.split('\n').filter(l => !/#\s*auto\s*$/.test(l));
+    let lines = keep;
+    if ($('#auto-table').checked) {
+      const f = parse6('#opt_base_frame', [1400, 0, 500, 0, 0, 0]);
+      const sx = Number($('#tbl_sx').value) || 900, sy = Number($('#tbl_sy').value) || 900;
+      const b0 = state.result ? state.result.preview.bounds : { min: [-100, -100, 0], max: [100, 100, 0] };
+      const cx = $('#tbl_cx').value === '' ? (b0.min[0] + b0.max[0]) / 2 : Number($('#tbl_cx').value);
+      const cy = $('#tbl_cy').value === '' ? (b0.min[1] + b0.max[1]) / 2 : Number($('#tbl_cy').value);
+      // table height: from the base plane down to the robot floor (z=0) when the base is level above it
+      const t = Number($('#mat_t').value) || 20, pad = Number($('#mat_pad').value) || 0;
+      // the table top carries the stock: top at base Z = -t, bottom on the robot floor when the base is level
+      const h = (Math.abs(f[4]) < 1e-6 && Math.abs(f[5]) < 1e-6 && f[2] > t + 50) ? f[2] - t : 480;
+      const b = state.result ? state.result.preview.bounds : { min: [-100, -100, 0], max: [100, 100, 0] };
+      const mx = (b.min[0] + b.max[0]) / 2, my = (b.min[1] + b.max[1]) / 2;
+      const msx = Math.max(10, b.max[0] - b.min[0] + 2 * pad), msy = Math.max(10, b.max[1] - b.min[1] + 2 * pad);
+      const r = v => Math.round(v * 10) / 10;
+      lines = keep.concat([
+        `box stol base ${r(cx)} ${r(cy)} ${r(-t - h / 2)} ${r(sx)} ${r(sy)} ${r(h)}  # auto`,
+        `box material base ${r(mx)} ${r(my)} ${r(-t / 2)} ${r(msx)} ${r(msy)} ${r(t)} workpiece  # auto`,
+      ]);
+    }
+    const text = lines.join('\n').replace(/\n{3,}/g, '\n\n');
+    if (text !== ta.value) { ta.value = text; saveOptions(); scheduleAuto(); }
+  }
+  ['#auto-table', '#tbl_sx', '#tbl_sy', '#tbl_cx', '#tbl_cy', '#mat_t', '#mat_pad'].forEach(sel => $(sel).addEventListener('input', updateAutoObstacles));
+  function drawFrames() {
+    if (!viewer) return;
+    const b = viewer.bounds; const span = Math.max(b.max[0] - b.min[0], b.max[1] - b.min[1], 50);
+    const L = Math.max(40, span * 0.25);
+    const cols = ['var(--c-ax-x)', 'var(--c-ax-y)', 'var(--c-ax-z)'];
+    [[L, 0, 0], [0, L, 0], [0, 0, L]].forEach((e, i) => viewer.setLayer('frame_base' + i, new Float32Array([0, 0, 0, ...e]), cols[i], { order: 14, group: 'frames' }));
+  }
 
   // ------------------------------------------------------------------ robot
   const anim = { joints: null, n: 0, pos: 0, playing: false, last: 0, raf: null };
@@ -520,7 +665,8 @@
 
   loadOptions();
   $('#opt_tol_range').value = $('#opt_tol').value;
-  robotsReady.then(() => { loadOptions(); updateRobotModel(); });
+  syncFramesFromOptions();
+  robotsReady.then(() => { loadOptions(); syncFramesFromOptions(); updateRobotModel(); updateAutoObstacles(); });
   let savedTheme = 'dark';  // the brand look is dark; 'auto' and 'light' are available in the header
   try { savedTheme = localStorage.getItem('gcode2krl.theme') || 'dark'; } catch (e) {}
   setTheme(savedTheme, false);

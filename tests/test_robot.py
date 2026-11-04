@@ -105,3 +105,21 @@ def test_agilus_wrist_offset_is_positive():
     fl = forward(r, r.home)[-1]
     # HOME of the KR 6 R900 sixx: flange at X = 25 + 420 + 80, Z = 400 + 455 + 35
     assert np.allclose(fl[:3, 3], [525, 0, 890])
+
+
+def test_frame_from_3_points():
+    from gcode2krl.robot import frame_from_3_points
+    # base rotated 30 deg about Z, 500 mm up, 1200 mm in front
+    o = np.array([1200.0, 0.0, 500.0])
+    ca, sa = math.cos(math.radians(30)), math.sin(math.radians(30))
+    x = o + 200 * np.array([ca, sa, 0])
+    xy = o + 100 * np.array([-sa, ca, 0]) + 50 * np.array([ca, sa, 0])
+    f = frame_from_3_points(o, x, xy)
+    assert np.allclose(f[:3], o) and abs(f[3] - 30) < 1e-9 and abs(f[4]) < 1e-9 and abs(f[5]) < 1e-9
+    # tilted table: XY point above the X axis plane -> C rotation
+    xy2 = o + np.array([0, 0, 100.0])
+    f2 = frame_from_3_points(o, o + np.array([100.0, 0, 0]), xy2)
+    assert abs(f2[5] - 90) < 1e-9 and abs(f2[3]) < 1e-9
+    import pytest
+    with pytest.raises(ValueError):
+        frame_from_3_points(o, o, xy)

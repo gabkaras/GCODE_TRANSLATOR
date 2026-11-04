@@ -68,11 +68,54 @@
       <label class="row"><span>Pozycja startowa X Y Z</span><input type="text" id="opt_start" data-default="0 0 0" value="0 0 0"></label>
     </details>
 
+    <details open id="cell-setup">
+      <summary>Stanowisko: TCP, baza, stół</summary>
+      <div class="frame-block">
+        <div class="fb-head"><span>TCP · $TOOL w układzie kołnierza</span>
+          <select id="tool-presets" title="zapisane narzędzia"><option value="">narzędzia…</option></select>
+        </div>
+        <div class="frame-grid" data-prefix="tf">
+          <label>X<input type="number" id="tf_x" step="1"></label><label>Y<input type="number" id="tf_y" step="1"></label><label>Z<input type="number" id="tf_z" step="1"></label>
+          <label>A<input type="number" id="tf_a" step="1"></label><label>B<input type="number" id="tf_b" step="1"></label><label>C<input type="number" id="tf_c" step="1"></label>
+        </div>
+        <div class="fb-row"><input type="text" id="tool-name" placeholder="nazwa narzędzia" maxlength="32"><button type="button" id="tool-save" class="mini">zapisz</button><button type="button" id="tool-del" class="mini">usuń</button></div>
+        <input type="hidden" id="opt_tool_frame" data-default="0 0 150 0 0 0" value="0 0 150 0 0 0">
+        <div class="row-note muted">Z = długość narzędzia od kołnierza wzdłuż jego osi; A B C obracają układ TCP (ZYX jak w KSS).</div>
+      </div>
+      <div class="frame-block">
+        <div class="fb-head"><span>Baza · $BASE w układzie robota</span>
+          <button type="button" id="base-3p-toggle" class="mini">3 punkty</button>
+        </div>
+        <div class="frame-grid" data-prefix="bf">
+          <label>X<input type="number" id="bf_x" step="10"></label><label>Y<input type="number" id="bf_y" step="10"></label><label>Z<input type="number" id="bf_z" step="10"></label>
+          <label>A<input type="number" id="bf_a" step="1"></label><label>B<input type="number" id="bf_b" step="1"></label><label>C<input type="number" id="bf_c" step="1"></label>
+        </div>
+        <input type="hidden" id="opt_base_frame" data-default="1400 0 500 0 0 0" value="1400 0 500 0 0 0">
+        <div id="base-3p" class="hidden">
+          <div class="row-note muted">Metoda 3-punktowa KSS: początek bazy, punkt na dodatniej osi X, punkt w płaszczyźnie XY po stronie +Y. Współrzędne w układzie robota ($ROBROOT), np. odczytane z pozycji TCP.</div>
+          <div class="p3-grid">
+            <span>P1 początek</span><input type="number" id="p1_x" step="1" placeholder="X"><input type="number" id="p1_y" step="1" placeholder="Y"><input type="number" id="p1_z" step="1" placeholder="Z">
+            <span>P2 oś +X</span><input type="number" id="p2_x" step="1" placeholder="X"><input type="number" id="p2_y" step="1" placeholder="Y"><input type="number" id="p2_z" step="1" placeholder="Z">
+            <span>P3 płaszcz. XY</span><input type="number" id="p3_x" step="1" placeholder="X"><input type="number" id="p3_y" step="1" placeholder="Y"><input type="number" id="p3_z" step="1" placeholder="Z">
+          </div>
+          <div class="fb-row"><button type="button" id="base-3p-apply" class="mini">wylicz bazę</button><span id="base-3p-msg" class="muted"></span></div>
+        </div>
+        <div class="fb-row"><button type="button" id="base-center" class="mini" title="przesuń bazę tak, aby środek ścieżki był w podanej odległości przed robotem">detal przed robotem</button><input type="number" id="base-dist" value="1400" step="50" title="odległość środka detalu od osi A1 [mm]"><span class="muted">mm od osi A1</span></div>
+      </div>
+      <div class="frame-block">
+        <div class="fb-head"><span>Stół roboczy i materiał</span>
+          <label class="auto"><input type="checkbox" id="auto-table" data-default="true" checked> automatycznie</label>
+        </div>
+        <div class="row"><span>Blat (dł. × szer.) [mm]</span><span class="pair2"><input type="number" id="tbl_sx" data-default="800" value="800" step="50"><input type="number" id="tbl_sy" data-default="800" value="800" step="50"></span></div>
+        <div class="row"><span>Środek blatu w bazie X, Y<br><small>puste = środek ścieżki</small></span><span class="pair2"><input type="number" id="tbl_cx" data-default="" value="" step="10" placeholder="auto"><input type="number" id="tbl_cy" data-default="" value="" step="10" placeholder="auto"></span></div>
+        <div class="row"><span>Materiał: grubość, zapas [mm]</span><span class="pair2"><input type="number" id="mat_t" data-default="20" value="20" step="1"><input type="number" id="mat_pad" data-default="20" value="20" step="5"></span></div>
+        <div class="row-note muted">Materiał to prostopadłościan pod obrysem ścieżki z górną powierzchnią w Z = 0 bazy (ostrze może w niego wchodzić); blat zaczyna się pod materiałem i sięga do posadzki robota. Wpisy pojawiają się w przeszkodach z oznaczeniem <code># auto</code>.</div>
+      </div>
+    </details>
+
     <details open>
       <summary>Robot</summary>
       <label class="row"><span>Model</span><select id="opt_robot" data-default="KR90R2700PRO"><option value="none">brak</option></select></label>
-      <label class="row"><span>$BASE w ukł. robota<br><small>X Y Z A B C</small></span><input type="text" id="opt_base_frame" data-default="1200 0 500 0 0 0" value="1200 0 500 0 0 0"></label>
-      <label class="row"><span>$TOOL w ukł. kołnierza<br><small>X Y Z A B C</small></span><input type="text" id="opt_tool_frame" data-default="0 0 150 0 0 0" value="0 0 150 0 0 0"></label>
       <label class="row check"><input type="checkbox" id="opt_base_literal" data-default="false"><span>Zapisz $BASE literalnie w KRL</span></label>
       <label class="row check"><input type="checkbox" id="opt_tool_literal" data-default="false"><span>Zapisz $TOOL literalnie w KRL</span></label>
       <label class="row"><span>Krok próbkowania [mm]</span><input type="number" id="opt_path_step" data-default="5" value="5" min="0.5" step="1"></label>

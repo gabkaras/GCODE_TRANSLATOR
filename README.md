@@ -119,6 +119,19 @@ przewrotem i bez), wybór rozwiązania w limitach osi i najbliższego poprzednie
 pozie, sprawdzenie całej ścieżki. Testy obiegu FK → IK → FK przechodzą dla
 wszystkich dziewięciu modeli.
 
+**Stanowisko w GUI (sekcja *Stanowisko: TCP, baza, stół*).** TCP i bazę
+ustawia się polami X Y Z A B C: TCP w układzie kołnierza (Z to długość
+narzędzia), baza w układzie robota. Narzędzia można zapisywać jako presety
+(wraz z promieniem uchwytu i ostrza), bazę wyznaczyć **metodą 3-punktową jak
+w KSS** (początek, punkt na +X, punkt w płaszczyźnie XY, w układzie robota)
+albo przyciskiem *detal przed robotem* (przesuwa bazę tak, by środek ścieżki
+był w zadanej odległości od osi A1). Stół i materiał są generowane
+automatycznie z bazy: prostopadłościan materiału pod obrysem ścieżki z górną
+powierzchnią w Z = 0 bazy (ostrze może w niego wchodzić) i blat pod
+materiałem sięgający do posadzki, jako wpisy `# auto` w przeszkodach; można je wyłączyć i
+pisać ręcznie. Układ bazy i TCP są rysowane w podglądzie 3D. W CLI:
+`--base-points OX OY OZ XX XY XZ PX PY PZ` liczy bazę z trzech punktów.
+
 Co robi sprawdzenie (`--robot`, w GUI panel *Robot*):
 
 * `$BASE` podajesz w układzie robota (X Y Z A B C), `$TOOL` w układzie

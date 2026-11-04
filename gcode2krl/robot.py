@@ -192,6 +192,27 @@ def inv_frame(t: np.ndarray) -> np.ndarray:
 FLANGE0 = rot_y(math.pi / 2)  # flange orientation in the forearm frame at A4=A5=A6=0
 
 
+def frame_from_3_points(origin, x_point, xy_point) -> tuple[float, float, float, float, float, float]:
+    """KUKA 3-point base measurement: origin, a point on the +X axis and a point in
+    the XY plane with positive Y. Returns X Y Z A B C of the base in the frame the
+    points were given in (usually the robot $ROBROOT frame)."""
+    o = np.asarray(origin, dtype=float)
+    px = np.asarray(x_point, dtype=float)
+    pxy = np.asarray(xy_point, dtype=float)
+    x = px - o
+    if np.linalg.norm(x) < 1e-9:
+        raise ValueError("X point coincides with the origin")
+    x = x / np.linalg.norm(x)
+    z = np.cross(x, pxy - o)
+    if np.linalg.norm(z) < 1e-9:
+        raise ValueError("XY point lies on the X axis")
+    z = z / np.linalg.norm(z)
+    y = np.cross(z, x)
+    r = np.column_stack([x, y, z])
+    a, b, c = rot_to_abc(r)
+    return float(o[0]), float(o[1]), float(o[2]), a, b, c
+
+
 # ------------------------------------------------------------------ forward
 def forward(robot: RobotModel, joints_deg) -> list[np.ndarray]:
     """Return 4x4 frames [base, link_1 .. link_6, flange] (URDF link frames; flange Z out)."""
