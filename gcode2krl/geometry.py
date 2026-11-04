@@ -20,8 +20,13 @@ TWO_PI = 2.0 * math.pi
 
 
 def unit(v: np.ndarray) -> np.ndarray:
-    n = float(np.linalg.norm(v))
+    n = math.sqrt(float(v @ v))
     return v / n if n > EPS else np.zeros_like(v)
+
+
+def cross3(a: np.ndarray, b: np.ndarray) -> np.ndarray:
+    """Cross product of two 3-vectors without numpy's generic overhead."""
+    return np.array([a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]])
 
 
 def point_segment_distances(points: np.ndarray, a: np.ndarray, b: np.ndarray) -> np.ndarray:
@@ -60,13 +65,28 @@ class Plane:
 
 
 def fit_plane(points: np.ndarray) -> Plane:
-    """Least-squares plane through ``points`` (n >= 3) via SVD."""
+    """Least-squares plane through ``points`` (n >= 3).
+
+    Fast path for planar chains aligned with a coordinate plane (the usual
+    2.5-D milling case); otherwise the eigenvectors of the 3x3 scatter matrix.
+    """
     c = points.mean(axis=0)
     q = points - c
-    _, _, vt = np.linalg.svd(q, full_matrices=False)
-    u = unit(vt[0])
-    normal = unit(vt[2]) if vt.shape[0] > 2 else unit(np.cross(u, vt[1]))
-    v = np.cross(normal, u)
+    ext = np.abs(q).max(axis=0)
+    flat = np.flatnonzero(ext < 1e-9)
+    if flat.size == 1:
+        k = int(flat[0])
+        normal = np.zeros(3)
+        normal[k] = 1.0
+        u = np.zeros(3)
+        u[(k + 1) % 3] = 1.0
+        v = cross3(normal, u)
+        return Plane(c, u, v, normal)
+    cov = q.T @ q
+    w, vecs = np.linalg.eigh(cov)
+    normal = unit(vecs[:, 0])
+    u = unit(vecs[:, 2])
+    v = cross3(normal, u)
     return Plane(c, u, v, normal)
 
 
@@ -82,12 +102,13 @@ def fit_circle_taubin(x: np.ndarray, y: np.ndarray) -> tuple[float, float, float
     u = u / scale
     v = v / scale
     z = u * u + v * v
-    mxx = float((u * u).mean())
-    myy = float((v * v).mean())
-    mxy = float((u * v).mean())
-    mxz = float((u * z).mean())
-    myz = float((v * z).mean())
-    mzz = float((z * z).mean())
+    inv = 1.0 / n
+    mxx = float(u @ u) * inv
+    myy = float(v @ v) * inv
+    mxy = float(u @ v) * inv
+    mxz = float(u @ z) * inv
+    myz = float(v @ z) * inv
+    mzz = float(z @ z) * inv
     mz = mxx + myy
     cov_xy = mxx * myy - mxy * mxy
     var_z = mzz - mz * mz
@@ -145,15 +166,16 @@ def fit_arc_fixed_ends(
     t = 0.0
     if init_center is not None:
         t = (init_center[0] - mx) * nx + (init_center[1] - my) * ny
+    xm = x - mx
+    ym = y - my
     for _ in range(40):
-        cx, cy = mx + t * nx, my + t * ny
-        dx, dy = x - cx, y - cy
-        d = np.sqrt(dx * dx + dy * dy)
-        d = np.where(d < EPS, EPS, d)
+        dx = xm - t * nx
+        dy = ym - t * ny
+        d = np.hypot(dx, dy)
+        np.maximum(d, EPS, out=d)
         radius = math.sqrt(t * t + half * half)
         res = d - radius
-        dd = -(dx * nx + dy * ny) / d
-        jac = dd - t / radius
+        jac = -(dx * nx + dy * ny) / d - t / radius
         jj = float(jac @ jac)
         if jj < EPS:
             break
@@ -236,7 +258,8 @@ def fit_arc_3d(
     x, y, w = plane.project(points)
     if float(np.abs(w).max()) > tol:
         return None
-    closed = float(np.linalg.norm(points[-1] - points[0])) < close_eps
+    dse = points[-1] - points[0]
+    closed = math.sqrt(float(dse @ dse)) < close_eps
     init = fit_circle_taubin(x, y)
     if closed:
         fit = init
@@ -305,7 +328,7 @@ def arc_from_center(
     rs -= (rs @ normal) * normal
     r = float(np.linalg.norm(rs))
     u = unit(rs)
-    v = np.cross(normal, u)
+    v = cross3(normal, u)
     re = end - center
     re -= (re @ normal) * normal
     ang = math.atan2(float(re @ v), float(re @ u))
@@ -315,7 +338,8 @@ def arc_from_center(
         sweep = (-ang) % TWO_PI
         v = -v
         normal = -normal
-    closed = float(np.linalg.norm(end - start)) < 1e-9
+    dse = end - start
+    closed = math.sqrt(float(dse @ dse)) < 1e-9
     if closed or sweep < 1e-12:
         sweep = TWO_PI
         closed = True

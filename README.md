@@ -10,13 +10,61 @@ krzywiźnie do punktów `SPL` wewnątrz bloków `SPLINE`.
 G-code (.nc) ──parser──> ruchy ──dopasowanie łuków──> SLIN / SCIRC / SPL ──writer──> PROG.src + PROG.dat
 ```
 
+![GUI gcode2krl](docs/gui.png)
+
 ## Instalacja
 
 ```bash
 pip install -e .          # wymaga Python >= 3.10 i numpy
 pip install -e .[test]    # dodatkowo pytest
-pytest                    # 43 testy
+pytest                    # 47 testów
 ```
+
+## GUI
+
+```bash
+gcode2krl-gui                       # http://127.0.0.1:8765, otwiera przeglądarkę
+gcode2krl-gui --port 9000 --no-browser
+```
+
+Lokalna aplikacja webowa bez żadnych zależności poza biblioteką standardową
+Pythona i numpy (działa offline, np. na komputerze przy robocie):
+
+* przeciągnij plik G-code do okna albo wybierz przykład; wynik liczy się
+  automatycznie po każdej zmianie opcji (suwak tolerancji, tryb, orientacja…),
+* kafelki: ruchy wejściowe / KRL, kompresja, maksymalna odchyłka (zielona,
+  gdy mieści się w tolerancji), czasy parsera / dopasowania / generowania,
+* **podgląd 3D** na własnym rendererze WebGL: warstwy G-code wejściowy, G0,
+  SLIN, SCIRC, SPL i punkty pomocnicze łuków; obrót (LPM), przesuwanie
+  (PPM / Shift), zoom (kółko, pinch), widoki izo / z góry / z przodu,
+  rzut ortogonalny, siatka z automatycznym krokiem, eksport PNG;
+  skróty `F` dopasuj, `T` z góry, `I` izo, `Ctrl+Enter` tłumacz,
+* zakładka **KRL** z podświetlaniem składni, wyborem pliku (program główny i
+  podprogramy), kopiowaniem, pobraniem pojedynczego pliku lub `.zip`
+  z kompletem `.src` + `.dat` (CRLF),
+* zakładka **Ostrzeżenia** z komunikatami parsera (G28, G92, G41/G42,
+  niezgodne promienie łuków, brak F…),
+* opcje zapamiętywane w przeglądarce (`localStorage`).
+
+![zakładka KRL](docs/gui_krl.png)
+
+API JSON serwera (do własnej automatyzacji):
+
+| metoda | ścieżka | opis |
+|---|---|---|
+| GET | `/api/examples`, `/api/example/<nazwa>` | przykładowe pliki |
+| POST | `/api/translate` | `{gcode, filename, options}` → statystyki, ostrzeżenia, pliki, geometria podglądu (float32 w base64) |
+| GET | `/api/zip/<token>` | zip z plikami ostatniego tłumaczenia |
+
+## Wydajność
+
+Dopasowanie okręgu jest liczone bez SVD (szybka ścieżka dla ścieżek płaskich,
+rozkład własny macierzy 3×3 dla przestrzennych), rozszerzanie łuku używa
+wyszukiwania podwajającego zamiast liniowego, a długie łańcuchy są cięte w
+ostrych narożach (>60°, łuk i tak przez nie nie przejdzie) i liczone
+równolegle w puli procesów. Skan powierzchni 3D z 60 000 wierzchołków:
+3,8 s na 4 rdzeniach (kompresja 33×). Podgląd WebGL rysuje setki tysięcy
+segmentów bez zacięć, bo renderuje tylko przy zmianie widoku.
 
 ## Użycie
 
@@ -176,11 +224,14 @@ na kawałki, bo CAM zapisuje wierzchołki z błędem do ±0,0007 mm.
 gcode2krl/
   gcode_parser.py   parser modalny G-code -> ruchy i zdarzenia
   geometry.py       płaszczyzny, Taubin, dopasowanie z ustalonymi końcami, walidacja łuku 3D
-  arc_fitter.py     segmentacja łamanej: odcinki + łuki, korekta podziałów, scalanie
+  arc_fitter.py     segmentacja łamanej: odcinki + łuki, korekta podziałów, scalanie, pula procesów
   simplify.py       Douglas-Peucker (przerzedzanie punktów SPL)
   translator.py     łańcuchy G1 -> elementy ruchu, helisy, pełne okręgi, grupowanie SPL
   krl_writer.py     generowanie .src/.dat, bloki SPLINE, LIN/CIRC, podział na podprogramy
-  cli.py            interfejs wiersza poleceń
+  cli.py            interfejs wiersza poleceń (gcode2krl)
+  server.py         lokalny serwer HTTP + API JSON (gcode2krl-gui)
+  web/              GUI: index.html, app.js, viewer.js (WebGL), style.css
 examples/           fillet_rect.nc, circle_g1.nc, mixed.nc
-tests/              pytest
+tests/              pytest (rdzeń, parser, writer, CLI, serwer)
+.github/workflows/  CI: pytest na Ubuntu i Windows, Python 3.10 i 3.12
 ```

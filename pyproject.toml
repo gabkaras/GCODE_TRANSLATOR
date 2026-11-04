@@ -16,9 +16,13 @@ test = ["pytest>=7"]
 
 [project.scripts]
 gcode2krl = "gcode2krl.cli:main"
+gcode2krl-gui = "gcode2krl.server:main"
 
 [tool.setuptools.packages.find]
 include = ["gcode2krl*"]
+
+[tool.setuptools.package-data]
+gcode2krl = ["web/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

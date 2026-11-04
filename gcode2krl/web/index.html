@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>gcode2krl – G-code → KUKA KRL</title>
+<link rel="stylesheet" href="/style.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='11' fill='none' stroke='%2334d399' stroke-width='4'/%3E%3C/svg%3E">
+</head>
+<body>
+<aside id="sidebar">
+  <header class="brand">
+    <div class="logo"></div>
+    <div>
+      <h1>gcode2krl</h1>
+      <div class="sub">G-code → KUKA KRL · łuki z łamanych <span id="version"></span></div>
+    </div>
+  </header>
+
+  <section id="drop" class="drop" title="Kliknij lub upuść plik G-code">
+    <input type="file" id="file-input" accept=".nc,.gcode,.tap,.ngc,.txt,.cnc,.mpf,.iso" hidden>
+    <div class="drop-icon">⬇</div>
+    <div class="drop-text">
+      <div id="file-name">Upuść plik G-code lub kliknij</div>
+      <div id="file-meta" class="muted">.nc .gcode .tap .ngc</div>
+    </div>
+    <select id="examples" title="Przykłady"><option value="">przykłady…</option></select>
+  </section>
+
+  <div class="actions">
+    <button id="btn-translate" class="primary">Tłumacz <kbd>Ctrl+⏎</kbd></button>
+    <label class="auto"><input type="checkbox" id="auto" checked> auto</label>
+    <button id="btn-reset" class="ghost" title="Przywróć domyślne opcje">domyślne</button>
+  </div>
+  <div id="status" class="status"></div>
+
+  <form id="options" onsubmit="return false">
+    <details open>
+      <summary>Dopasowanie łuków</summary>
+      <label class="row"><span>Tolerancja [mm]</span>
+        <span class="pair"><input type="range" id="opt_tol_range" min="0.005" max="0.5" step="0.005" value="0.05">
+        <input type="number" id="opt_tol" data-default="0.05" value="0.05" min="0.001" step="0.005"></span></label>
+      <label class="row"><span>Maks. promień [mm]</span><input type="number" id="opt_max_radius" data-default="5000" value="5000" min="1" step="100"></label>
+      <label class="row"><span>Min. promień [mm]</span><input type="number" id="opt_min_radius" data-default="0.1" value="0.1" min="0.01" step="0.1"></label>
+      <label class="row"><span>Min. punktów na łuk</span><input type="number" id="opt_min_arc_points" data-default="4" value="4" min="3" step="1"></label>
+      <label class="row"><span>Korekta podziałów [±pkt]</span><input type="number" id="opt_refine_shift" data-default="3" value="3" min="0" max="10" step="1"></label>
+      <label class="row"><span>Kąt naroża [°]</span><input type="number" id="opt_corner_angle" data-default="10" value="10" min="1" max="90" step="1"></label>
+      <label class="row"><span>SPL: maks. segment [mm]</span><input type="number" id="opt_spl_max_segment" data-default="3" value="3" min="0" step="0.5"></label>
+      <label class="row check"><input type="checkbox" id="opt_fit_arcs" data-default="true" checked><span>Odtwarzaj łuki (SCIRC)</span></label>
+      <label class="row check"><input type="checkbox" id="opt_use_spl" data-default="true" checked><span>Mikrosegmenty jako SPL</span></label>
+    </details>
+
+    <details open>
+      <summary>Program KRL</summary>
+      <label class="row"><span>Tryb</span>
+        <select id="opt_mode" data-default="spline"><option value="spline">SPLINE (SLIN/SCIRC/SPL)</option><option value="lin">LIN / CIRC + C_DIS</option></select></label>
+      <label class="row"><span>Nazwa programu</span><input type="text" id="opt_name" data-default="" placeholder="z nazwy pliku" maxlength="20"></label>
+      <label class="row"><span>TOOL_DATA[n]</span><input type="number" id="opt_tool" data-default="1" value="1" min="1" max="16" step="1"></label>
+      <label class="row"><span>BASE_DATA[n]</span><input type="number" id="opt_base" data-default="1" value="1" min="0" max="32" step="1"></label>
+      <label class="row"><span>Orientacja A B C [°]</span><input type="text" id="opt_abc" data-default="0 180 0" value="0 180 0"></label>
+      <label class="row"><span>Przesunięcie X Y Z [mm]</span><input type="text" id="opt_offset" data-default="0 0 0" value="0 0 0"></label>
+      <label class="row"><span>Pozycja startowa X Y Z</span><input type="text" id="opt_start" data-default="0 0 0" value="0 0 0"></label>
+    </details>
+
+    <details>
+      <summary>Prędkości i wygładzanie</summary>
+      <label class="row"><span>Posuw domyślny [mm/min]</span><input type="number" id="opt_default_feed" data-default="1000" value="1000" min="1" step="100"></label>
+      <label class="row"><span>G0: $VEL.CP [m/s]</span><input type="number" id="opt_rapid_vel" data-default="0.5" value="0.5" min="0.01" max="3" step="0.05"></label>
+      <label class="row"><span>Maks. $VEL.CP [m/s]</span><input type="number" id="opt_max_vel" data-default="2" value="2" min="0.01" max="3" step="0.1"></label>
+      <label class="row"><span>$ACC.CP [m/s²]</span><input type="number" id="opt_acc" data-default="2" value="2" min="0.1" max="20" step="0.1"></label>
+      <label class="row"><span>$APO.CDIS [mm]</span><input type="number" id="opt_cdis" data-default="0.2" value="0.2" min="0" step="0.1"></label>
+      <label class="row"><span>$ADVANCE</span><input type="number" id="opt_advance" data-default="3" value="3" min="0" max="5" step="1"></label>
+      <label class="row"><span>Maks. segmentów w bloku</span><input type="number" id="opt_max_block_segments" data-default="500" value="500" min="1" step="50"></label>
+      <label class="row"><span>Maks. ruchów na plik</span><input type="number" id="opt_max_motions_per_file" data-default="4000" value="4000" min="100" step="500"></label>
+      <label class="row check"><input type="checkbox" id="opt_block_approx" data-default="true" checked><span>ENDSPLINE C_SPL</span></label>
+      <label class="row check"><input type="checkbox" id="opt_round_corners" data-default="false"><span>LIN: zaokrąglaj naroża (C_DIS)</span></label>
+      <label class="row check"><input type="checkbox" id="opt_bco" data-default="true" checked><span>PTP $POS_ACT na starcie (BCO)</span></label>
+    </details>
+
+    <details>
+      <summary>Wrzeciono, chłodziwo, M-kody</summary>
+      <label class="row"><span>Wrzeciono $OUT[n] (0 = brak)</span><input type="number" id="opt_spindle_out" data-default="0" value="0" min="0" max="4096" step="1"></label>
+      <label class="row"><span>Obroty $ANOUT[n] (0 = brak)</span><input type="number" id="opt_spindle_anout" data-default="0" value="0" min="0" max="32" step="1"></label>
+      <label class="row"><span>Obroty dla $ANOUT = 1.0</span><input type="number" id="opt_spindle_max_rpm" data-default="24000" value="24000" min="1" step="1000"></label>
+      <label class="row"><span>Chłodziwo $OUT[n] (0 = brak)</span><input type="number" id="opt_coolant_out" data-default="0" value="0" min="0" max="4096" step="1"></label>
+      <label class="row check"><input type="checkbox" id="opt_halt_tool_change" data-default="true" checked><span>HALT przy M6</span></label>
+      <label class="row check"><input type="checkbox" id="opt_dwell_ms" data-default="false"><span>G4 P w milisekundach</span></label>
+    </details>
+  </form>
+</aside>
+
+<main id="main">
+  <div id="empty" class="empty">
+    <div class="empty-card">
+      <h2>Wgraj G-code</h2>
+      <p>Translator rozpoznaje łuki zapisane jako ciągi G1, zamienia je na <b>SCIRC</b>, resztę na <b>SLIN</b> i <b>SPL</b>, i generuje pliki <b>.src/.dat</b> dla KUKA KRC4.</p>
+      <p class="muted">Upuść plik gdziekolwiek w oknie albo wybierz przykład po lewej.</p>
+      <ul class="keys"><li><kbd>F</kbd> dopasuj widok</li><li><kbd>T</kbd> z góry</li><li><kbd>I</kbd> izometria</li><li><kbd>Ctrl+⏎</kbd> tłumacz</li></ul>
+    </div>
+  </div>
+
+  <div id="results" class="hidden">
+    <section class="stats">
+      <div class="stat"><div class="stat-label">Ruchy wejściowe</div><div class="stat-value" id="st-in">–</div><div class="stat-sub" id="st-in-sub"></div></div>
+      <div class="stat"><div class="stat-label">Ruchy KRL</div><div class="stat-value" id="st-out">–</div><div class="stat-sub" id="st-out-sub"></div></div>
+      <div class="stat"><div class="stat-label">Kompresja</div><div class="stat-value" id="st-ratio">–</div><div class="stat-sub">ruchy wej. / ruchy KRL</div></div>
+      <div class="stat"><div class="stat-label">Maks. odchyłka</div><div class="stat-value" id="st-dev">–</div><div class="stat-sub" id="st-dev-sub"></div></div>
+      <div class="stat"><div class="stat-label">Czas</div><div class="stat-value" id="st-time">–</div><div class="stat-sub" id="st-time-sub"></div></div>
+    </section>
+    <div id="breakdown" class="breakdown"></div>
+
+    <nav class="tabs">
+      <button class="tab active" data-tab="view">Podgląd 3D</button>
+      <button class="tab" data-tab="krl">KRL</button>
+      <button class="tab" data-tab="warn">Ostrzeżenia <span id="tab-warn-count"></span></button>
+    </nav>
+
+    <section id="pane-view" class="pane active">
+      <div class="toolbar">
+        <button id="btn-fit" title="F">dopasuj</button>
+        <button id="btn-iso" title="I">izo</button>
+        <button id="btn-top" title="T">z góry</button>
+        <button id="btn-front">z przodu</button>
+        <button id="btn-ortho">orto</button>
+        <button id="btn-png">PNG</button>
+        <span class="spacer"></span>
+        <span id="bounds" class="muted mono"></span>
+        <span id="cam-info" class="muted"></span>
+      </div>
+      <div class="viewport">
+        <canvas id="view"></canvas>
+        <div id="viewer-error" class="viewer-error"></div>
+        <div id="legend" class="legend"></div>
+        <div class="hint muted">LPM obrót · PPM / Shift przesuwanie · kółko zoom · 2× klik dopasuj</div>
+      </div>
+    </section>
+
+    <section id="pane-krl" class="pane">
+      <div class="toolbar">
+        <select id="file-select"></select>
+        <span id="krl-meta" class="muted"></span>
+        <span class="spacer"></span>
+        <button id="btn-copy">kopiuj</button>
+        <button id="btn-file">pobierz plik</button>
+        <a id="btn-zip" class="button primary" href="#" download>pobierz .zip (.src + .dat)</a>
+      </div>
+      <pre id="krl" class="krl"></pre>
+    </section>
+
+    <section id="pane-warn" class="pane">
+      <p id="warnings-empty" class="muted">Brak ostrzeżeń.</p>
+      <ul id="warnings" class="warnings"></ul>
+    </section>
+  </div>
+</main>
+<script src="/viewer.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>

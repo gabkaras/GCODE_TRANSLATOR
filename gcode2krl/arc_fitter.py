@@ -16,11 +16,16 @@ Strategy (see README for the rationale and literature):
 """
 from __future__ import annotations
 
+import math
+import os
 from dataclasses import dataclass
 
 import numpy as np
 
 from .geometry import ArcFit, fit_arc_3d, point_segment_distances, unit
+
+
+PARALLEL_MIN_POINTS = 4000
 
 
 @dataclass
@@ -99,6 +104,9 @@ Element = LineElement | ArcElement
 def dedupe_points(points: np.ndarray, eps: float = 1e-9) -> np.ndarray:
     if len(points) < 2:
         return points
+    d = np.linalg.norm(np.diff(points, axis=0), axis=1)
+    if np.all(d > eps):
+        return points
     keep = [0]
     for k in range(1, len(points)):
         if float(np.linalg.norm(points[k] - points[keep[-1]])) > eps:
@@ -143,20 +151,62 @@ class PolylineSegmenter:
         return j
 
     def extend_arc(self, i: int) -> ArcElement | None:
+        """Longest arc starting at vertex i (galloping search + binary search)."""
+        first = i + max(2, self.prm.min_arc_points - 1)
+        if first >= self.n:
+            return None
         best: ArcElement | None = None
-        j = i + max(2, self.prm.min_arc_points - 1)
+        j = first
         tries = 0
-        while j < self.n:
+        while j < self.n:  # find the first valid arc
             arc = self.fit_arc(i, j)
             if arc is not None:
                 best = arc
-                j += 1
-                continue
-            if best is None and tries < 2:
-                tries += 1
-                j += 1
-                continue
-            break
+                break
+            tries += 1
+            if tries > 2:
+                return None
+            j += 1
+        if best is None:
+            return None
+        # gallop forward
+        step = 1
+        lo = best.j
+        hi: int | None = None
+        while True:
+            j = lo + step
+            if j >= self.n:
+                j = self.n - 1
+                if j == lo:
+                    break
+            arc = self.fit_arc(i, j)
+            if arc is not None:
+                best = arc
+                lo = j
+                if j == self.n - 1:
+                    break
+                step *= 2
+            else:
+                hi = j
+                break
+        # binary search between lo (valid) and hi (invalid)
+        while hi is not None and hi - lo > 1:
+            mid = (lo + hi) // 2
+            arc = self.fit_arc(i, mid)
+            if arc is not None:
+                best = arc
+                lo = mid
+            else:
+                hi = mid
+        # the predicate is only nearly monotone: creep forward a little more
+        j = lo + 1
+        while j < self.n and j <= lo + 2:
+            arc = self.fit_arc(i, j)
+            if arc is None:
+                break
+            best = arc
+            lo = j
+            j += 1
         return best
 
     # ------------------------------------------------------------- main
@@ -191,6 +241,8 @@ class PolylineSegmenter:
                 a, b = elems[k], elems[k + 1]
                 best_pair = (a, b)
                 best_score = max(a.max_dev, b.max_dev)
+                if best_score < 0.2 * self.prm.tol:
+                    continue  # nothing worth repairing
                 for s in range(-self.prm.refine_shift, self.prm.refine_shift + 1):
                     if s == 0:
                         continue
@@ -222,11 +274,62 @@ class PolylineSegmenter:
         return out
 
 
-def segment_polyline(points: np.ndarray, params: FitParams | None = None) -> list[Element]:
-    """Split an ordered chain of 3-D points into LineElement / ArcElement."""
+def split_at_hard_corners(points: np.ndarray, angle_deg: float = 60.0) -> list[int]:
+    """Indices where the polyline turns by more than ``angle_deg`` (chunk borders)."""
+    if len(points) < 3:
+        return []
+    d = np.diff(points, axis=0)
+    n = np.linalg.norm(d, axis=1)
+    n = np.where(n < 1e-12, 1e-12, n)
+    d = d / n[:, None]
+    cos = np.einsum("ij,ij->i", d[:-1], d[1:])
+    return [int(k) + 1 for k in np.flatnonzero(cos < math.cos(math.radians(angle_deg)))]
+
+
+def _segment_chunk(args):
+    pts, params, offset = args
+    elems = PolylineSegmenter(pts, params).segment()
+    for e in elems:
+        e.i += offset
+        e.j += offset
+    return elems
+
+
+def segment_polyline(points: np.ndarray, params: FitParams | None = None, workers: int | None = None) -> list[Element]:
+    """Split an ordered chain of 3-D points into LineElement / ArcElement.
+
+    Long chains are cut at hard corners and the pieces are fitted in a
+    process pool (``workers`` processes, default: CPU count) when the chain
+    has more than ``PARALLEL_MIN_POINTS`` vertices.
+    """
     params = params or FitParams()
     pts = dedupe_points(np.asarray(points, dtype=float))
-    return PolylineSegmenter(pts, params).segment()
+    n = len(pts)
+    if n < 2:
+        return []
+    cuts = split_at_hard_corners(pts) if n > PARALLEL_MIN_POINTS else []
+    if workers is None:
+        workers = os.cpu_count() or 1
+    if not cuts or workers <= 1 or n <= PARALLEL_MIN_POINTS:
+        return PolylineSegmenter(pts, params).segment()
+    bounds = [0] + cuts + [n - 1]
+    jobs = []
+    for a, b in zip(bounds, bounds[1:]):
+        if b > a:
+            jobs.append((pts[a : b + 1], params, a))
+    if len(jobs) < 2:
+        return PolylineSegmenter(pts, params).segment()
+    from concurrent.futures import ProcessPoolExecutor
+
+    out: list[Element] = []
+    try:
+        with ProcessPoolExecutor(max_workers=min(workers, len(jobs))) as ex:
+            for elems in ex.map(_segment_chunk, jobs, chunksize=max(1, len(jobs) // (4 * workers))):
+                out.extend(elems)
+    except (OSError, RuntimeError, PermissionError):  # no fork/spawn available
+        for job in jobs:
+            out.extend(_segment_chunk(job))
+    return out
 
 
 def max_deviation(points: np.ndarray, elems: list[Element], samples_per_arc: int = 200) -> float:
