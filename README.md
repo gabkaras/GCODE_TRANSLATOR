@@ -22,6 +22,9 @@ pytest                    # 69 testów
 
 ## GUI
 
+Bez instalacji: otwórz `docs/demo.html` w przeglądarce (statyczny podgląd z
+gotowymi wynikami dla trzech przykładów; opcje nie przeliczają). Pełna wersja:
+
 ```bash
 gcode2krl-gui                       # http://127.0.0.1:8765, otwiera przeglądarkę
 gcode2krl-gui --port 9000 --no-browser
