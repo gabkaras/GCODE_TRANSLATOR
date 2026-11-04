@@ -23,7 +23,7 @@ gcode2krl-import = "gcode2krl.robot_import:main"
 include = ["gcode2krl*"]
 
 [tool.setuptools.package-data]
-gcode2krl = ["web/*", "robots/*.json", "robots/LICENSE", "robots/NOTICE.md", "robots/meshes/*/*.stl"]
+gcode2krl = ["web/*", "web/brand/*", "web/fonts/*", "robots/*.json", "robots/LICENSE", "robots/NOTICE.md", "robots/meshes/*/*.stl"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

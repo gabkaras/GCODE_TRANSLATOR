@@ -1,9 +1,140 @@
-/* Brand overrides for gcode2krl. Loaded after style.css: put the company palette,
-   fonts and radii here (tokens are listed at the top of style.css).
-   Example (replace with the real brand values):
+/* RobCo brand layer for gcode2krl. Palette, type and component treatment taken from
+   www.robco.technology (settings.css :root tokens, .btn, .stat, .card, .eyebrow, .roi-filters). */
+@font-face{font-family:"Barlow";font-style:normal;font-weight:300;font-display:swap;src:url(/fonts/barlow-latin-300-normal.woff2) format("woff2");unicode-range:U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+2000-206F, U+2074, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD}
+@font-face{font-family:"Barlow";font-style:normal;font-weight:300;font-display:swap;src:url(/fonts/barlow-latin-ext-300-normal.woff2) format("woff2");unicode-range:U+0100-02AF, U+0304, U+0308, U+0329, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20CF, U+2113, U+2C60-2C7F, U+A720-A7FF}
+@font-face{font-family:"Barlow";font-style:normal;font-weight:400;font-display:swap;src:url(/fonts/barlow-latin-400-normal.woff2) format("woff2");unicode-range:U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+2000-206F, U+2074, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD}
+@font-face{font-family:"Barlow";font-style:normal;font-weight:400;font-display:swap;src:url(/fonts/barlow-latin-ext-400-normal.woff2) format("woff2");unicode-range:U+0100-02AF, U+0304, U+0308, U+0329, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20CF, U+2113, U+2C60-2C7F, U+A720-A7FF}
+@font-face{font-family:"Barlow";font-style:normal;font-weight:500;font-display:swap;src:url(/fonts/barlow-latin-500-normal.woff2) format("woff2");unicode-range:U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+2000-206F, U+2074, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD}
+@font-face{font-family:"Barlow";font-style:normal;font-weight:500;font-display:swap;src:url(/fonts/barlow-latin-ext-500-normal.woff2) format("woff2");unicode-range:U+0100-02AF, U+0304, U+0308, U+0329, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20CF, U+2113, U+2C60-2C7F, U+A720-A7FF}
+@font-face{font-family:"Barlow";font-style:normal;font-weight:600;font-display:swap;src:url(/fonts/barlow-latin-600-normal.woff2) format("woff2");unicode-range:U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+2000-206F, U+2074, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD}
+@font-face{font-family:"Barlow";font-style:normal;font-weight:600;font-display:swap;src:url(/fonts/barlow-latin-ext-600-normal.woff2) format("woff2");unicode-range:U+0100-02AF, U+0304, U+0308, U+0329, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20CF, U+2113, U+2C60-2C7F, U+A720-A7FF}
+@font-face{font-family:"Barlow";font-style:normal;font-weight:700;font-display:swap;src:url(/fonts/barlow-latin-700-normal.woff2) format("woff2");unicode-range:U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+2000-206F, U+2074, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD}
+@font-face{font-family:"Barlow";font-style:normal;font-weight:700;font-display:swap;src:url(/fonts/barlow-latin-ext-700-normal.woff2) format("woff2");unicode-range:U+0100-02AF, U+0304, U+0308, U+0329, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20CF, U+2113, U+2C60-2C7F, U+A720-A7FF}
+@font-face{font-family:"IBM Plex Mono";font-style:normal;font-weight:300;font-display:swap;src:url(/fonts/ibm-plex-mono-latin-300-normal.woff2) format("woff2");unicode-range:U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+2000-206F, U+2074, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD}
+@font-face{font-family:"IBM Plex Mono";font-style:normal;font-weight:300;font-display:swap;src:url(/fonts/ibm-plex-mono-latin-ext-300-normal.woff2) format("woff2");unicode-range:U+0100-02AF, U+0304, U+0308, U+0329, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20CF, U+2113, U+2C60-2C7F, U+A720-A7FF}
+@font-face{font-family:"IBM Plex Mono";font-style:normal;font-weight:400;font-display:swap;src:url(/fonts/ibm-plex-mono-latin-400-normal.woff2) format("woff2");unicode-range:U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+2000-206F, U+2074, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD}
+@font-face{font-family:"IBM Plex Mono";font-style:normal;font-weight:400;font-display:swap;src:url(/fonts/ibm-plex-mono-latin-ext-400-normal.woff2) format("woff2");unicode-range:U+0100-02AF, U+0304, U+0308, U+0329, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20CF, U+2113, U+2C60-2C7F, U+A720-A7FF}
+@font-face{font-family:"IBM Plex Mono";font-style:normal;font-weight:500;font-display:swap;src:url(/fonts/ibm-plex-mono-latin-500-normal.woff2) format("woff2");unicode-range:U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+2000-206F, U+2074, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD}
+@font-face{font-family:"IBM Plex Mono";font-style:normal;font-weight:500;font-display:swap;src:url(/fonts/ibm-plex-mono-latin-ext-500-normal.woff2) format("woff2");unicode-range:U+0100-02AF, U+0304, U+0308, U+0329, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20CF, U+2113, U+2C60-2C7F, U+A720-A7FF}
+@font-face{font-family:"IBM Plex Mono";font-style:normal;font-weight:600;font-display:swap;src:url(/fonts/ibm-plex-mono-latin-600-normal.woff2) format("woff2");unicode-range:U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+2000-206F, U+2074, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD}
+@font-face{font-family:"IBM Plex Mono";font-style:normal;font-weight:600;font-display:swap;src:url(/fonts/ibm-plex-mono-latin-ext-600-normal.woff2) format("woff2");unicode-range:U+0100-02AF, U+0304, U+0308, U+0329, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20CF, U+2113, U+2C60-2C7F, U+A720-A7FF}
+@font-face{font-family:"IBM Plex Mono";font-style:normal;font-weight:700;font-display:swap;src:url(/fonts/ibm-plex-mono-latin-700-normal.woff2) format("woff2");unicode-range:U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+2000-206F, U+2074, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD}
+@font-face{font-family:"IBM Plex Mono";font-style:normal;font-weight:700;font-display:swap;src:url(/fonts/ibm-plex-mono-latin-ext-700-normal.woff2) format("woff2");unicode-range:U+0100-02AF, U+0304, U+0308, U+0329, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20CF, U+2113, U+2C60-2C7F, U+A720-A7FF}
 
-:root, :root[data-theme="light"], :root[data-theme="dark"] {
-  --font: "YourSans", system-ui, sans-serif;
-  --accent: #0057ff; --accent2: #0040c0; --brand: #0057ff;
+/* ---- tokens: dark is the brand default --------------------------------- */
+:root {
+  --font: "Barlow", "DIN Alternate", Arial, sans-serif;
+  --mono: "IBM Plex Mono", "Courier New", monospace;
+  --radius: 12px; --radius-sm: 4px;
+  --blue: #00a3e0; --blue-dark: #077cab; --blue-deep: #165c7d; --blue-light: #41b6e6; --blue-pale: #71c5e8; --cloud: #f0eee9; --dark: #101820;
+  --bg: var(--dark); --panel: #151f29; --panel2: #121b24; --field: #0c141c; --hover: #1a2632;
+  --line: rgba(240, 238, 233, .16); --line2: rgba(240, 238, 233, .32); --text: #ffffff; --muted: rgba(240, 238, 233, .75);
+  --accent: var(--blue); --accent2: var(--blue-dark); --on-accent: #ffffff;
+  --ok: #41b6e6; --bad: #ff5a5f; --warn: #f5b335;
+  --brand: var(--blue); --brand-dark: #2a3542; --brand-grey: #8a95a3;
+  --viewer-bg: #0c141c; --grid: #1c2733; --grid-major: #28384a;
+  --c-input: #8c949c; --c-rapid: #ff5a5f; --c-slin: #71c5e8; --c-scirc: #00a3e0; --c-spl: #f5b335; --c-aux: #c9a2ff;
+  --c-bad: #ff5a5f; --c-collision: #ff2d55; --c-margin: #f5b335; --c-caps: #ffd166; --c-obstacle: #9aa5b1; --c-workpiece: #41b6e6;
+  --krl-kw: #41b6e6; --krl-var: #71c5e8; --krl-comment: rgba(240, 238, 233, .5);
+  --overlay: rgba(16, 24, 32, .86);
+  --glow: 0 0 24px rgba(0, 163, 224, .5);
+  color-scheme: dark;
 }
-*/
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --bg: #f0eee9; --panel: #ffffff; --panel2: #f7f6f2; --field: #ffffff; --hover: #e9f6fc;
+    --line: rgba(16, 24, 32, .14); --line2: rgba(16, 24, 32, .3); --text: #101820; --muted: rgba(16, 24, 32, .65);
+    --accent: #077cab; --accent2: #165c7d; --on-accent: #ffffff;
+    --ok: #077cab; --bad: #c8102e; --warn: #b26b00;
+    --viewer-bg: #e6e9ec; --grid: #d3d8de; --grid-major: #bcc4cd;
+    --c-input: #6b7681; --c-slin: #077cab; --c-scirc: #00a3e0; --c-spl: #b26b00; --c-aux: #7c3aed;
+    --krl-kw: #077cab; --krl-var: #165c7d; --krl-comment: rgba(16, 24, 32, .5);
+    --overlay: rgba(255, 255, 255, .9);
+    --glow: 0 0 20px rgba(0, 163, 224, .35);
+    color-scheme: light;
+  }
+}
+:root[data-theme="light"] {
+  --bg: #f0eee9; --panel: #ffffff; --panel2: #f7f6f2; --field: #ffffff; --hover: #e9f6fc;
+  --line: rgba(16, 24, 32, .14); --line2: rgba(16, 24, 32, .3); --text: #101820; --muted: rgba(16, 24, 32, .65);
+  --accent: #077cab; --accent2: #165c7d; --on-accent: #ffffff;
+  --ok: #077cab; --bad: #c8102e; --warn: #b26b00;
+  --viewer-bg: #e6e9ec; --grid: #d3d8de; --grid-major: #bcc4cd;
+  --c-input: #6b7681; --c-slin: #077cab; --c-scirc: #00a3e0; --c-spl: #b26b00; --c-aux: #7c3aed;
+  --krl-kw: #077cab; --krl-var: #165c7d; --krl-comment: rgba(16, 24, 32, .5);
+  --overlay: rgba(255, 255, 255, .9);
+  --glow: 0 0 20px rgba(0, 163, 224, .35);
+  color-scheme: light;
+}
+
+/* ---- base ----------------------------------------------------------------- */
+body { font-weight: 400; -webkit-font-smoothing: antialiased; background: var(--bg); }
+#main { background: url(/brand/grid-soft.png) left top / 1534px 1062px repeat, var(--bg); }
+:root[data-theme="light"] #main { background: var(--bg); }
+@media (prefers-color-scheme: light) { :root:not([data-theme="dark"]) #main { background: var(--bg); } }
+#sidebar { background: var(--panel); border-right: 1px solid var(--line); }
+.brand { gap: 14px; align-items: flex-start; padding-bottom: 14px; border-bottom: 1px solid var(--line); }
+.brand .logo { width: 110px; height: 32px; border-radius: 0; background: url(/brand/logo-robco.svg) left center / contain no-repeat; }
+.brand .logo::after { display: none; }
+.brand h1 { font-family: var(--mono); font-size: 13px; font-weight: 600; letter-spacing: .16em; text-transform: uppercase; color: var(--accent); margin-top: 2px; }
+.brand .sub { font-size: 12px; color: var(--muted); font-weight: 400; }
+.theme-switch { border-radius: 999px; }
+.theme-switch button { font-family: var(--mono); font-size: 10.5px; padding: 4px 8px; text-transform: uppercase; letter-spacing: .08em; }
+.theme-switch button.active { background: rgba(0, 163, 224, .14); color: var(--accent); }
+
+/* ---- buttons (site .btn: uppercase, outline, blue glow on hover) ---------- */
+button, .button { font-family: var(--font); text-transform: uppercase; letter-spacing: .08em; font-size: 12px; font-weight: 700; border-radius: var(--radius-sm); border: 1px solid var(--line2); background: transparent; color: var(--text); padding: 8px 14px; transition: background .25s, border-color .25s, box-shadow .25s, color .25s; }
+button:hover, .button:hover { background: var(--accent); border-color: var(--accent); color: var(--on-accent); box-shadow: var(--glow); }
+button.active { border-color: var(--accent); color: var(--accent); background: rgba(0, 163, 224, .14); }
+button.primary, .button.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+button.primary:hover, .button.primary:hover { background: var(--accent2); border-color: var(--accent2); box-shadow: var(--glow); }
+button.ghost { border-color: var(--line); color: var(--muted); }
+button:disabled { opacity: .5; box-shadow: none; }
+kbd { font-family: var(--mono); border-radius: 3px; }
+.tab { text-transform: uppercase; letter-spacing: .05em; font-size: 12.5px; font-weight: 400; border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; box-shadow: none; }
+.tab:hover { background: transparent; color: var(--accent); box-shadow: none; }
+.tab.active { color: var(--text); border-bottom-color: var(--accent); }
+.theme-switch button, .theme-switch button:hover { border: 0; box-shadow: none; }
+.theme-switch button:hover { background: var(--hover); color: var(--text); }
+
+/* ---- chips (site .roi-filters): toolbar toggles and legend --------------- */
+.tb-check { border: 1px solid var(--line); border-radius: 999px; padding: 4px 10px 4px 7px; font-size: 11.5px; text-transform: uppercase; letter-spacing: .06em; transition: border-color .3s, background .3s, color .3s; }
+.tb-check:has(input:checked) { border-color: var(--accent); color: var(--text); background: rgba(0, 163, 224, .14); }
+.tb-check input { accent-color: var(--accent); }
+.legend { border-radius: var(--radius); border-top: 2px solid var(--accent); }
+.legend label { text-transform: none; font-size: 12px; }
+.legend input, .row.check input, .auto input, .actions input { accent-color: var(--accent); }
+
+/* ---- stat tiles (site .stat: 3px blue left border, light-weight value) ---- */
+.stat { border: 0; border-left: 3px solid var(--accent); border-radius: 0; background: transparent; padding: 4px 0 4px 16px; }
+.stat-label { font-family: var(--mono); font-size: 11px; letter-spacing: .14em; color: var(--accent); font-weight: 600; }
+.stat-value { font-weight: 300; font-size: 30px; color: var(--text); letter-spacing: -.01em; }
+.stat-value.good { color: var(--accent); } .stat-value.bad { color: var(--bad); }
+.stat-sub { color: var(--muted); }
+.stats { gap: 20px; padding: 18px 16px 10px; }
+.breakdown { border-radius: 2px; height: 14px; font-family: var(--mono); font-size: 10px; letter-spacing: .06em; color: #101820; }
+.robot-bar { border-top: 2px solid var(--accent); border-radius: var(--radius); }
+.rb-name { text-transform: uppercase; letter-spacing: .08em; font-size: 12px; font-weight: 700; }
+
+/* ---- panels and cards (site .card: panel bg, border, 2px blue top) -------- */
+#options details { border-radius: var(--radius); border-top: 2px solid var(--accent); background: var(--panel2); }
+#options summary { font-family: var(--mono); font-size: 11.5px; letter-spacing: .14em; text-transform: uppercase; font-weight: 600; color: var(--accent); }
+#options summary::before { color: var(--accent); }
+.row > span:first-child { font-size: 12.5px; }
+#options input[type=number], #options input[type=text], #options select, #options textarea, .toolbar select, .drop select { border-radius: 6px; background: var(--field); border: 1px solid var(--line); transition: border-color .2s, box-shadow .2s; }
+#options input:focus, #options select:focus, #options textarea:focus, .toolbar select:focus { border-color: var(--accent); outline: none; box-shadow: 0 0 0 3px rgba(0, 163, 224, .2); }
+.drop { border-radius: var(--radius); border: 1px dashed var(--line2); }
+.drop:hover, .drop.over { border-color: var(--accent); box-shadow: var(--glow); }
+.viewport, .krl, .col-chart, .col-tablewrap { border-radius: var(--radius); }
+.joints { border-radius: var(--radius); border-top: 2px solid var(--accent); }
+.joints-title { font-family: var(--mono); font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: var(--accent); }
+.jrow input[type=range], .anim, #options input[type=range] { accent-color: var(--accent); }
+.col-table th { font-family: var(--mono); letter-spacing: .1em; color: var(--accent); background: var(--panel); }
+.col-summary b { font-weight: 300; font-size: 20px; }
+.warnings { color: var(--warn); }
+.status { font-family: var(--mono); font-size: 11.5px; letter-spacing: .04em; }
+.empty-card h2 { text-transform: uppercase; font-weight: 300; font-size: 28px; letter-spacing: .01em; }
+.empty-card h2::after { content: "_"; color: var(--accent); }
+.hint { font-family: var(--mono); font-size: 10.5px; letter-spacing: .04em; }
+.toolbar .sep { background: var(--line2); }
+.demo-banner { background: var(--panel); border-bottom: 1px solid var(--line); }

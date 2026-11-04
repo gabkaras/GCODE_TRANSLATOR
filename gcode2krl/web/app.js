@@ -521,8 +521,8 @@
   loadOptions();
   $('#opt_tol_range').value = $('#opt_tol').value;
   robotsReady.then(() => { loadOptions(); updateRobotModel(); });
-  let savedTheme = 'auto';
-  try { savedTheme = localStorage.getItem('gcode2krl.theme') || 'auto'; } catch (e) {}
+  let savedTheme = 'dark';  // the brand look is dark; 'auto' and 'light' are available in the header
+  try { savedTheme = localStorage.getItem('gcode2krl.theme') || 'dark'; } catch (e) {}
   setTheme(savedTheme, false);
   $$('.theme-switch button').forEach(b => b.addEventListener('click', () => setTheme(b.dataset.theme, true)));
   window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => setTheme(document.documentElement.getAttribute('data-theme') || 'auto', false));

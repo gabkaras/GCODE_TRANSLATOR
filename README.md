@@ -48,11 +48,13 @@ Pythona i numpy (działa offline, np. na komputerze przy robocie):
 * zakładka **Ostrzeżenia** z komunikatami parsera (G28, G92, G41/G42,
   niezgodne promienie łuków, brak F…),
 * opcje zapamiętywane w przeglądarce (`localStorage`),
-* motyw jasny / ciemny / jak system (przełącznik w nagłówku); wszystkie kolory,
-  fonty i promienie są tokenami CSS na początku `web/style.css`, a
-  `web/brand.css` to miejsce na paletę i typografię firmową (ładowany po
-  `style.css`, nadpisuje tokeny również dla kolorów podglądu 3D, wykresów i
-  składni KRL).
+* motyw ciemny (domyślny), jasny lub jak system (przełącznik w nagłówku);
+  wszystkie kolory, fonty i promienie są tokenami CSS na początku
+  `web/style.css`, a `web/brand.css` nakłada identyfikację Robco: paletę
+  (granat `#101820`, panele `#151f29`, akcent `#00a3e0`, tekst `#f0eee9`),
+  fonty Barlow i IBM Plex Mono (`web/fonts/`, licencja OFL), przyciski
+  wielkimi literami z obrysem i poświatą, kafelki z niebieską krawędzią,
+  chipy, teksturę siatki i logo (`web/brand/`), zdjęte z www.robco.technology.
 
 ![zakładka KRL](docs/gui_krl.png)
 
