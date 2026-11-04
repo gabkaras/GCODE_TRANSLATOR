@@ -72,15 +72,20 @@ def load_obj(path: str) -> np.ndarray:
 UNIT_SCALE = {"mm": 1.0, "cm": 10.0, "m": 1000.0, "in": 25.4, "inch": 25.4}
 
 
-def load_mesh(path: str, units: str = "mm") -> np.ndarray:
-    """Load STL or OBJ and return triangles in millimetres."""
+def load_mesh(path: str, units: str = "mm", deflection: float = 0.2) -> np.ndarray:
+    """Load STL, OBJ, STEP or IGES and return triangles in millimetres.
+    STEP/IGES carry their own units and are tessellated with ``deflection`` (mm);
+    ``units`` applies to STL/OBJ only."""
     ext = path.lower().rsplit(".", 1)[-1]
     if ext == "obj":
         tris = load_obj(path)
     elif ext == "stl":
         tris = load_stl(path)
+    elif ext in ("step", "stp", "iges", "igs"):
+        from .stepio import step_to_triangles
+        return step_to_triangles(path, deflection)
     else:
-        raise ValueError(f"unsupported mesh format .{ext} (use STL or OBJ; export STEP from CAD as STL)")
+        raise ValueError(f"unsupported mesh format .{ext} (use STL, OBJ, STEP or IGES)")
     scale = UNIT_SCALE.get(str(units).lower())
     if scale is None:
         raise ValueError(f"unknown units {units!r}")

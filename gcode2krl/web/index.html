@@ -80,7 +80,7 @@
         </div>
         <div class="fb-row"><input type="text" id="tool-name" placeholder="nazwa narzędzia" maxlength="32"><button type="button" id="tool-save" class="mini">zapisz</button><button type="button" id="tool-del" class="mini">usuń</button></div>
         <input type="hidden" id="opt_tool_frame" data-default="0 0 150 0 0 0" value="0 0 150 0 0 0">
-        <div class="fb-row"><label class="file-btn mini">model narzędzia (STL/OBJ)<input type="file" id="tool-mesh-file" accept=".stl,.obj" hidden></label>
+        <div class="fb-row"><label class="file-btn mini">model narzędzia (STEP/STL/OBJ)<input type="file" id="tool-mesh-file" accept=".stl,.obj,.step,.stp,.iges,.igs" hidden></label>
           <select id="opt_tool_mesh_units" data-default="mm"><option value="mm">mm</option><option value="cm">cm</option><option value="m">m</option><option value="in">cale</option></select>
           <button type="button" id="tool-mesh-clear" class="mini" title="usuń model narzędzia">×</button></div>
         <div id="tool-mesh-info" class="row-note muted">Brak modelu: uchwyt jest kapsułą o promieniu z pola „promień uchwytu”.</div>
@@ -115,9 +115,11 @@
         <div class="row"><span>Środek blatu w bazie X, Y<br><small>puste = środek ścieżki</small></span><span class="pair2"><input type="number" id="tbl_cx" data-default="" value="" step="10" placeholder="auto"><input type="number" id="tbl_cy" data-default="" value="" step="10" placeholder="auto"></span></div>
         <div class="row"><span>Materiał: grubość, zapas [mm]</span><span class="pair2"><input type="number" id="mat_t" data-default="20" value="20" step="1"><input type="number" id="mat_pad" data-default="20" value="20" step="5"></span></div>
         <div class="fb-head" style="margin-top:8px"><span>Modele stołu i uchwytów</span>
-          <label class="file-btn mini">dodaj STL/OBJ<input type="file" id="obstacle-mesh-file" accept=".stl,.obj" multiple hidden></label>
-          <select id="obstacle-mesh-units" title="jednostki pliku"><option value="mm">mm</option><option value="cm">cm</option><option value="m">m</option><option value="in">cale</option></select>
+          <label class="file-btn mini">dodaj STEP/STL/OBJ<input type="file" id="obstacle-mesh-file" accept=".stl,.obj,.step,.stp,.iges,.igs" multiple hidden></label>
+          <select id="obstacle-mesh-units" title="jednostki pliku STL/OBJ (STEP ma własne)"><option value="mm">mm</option><option value="cm">cm</option><option value="m">m</option><option value="in">cale</option></select>
         </div>
+        <div class="row"><span>STEP: tolerancja tesselacji [mm]</span><input type="number" id="step-deflection" value="0.2" min="0.01" step="0.1" title="maksymalna odległość siatki od powierzchni CAD"></div>
+        <div id="step-backend" class="row-note muted"></div>
         <div id="mesh-list" class="mesh-list"></div>
         <div class="row-note muted">Model jest dodawany do przeszkód jako wiersz <code>mesh</code>; jego własny początek układu trafia w podane X Y Z A B C w bazie (domyślnie środek ścieżki, Z = 0; stół z blatem w Z = 0 własnego układu ustaw na Z = −grubość materiału). Bryły kolizyjne liczone są z siatki: pudełko albo zestaw kapsuł, zawsze z zapasem.</div>
         <div class="row-note muted">Materiał to prostopadłościan pod obrysem ścieżki z górną powierzchnią w Z = 0 bazy (ostrze może w niego wchodzić); blat zaczyna się pod materiałem i sięga do posadzki robota. Wpisy pojawiają się w przeszkodach z oznaczeniem <code># auto</code>.</div>

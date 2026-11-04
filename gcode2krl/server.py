@@ -428,7 +428,8 @@ class Handler(SimpleHTTPRequestHandler):
             self.send_json({"version": __version__})
             return
         if path == "/api/meshes":
-            self.send_json({"meshes": meshstore.list_meshes(), "dir": meshstore.mesh_dir()})
+            from .stepio import available_backends
+            self.send_json({"meshes": meshstore.list_meshes(), "dir": meshstore.mesh_dir(), "step_backends": available_backends()})
             return
         if path.startswith("/api/mesh/"):
             ref = path[len("/api/mesh/"):]
@@ -466,7 +467,7 @@ class Handler(SimpleHTTPRequestHandler):
                 data = base64.b64decode(body.get("data", ""))
                 if not data:
                     raise ValueError("empty file")
-                meta = meshstore.save_mesh(str(body.get("name", "mesh.stl")), data)
+                meta = meshstore.save_mesh(str(body.get("name", "mesh.stl")), data, deflection=float(body.get("deflection", 0.2) or 0.2))
             except ValueError as exc:
                 self.send_json({"error": str(exc)}, 400)
                 return

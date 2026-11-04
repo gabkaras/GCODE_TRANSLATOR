@@ -17,6 +17,7 @@ G-code (.nc) ──parser──> ruchy ──dopasowanie łuków──> SLIN / S
 ```bash
 pip install -e .          # wymaga Python >= 3.10 i numpy
 pip install -e .[test]    # dodatkowo pytest
+pip install -e .[step]    # import STEP/IGES (OpenCASCADE)
 pytest                    # 69 testów
 ```
 
@@ -142,9 +143,22 @@ siatkę w układzie kołnierza (mm, cm, m lub cale) i zastępuje parametryczną
 kapsułę uchwytu; część w zasięgu „długości ostrza” od TCP jest traktowana
 jako ostrze. Bryły kolizyjne są liczone z siatki (pudełko albo zestaw kapsuł,
 zawsze z zapasem) i buforowane; siatki są rysowane w podglądzie, a przycisk
-*kapsuły* pokazuje, co dokładnie jest sprawdzane. STEP/IGES trzeba
-wyeksportować z CAD do STL. W CLI: `--tool-mesh plik.stl --tool-mesh-units mm`
-oraz wiersze `mesh` w pliku `--obstacles` ze ścieżką do pliku zamiast ID.
+*kapsuły* pokazuje, co dokładnie jest sprawdzane. W CLI: `--tool-mesh
+plik.step --tool-mesh-units mm` oraz wiersze `mesh` w pliku `--obstacles` ze
+ścieżką do pliku zamiast ID.
+
+**STEP i IGES.** Pliki `.step/.stp/.iges/.igs` (np. z KUKA Download Center
+albo z własnego CAD) są wczytywane bezpośrednio i tesselowane kernelem
+OpenCASCADE z zadaną tolerancją (pole *STEP: tolerancja tesselacji*, domyślnie
+0,2 mm); jednostki są brane z pliku (mm, cale itd.), a siatka jest buforowana
+jako STL w magazynie. Potrzebny jest jeden z kerneli:
+
+```bash
+pip install -e .[step]          # cadquery-ocp (OpenCASCADE), koła pip dla Windows, Linux, macOS
+pip install gmsh                # alternatywa (na Linuksie wymaga libglu1-mesa)
+```
+
+Bez kernela GUI pokazuje komunikat, a STL/OBJ działają nadal.
 
 Co robi sprawdzenie (`--robot`, w GUI panel *Robot*):
 

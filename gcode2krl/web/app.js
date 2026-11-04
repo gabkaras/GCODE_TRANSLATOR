@@ -418,7 +418,8 @@
   }
   async function uploadMesh(file) {
     const data = await readFileB64(file);
-    const res = await fetch('/api/mesh', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: file.name, data }) });
+    const deflection = Number(($('#step-deflection') || {}).value) || 0.2;
+    const res = await fetch('/api/mesh', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: file.name, data, deflection }) });
     const meta = await res.json();
     if (!res.ok || meta.error) throw new Error(meta.error || res.statusText);
     return meta;
@@ -445,7 +446,11 @@
   }
   let meshMeta = {};
   async function refreshMeshMeta() {
-    try { const d = await (await fetch('/api/meshes')).json(); meshMeta = {}; for (const m of d.meshes) meshMeta[m.id] = m; } catch (e) {}
+    try {
+      const d = await (await fetch('/api/meshes')).json(); meshMeta = {}; for (const m of d.meshes) meshMeta[m.id] = m;
+      const sb = $('#step-backend');
+      if (sb) sb.textContent = d.step_backends && d.step_backends.length ? `Import STEP/IGES: kernel ${d.step_backends.join(', ')} (OpenCASCADE), jednostki z pliku.` : 'Import STEP wymaga kernela CAD: pip install cadquery-ocp (albo pip install gmsh).';
+    } catch (e) {}
     renderMeshList();
   }
   function renderMeshList() {

@@ -132,3 +132,33 @@ def test_server_mesh_upload_and_translate(store):
     finally:
         srv.shutdown()
         srv.server_close()
+
+
+@pytest.mark.skipif(not __import__("gcode2krl.stepio", fromlist=["available_backends"]).available_backends(), reason="no CAD kernel")
+def test_step_import_and_tool(store):
+    from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox
+    from OCP.Interface import Interface_Static
+    from OCP.STEPControl import STEPControl_AsIs, STEPControl_Writer
+
+    from gcode2krl.meshio import load_mesh
+    from gcode2krl.stepio import step_to_triangles
+
+    shape = BRepPrimAPI_MakeBox(100, 80, 40).Shape()
+    for unit, fname in (("MM", "box_mm.step"), ("INCH", "box_inch.step")):
+        Interface_Static.SetCVal_s("write.step.unit", unit)
+        w = STEPControl_Writer()
+        w.Transfer(shape, STEPControl_AsIs)
+        w.Write(str(store / fname))
+    for fname in ("box_mm.step", "box_inch.step"):
+        tris = step_to_triangles(str(store / fname), 0.2)
+        v = tris.reshape(-1, 3)
+        assert np.allclose(v.min(axis=0), [0, 0, 0], atol=1e-3) and np.allclose(v.max(axis=0), [100, 80, 40], atol=1e-3), fname
+        assert len(tris) >= 12
+    # through the store (tessellated STL cached) and as a mesh obstacle line
+    meta = meshstore.save_mesh("box_mm.step", (store / "box_mm.step").read_bytes(), deflection=0.5)
+    assert meta["format"] == "step" and meta["max"][0] == pytest.approx(100, abs=1e-3)
+    assert meshstore.resolve(meta["id"]).endswith(".stl")
+    tris2, key = meshstore.load(meta["id"])
+    assert tris2.reshape(-1, 3).max(axis=0)[2] == pytest.approx(40, abs=1e-3)
+    # load_mesh ignores STL/OBJ units for STEP (file units rule)
+    assert load_mesh(str(store / "box_inch.step"), "m").reshape(-1, 3).max(axis=0)[0] == pytest.approx(100, abs=1e-3)
