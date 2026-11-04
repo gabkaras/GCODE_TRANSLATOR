@@ -195,6 +195,26 @@ def preview_geometry(parsed, items, offset) -> dict:
     }
 
 
+_mesh_cache: dict[str, dict] = {}
+
+
+def robot_mesh_payload(robot) -> dict:
+    """Per-link triangle soup (float32 base64, mm, link frames) with flat normals."""
+    if robot.key in _mesh_cache:
+        return _mesh_cache[robot.key]
+    from .meshio import flat_normals, load_stl
+    links = {}
+    for idx, rel in robot.meshes.items():
+        path = os.path.join(robot.base_dir, rel)
+        if not os.path.isfile(path):
+            continue
+        tris = load_stl(path)
+        links[idx] = {"positions": _f32(tris.ravel()), "normals": _f32(flat_normals(tris).ravel()), "tris": int(len(tris))}
+    payload = {"key": robot.key, "links": links}
+    _mesh_cache[robot.key] = payload
+    return payload
+
+
 def robot_report(items, options: dict, abc) -> dict | None:
     """IK along the output path: reach / axis-limit report, collisions and joint trace for animation."""
     key = str(options.get("robot", DEFAULT_ROBOT) or "none").upper()
@@ -381,6 +401,14 @@ class Handler(SimpleHTTPRequestHandler):
         if path == "/api/robots":
             self.send_json({"default": DEFAULT_ROBOT, "robots": [r.to_dict() for r in ROBOTS.values()],
                             "obstacle_help": OBSTACLE_HELP})
+            return
+        if path.startswith("/api/robot_mesh/"):
+            key = os.path.basename(path).upper()
+            robot = ROBOTS.get(key)
+            if robot is None:
+                self.send_json({"error": "unknown robot"}, 404)
+                return
+            self.send_json(robot_mesh_payload(robot))
             return
         if path == "/":
             self.path = "/index.html"

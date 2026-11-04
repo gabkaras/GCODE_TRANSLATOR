@@ -130,3 +130,6 @@ button.ghost { background: transparent; }
 .col-table tr.bad td { color: var(--bad); } .col-table tr.warn td { color: var(--warn); }
 .col-table tbody tr { cursor: pointer; } .col-table tbody tr:hover td { background: #1b2130; }
 #clear-now { margin-top: 4px; } #clear-now.bad { color: var(--bad); } #clear-now.warn { color: var(--warn); } #clear-now.ok { color: var(--ok); }
+
+.sources { font-size: 11px; line-height: 1.35; max-height: 160px; overflow: auto; }
+.sources b { color: var(--text); font-weight: 600; } .sources .warn { color: var(--warn); }

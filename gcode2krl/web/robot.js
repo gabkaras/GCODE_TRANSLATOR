@@ -19,18 +19,15 @@
   function fromRowMajor(a) { const o = new Float32Array(16); for (let r = 0; r < 4; r++) for (let c = 0; c < 4; c++) o[c*4+r] = a[r*4+c]; return o; }
   const FLANGE0 = RY(Math.PI / 2);
 
-  /** frames: [base, A2 axis, A3 axis, A5 centre, flange] for joints in degrees */
+  /** URDF-style chain: frames [base, link_1 .. link_6, flange] for joints in degrees (same as robot.py) */
   function forward(R, q) {
-    const a = q.map(v => v * DEG);
+    const a = q.map(v => v * DEG), o = R.origins;
+    const rots = [RZ(-a[0]), RY(a[1]), RY(a[2]), RX(-a[3]), RY(a[4]), RX(-a[5])];
     let t = I4();
     const f = [t];
-    t = mul(t, RZ(-a[0])); t = mul(t, T(R.a1, 0, R.d1)); f.push(t);
-    t = mul(t, RY(a[1])); const upper = t; t = mul(t, T(R.a2, 0, 0)); f.push(t);
-    t = mul(t, RY(a[2])); const fore = t; t = mul(t, T(R.d4, 0, -R.a3)); f.push(t);
-    t = mul(t, RX(-a[3])); const w4 = t;
-    t = mul(t, RY(a[4])); const w5 = t;
-    t = mul(t, RX(-a[5])); t = mul(t, FLANGE0); t = mul(t, T(0, 0, R.d6)); f.push(t);
-    return { frames: f, upper, fore, w4, w5 };
+    for (let k = 0; k < 6; k++) { t = mul(t, T(o[k][0], o[k][1], o[k][2])); t = mul(t, rots[k]); f.push(t); }
+    t = mul(t, T(o[6][0], o[6][1], o[6][2])); t = mul(t, FLANGE0); f.push(t);
+    return { frames: f, upper: f[2], fore: f[3], w4: f[4], w5: f[5] };
   }
 
   // ---- procedural meshes ----
@@ -78,25 +75,40 @@
   class RobotView {
     constructor(viewer) { this.viewer = viewer; this.model = null; this.robotInBase = I4(); this.tool = I4(); this.visible = true; this.reachVisible = true; this.joints = null; }
 
-    setModel(R) {
+    setModel(R, meshes) {
       const v = this.viewer;
       v.removeGroup('robot');
       this.model = R;
-      const V = R.visual || {}, br = V.base_r || 300, bh = V.base_h || 250, col = V.column || 400, arm = V.arm || 240, fa = V.forearm || 190, wr = V.wrist || 150;
+      this.meshLinks = null;
       const g = 'robot';
+      if (meshes && meshes.links && Object.keys(meshes.links).length) {
+        this.meshLinks = {};
+        for (const [idx, m] of Object.entries(meshes.links)) {
+          const geom = { positions: decodeF32(m.positions), normals: decodeF32(m.normals) };
+          const color = idx === '0' ? DARK : (idx === '6' ? GREY : ORANGE);
+          v.setMesh('rb_link' + idx, geom, color, I4(), { group: g });
+          this.meshLinks[idx] = true;
+        }
+        this.setTool(this.tool);
+        this.buildReach();
+        this.setPose(this.joints || R.home);
+        return;
+      }
+      const V = R.visual || {}, br = V.base_r || 300, bh = V.base_h || 250, col = V.column || 400, arm = V.arm || 240, fa = V.forearm || 190, wr = V.wrist || 150;
       v.setMesh('rb_base', cylinder(br, 2, 0, bh, 0, 0, 0), DARK, I4(), { group: g });
       v.setMesh('rb_plate', box(br*2.2, br*2.2, 20, 0, 0, 10), '#2a2f3a', I4(), { group: g });
       // column (link 1): from the base to the A2 axis, in the A1 frame (origin at base)
-      const colGeom = merge(box(col, col, R.d1 - bh + col*0.3, R.a1*0.35, 0, (bh + R.d1 + col*0.3)/2 - col*0.15), cylinder(arm*0.7, 1, -col*0.6, col*0.6, R.a1, 0, R.d1));
+      // column in the link_1 frame (origin at the A2 height d1, so shift down by d1)
+      const colGeom = merge(box(col, col, R.d1 - bh + col*0.3, R.a1*0.35, 0, (bh + R.d1 + col*0.3)/2 - col*0.15 - R.d1), cylinder(arm*0.7, 1, -col*0.6, col*0.6, R.a1, 0, 0));
       v.setMesh('rb_column', colGeom, ORANGE, I4(), { group: g });
       // upper arm (link 2): frame at A2 axis, +X along the arm
       v.setMesh('rb_upper', merge(box(R.a2, arm*0.8, arm, R.a2/2, 0, 0), cylinder(arm*0.75, 1, -col*0.62, col*0.62, R.a2, 0, 0)), ORANGE, I4(), { group: g });
       // forearm (link 3): frame at A3 axis, +X along forearm, A4 axis a3 below
-      v.setMesh('rb_fore', merge(cylinder(fa*0.5, 0, fa*0.2, R.d4 - wr*0.9, 0, 0, -R.a3), box(fa*1.2, fa*1.1, fa*1.1 + R.a3, fa*0.3, 0, -R.a3/2)), ORANGE, I4(), { group: g });
+      v.setMesh('rb_fore', merge(cylinder(fa*0.5, 0, fa*0.2, R.origins[3][0] - wr*0.9, 0, 0, R.a3), box(fa*1.2, fa*1.1, fa*1.1 + Math.abs(R.a3), fa*0.3, 0, R.a3/2)), ORANGE, I4(), { group: g });
       // wrist (A4 frame at A5 centre): hub around A5 axis (Y)
       v.setMesh('rb_wrist', cylinder(wr*0.55, 1, -wr*0.7, wr*0.7, 0, 0, 0), DARK, I4(), { group: g });
       // A5 frame: housing to the flange along +X
-      v.setMesh('rb_w5', cylinder(wr*0.38, 0, 0, R.d6 - 12, 0, 0, 0), ORANGE, I4(), { group: g });
+      v.setMesh('rb_w5', cylinder(wr*0.38, 0, 0, R.origins[4][0] + R.d6 - 12, 0, 0, 0), ORANGE, I4(), { group: g });
       // flange (in the flange frame, Z out)
       v.setMesh('rb_flange', cylinder(wr*0.42, 2, -12, 0, 0, 0, 0), GREY, I4(), { group: g });
       this.setTool(this.tool);
@@ -143,21 +155,25 @@
       const R = this.model, v = this.viewer, B = this.robotInBase;
       const k = forward(R, q);
       const f = k.frames;
-      const a1 = RZ(-q[0]*DEG);
-      v.setMeshTransform('rb_base', B);
-      v.setMeshTransform('rb_plate', B);
-      v.setMeshTransform('rb_column', mul(B, a1));
-      v.setMeshTransform('rb_upper', mul(B, k.upper));
-      v.setMeshTransform('rb_fore', mul(B, k.fore));
-      v.setMeshTransform('rb_wrist', mul(B, k.w4));
-      v.setMeshTransform('rb_w5', mul(B, k.w5));
-      v.setMeshTransform('rb_flange', mul(B, f[4]));
-      v.setMeshTransform('rb_tool', mul(B, f[4]));
+      const a1 = f[1];
+      if (this.meshLinks) {
+        for (const idx of Object.keys(this.meshLinks)) v.setMeshTransform('rb_link' + idx, mul(B, f[Number(idx)]));
+      } else {
+        v.setMeshTransform('rb_base', B);
+        v.setMeshTransform('rb_plate', B);
+        v.setMeshTransform('rb_column', mul(B, a1));
+        v.setMeshTransform('rb_upper', mul(B, k.upper));
+        v.setMeshTransform('rb_fore', mul(B, k.fore));
+        v.setMeshTransform('rb_wrist', mul(B, k.w4));
+        v.setMeshTransform('rb_w5', mul(B, k.w5));
+        v.setMeshTransform('rb_flange', mul(B, f[7]));
+      }
+      v.setMeshTransform('rb_tool', mul(B, f[7]));
       v.setMeshTransform('rb_reach', B);
       // reach arc of the wrist centre in the current arm plane + TCP axes
       const lines = [];
-      const c = apply(mul(B, a1), [R.a1, 0, R.d1]);
-      const dir = apply(mul(B, a1), [1, 0, 0]).map((x, i) => x - apply(B, [0,0,0])[i]);
+      const c = apply(mul(B, f[2]), [0, 0, 0]);
+      const dir = apply(mul(B, a1), [1, 0, 0]).map((x, i) => x - apply(mul(B, a1), [0,0,0])[i]);
       const up = [B[8], B[9], B[10]];
       const rr = R.wrist_reach, n = 48;
       for (let i = 0; i < n; i++) {
@@ -165,7 +181,7 @@
         for (const t of [t0, t1]) lines.push(c[0] + rr*(Math.cos(t)*dir[0] + Math.sin(t)*up[0]), c[1] + rr*(Math.cos(t)*dir[1] + Math.sin(t)*up[1]), c[2] + rr*(Math.cos(t)*dir[2] + Math.sin(t)*up[2]));
       }
       v.setLayer('rb_reach_arc', new Float32Array(lines), '#f0862a', { alpha: 0.35, order: 3, group: 'robot', visible: this.reachVisible });
-      const tcpM = mul(mul(B, f[4]), this.tool);
+      const tcpM = mul(mul(B, f[7]), this.tool);
       const o = apply(tcpM, [0,0,0]), L = Math.max(40, (R.visual && R.visual.wrist || 150) * 0.6);
       const ax = [], cols = ['#e5484d', '#46a758', '#3e8cff'];
       [[L,0,0],[0,L,0],[0,0,L]].forEach((e, i) => { const p = apply(tcpM, e); v.setLayer('rb_tcp' + i, new Float32Array([...o, ...p]), cols[i], { order: 12, group: 'robot' }); });
@@ -213,7 +229,7 @@
     v.removeGroup('capsules');
     if (!this.capsules || !this.capsules.length || !this.model || !this.joints || !this.capsulesVisible) return;
     const k = forward(this.model, this.joints), B = this.robotInBase;
-    const linkM = [B, mul(B, RZ(-this.joints[0]*DEG)), mul(B, k.upper), mul(B, k.fore), mul(B, k.w4), mul(B, k.w5), mul(B, k.frames[4])];
+    const linkM = k.frames.map(fr => mul(B, fr));
     const L = [];
     for (const c of this.capsules) {
       const M = linkM[c.link]; if (!M) continue;
@@ -244,6 +260,7 @@
     }
     return { positions: new Float32Array(P), normals: new Float32Array(N) };
   }
+  function decodeF32(b64) { const bin = atob(b64); const bytes = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i); return new Float32Array(bytes.buffer); }
   function cross(a, b) { return [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]]; }
   function norm(a) { const l = Math.hypot(a[0], a[1], a[2]) || 1; return [a[0]/l, a[1]/l, a[2]/l]; }
 

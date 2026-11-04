@@ -61,46 +61,68 @@ API JSON serwera (do własnej automatyzacji):
 
 ![robot w podglądzie 3D](docs/gui_robot.png)
 
-Translator ma uproszczony model kinematyczny robotów KUKA
-(`gcode2krl/robot.py`, `web/robot.js`): kinematykę prostą i odwrotną w
-postaci zamkniętej (8 rozwiązań: bark przód/tył, łokieć góra/dół, nadgarstek
-z przewrotem i bez), wybór rozwiązania w limitach osi i najbliższego poprzedniej
-pozie, oraz sprawdzenie całej ścieżki.
+Definicje robotów leżą w `gcode2krl/robots/<KLUCZ>.json` (plus `~/.gcode2krl/robots/`
+dla własnych) razem z siatkami STL w `robots/meshes/`. Każdy plik ma pole
+`sources` z pochodzeniem każdej grupy danych, pokazywane też w GUI w panelu *Robot*.
 
-| klucz | model | zasięg | udźwig |
+| klucz | model | geometria i siatki | dane osi |
 |---|---|---|---|
-| `KR90R2700PRO` | KR 90 R2700 pro (QUANTEC), domyślny | 2696 mm | 90 kg |
-| `KR120R2700EXTRA` | KR 120 R2700 extra | 2701 mm | 120 kg |
-| `KR210R2700EXTRA` | KR 210 R2700 extra | 2701 mm | 210 kg |
-| `KR60R2033` | KR 60-3 | 2033 mm | 60 kg |
-| `KR16R1610` | KR 16-2 | 1611 mm | 16 kg |
-| `KR6R900` | KR 6 R900 sixx (AGILUS) | 901 mm | 6 kg |
+| `KR90R2700PRO` (domyślny) | KR 90 R2700 pro (QUANTEC pro) | URDF KR 120 R2500 pro z ROS-Industrial (konwersja z CAD KUKA: 675 / 350 / 1150 / −41 / 215 mm), przedramię 1000 → 1200 mm zgodnie z zasięgiem 2696 mm; siatka przedramienia wydłużona o 200 mm | karta katalogowa KUKA KR 90 R2700 pro: A1 ±185° 136°/s, A2 −140/−5° 130°/s, A3 −120/+155° 120°/s, A4 ±350° 292°/s, A5 ±125° 258°/s, A6 ±350° 284°/s; 90 kg, 2696 mm, ±0,06 mm |
+| `KR120R2500PRO` | KR 120 R2500 pro (QUANTEC pro) | URDF + STL ROS-Industrial | karta KR QUANTEC pro (limity/prędkości w URDF były skopiowane z KR 16-2 i zostały zastąpione) |
+| `KR150R3100_2` | KR 150 R3100-2 (QUANTEC-2) | URDF + STL ROS-Industrial | URDF ROS-Industrial |
+| `KR16_2` | KR 16-2 | URDF + STL ROS-Industrial | URDF, zgodny z kartą KR 16-2 (A2 +35/−155°, A3 +154/−130°, 156/156/156/330/330/615 °/s) |
+| `KR6R900SIXX`, `KR6R700SIXX`, `KR10R1100SIXX`, `KR3R540` | KR AGILUS sixx | URDF + STL ROS-Industrial | URDF, zgodny z kartą KR AGILUS (np. KR 6 R900: ±170°, −190/+45°, −120/+156°, ±185°, ±120°, ±350°; 360/300/360/381/388/615 °/s) |
+| `KR10R1420` | KR 10 R1420 | URDF + STL ROS-Industrial | URDF ROS-Industrial |
 
-Parametry członów (wysokość osi A2, przesunięcie A1–A2, ramię, przedramię,
-offset nadgarstka 41 mm, odległość A5–kołnierz) i limity osi pochodzą z kart
-katalogowych KUKA i są **przybliżone**: wystarczają do sprawdzenia zasięgu,
-limitów i wizualizacji, nie do kalibracji. Pozycja HOME modelu KR 90
-(A1 0, A2 -90, A3 90, A4 0, A5 0, A6 0) daje kołnierz w X 1765, Z 1784,
-B 90, zgodnie z odczytem na rzeczywistym KR QUANTEC. Konwencje osi są takie
-jak w KSS (A1 dodatnie = zgodnie z ruchem wskazówek zegara patrząc z góry,
-A2 = 0 ramię poziome do przodu, A3 = 0 przedramię w osi ramienia).
+Siatki i origins stawów pochodzą z pakietów
+[ROS-Industrial `kuka_experimental`](https://github.com/ros-industrial/kuka_experimental)
+(Apache-2.0, pliki konwertowane z danych CAD KUKA; licencja i pochodzenie w
+`gcode2krl/robots/NOTICE.md`). Konwencje osi w tych URDF są dokładnie
+konwencjami KSS: A1 obraca wokół −Z, A4 i A6 wokół −X, `tool0` to kołnierz
+obrócony o 90° wokół Y, więc HOME (A1 0, A2 −90, A3 90, A4 0, A5 0, A6 0)
+daje dla KR 90 kołnierz w X 1765, Z 1784, B 90, jak na rzeczywistym KR QUANTEC.
+Dane osi z URDF są oznaczone jako takie i należy je sprawdzić z kartą
+katalogową własnej wersji robota (w sesji, w której to pisano, strony KUKA były
+niedostępne; wartości dla KR 90 R2700 pro pochodzą z kilku zgodnych kopii karty
+katalogowej KUKA).
+
+**Własne dane z CAD KUKA.** Importer wczytuje URDF/xacro ze standardowym
+łańcuchem KUKA i siatki STL (np. wyeksportowane z modeli STEP z KUKA Download
+Center albo z KUKA.Sim) i buduje definicję z kapsułami kolizyjnymi:
+
+```bash
+gcode2krl-import --xacro kr90r2700pro_macro.xacro --key KR90R2700PRO --out ~/.gcode2krl/robots
+gcode2krl-import --kuka-experimental /sciezka/do/kuka_experimental --out ~/.gcode2krl/robots
+```
+
+Bryły kolizyjne są liczone z siatek automatycznie: podstawa (nieruchoma)
+dostaje obrócony prostopadłościan, każdy ruchomy człon zestaw kapsuł
+(trójkąty dzielone do 16 mm, klastrowanie k-means, kapsuła na klaster z zapasem
+połowy krawędzi, więc **cała powierzchnia siatki jest objęta**; test
+`test_mesh_capsules_enclose_meshes` to sprawdza). Pary członów, które z
+konstrukcji zawsze się stykają (np. obudowa A5 w końcówce przedramienia), są
+zapisane w `disabled_pairs` i pomijane w autokolizjach.
+
+Kinematyka: kinematyka prosta w konwencjach KSS i odwrotna w postaci
+zamkniętej (8 rozwiązań: bark przód/tył, łokieć góra/dół, nadgarstek z
+przewrotem i bez), wybór rozwiązania w limitach osi i najbliższego poprzedniej
+pozie, sprawdzenie całej ścieżki. Testy obiegu FK → IK → FK przechodzą dla
+wszystkich dziewięciu modeli.
 
 Co robi sprawdzenie (`--robot`, w GUI panel *Robot*):
 
 * `$BASE` podajesz w układzie robota (X Y Z A B C), `$TOOL` w układzie
   kołnierza; orientacja narzędzia na ścieżce to `--abc`. Oba układy można
   zapisać literalnie w programie zamiast `BASE_DATA[n]` / `TOOL_DATA[n]`.
-* Dla próbek wzdłuż wygenerowanej ścieżki (wierzchołki, punkty na łukach, do
-  3000 próbek) liczona jest kinematyka odwrotna. Raport: liczba próbek poza
-  zasięgiem, poza limitami osi (z podziałem na osie) oraz zakres min/max
-  każdej osi. CLI zwraca kod wyjścia 3, gdy coś jest poza zasięgiem.
-* W GUI robot jest rysowany w podglądzie 3D (bryły cieniowane w barwach KUKA,
-  kołnierz, narzędzie, układ TCP, okrąg zasięgu nadgarstka na posadzce i łuk
-  zasięgu w płaszczyźnie ramienia). Przycisk ▶ albo spacja animuje przejazd po
-  ścieżce, suwak przewija próbki, panel *Osie* pokazuje kąty (na czerwono
-  poza limitem) i pozwala ustawić robota ręcznie suwakami. Punkty ścieżki
-  poza zasięgiem są zaznaczone na czerwono. Przycisk *cela* (`C`) dopasowuje
-  widok do całego robota.
+* Dla próbek wzdłuż wygenerowanej ścieżki liczona jest kinematyka odwrotna.
+  Raport: liczba próbek poza zasięgiem, poza limitami osi (z podziałem na
+  osie) oraz zakres min/max każdej osi. CLI zwraca kod wyjścia 3, gdy coś
+  jest poza zasięgiem.
+* W GUI robot jest rysowany z siatek STL (gdy definicja je ma) albo z brył
+  zastępczych, z kołnierzem, narzędziem, układem TCP i obwiednią zasięgu.
+  Przycisk ▶ albo spacja animuje przejazd po ścieżce, suwak przewija próbki,
+  panel *Osie* pokazuje kąty (na czerwono poza limitem) i pozwala ustawić
+  robota ręcznie suwakami. Przycisk *cela* (`C`) dopasowuje widok do robota.
 
 ```bash
 gcode2krl sciezka.nc -o out/ --robot KR90R2700PRO --base-frame 1200 0 500 0 0 0 --tool-frame 0 0 150 0 0 0
@@ -115,8 +137,8 @@ Sprawdzanie kolizji (`gcode2krl/collision.py`) jest liczone dla całej ścieżki
 i ma być wiarygodne, dlatego:
 
 * **Geometria dokładna, nie próbkowana.** Członki robota to kapsuły
-  (odcinek + promień) zgodne z bryłami w podglądzie: podstawa, kolumna,
-  ramię, przedramię, nadgarstek, obudowa A6, uchwyt narzędzia i ostrze.
+  (odcinek + promień) obejmujące siatki STL z CAD, podstawa to obrócony
+  prostopadłościan, narzędzie to kapsuły uchwytu i ostrza.
   Przeszkody to bryły wypukłe: pudełka (także obrócone), pionowe walce, kule i
   podłoga. Odległość kapsuła–kapsuła to dokładna odległość odcinek–odcinek,
   a kapsuła–przeszkoda to minimum wypukłej funkcji odległości wzdłuż odcinka
@@ -153,7 +175,7 @@ albo obrabianego detalu (`base`):
 
 ```
 floor posadzka robot 0
-box stol robot 1200 0 240 1200 900 480          # środek x y z, wymiary sx sy sz [a b c]
+box stol robot 1300 0 240 900 900 480           # środek x y z, wymiary sx sy sz [a b c]
 box material base 50 30 -10 140 100 20 workpiece
 cylinder slupek base 150 30 60 15 120            # środek, promień, wysokość
 sphere kamera robot 800 -600 1500 120
@@ -165,12 +187,12 @@ gcode2krl sciezka.nc -o out/ --robot KR90R2700PRO --base-frame 1200 0 500 0 0 0 
 gcode2krl x.nc --obstacles help     # opis formatu
 ```
 
-Czego model **nie** obejmuje: kolizji z kablami i osprzętem na ramieniu,
-dokładnych kształtów obudów (kapsuły są nieco większe od brył, więc wynik jest
-po stronie bezpiecznej), ruchów PTP (sprawdzane są tylko ruchy po ścieżce) i
-dynamiki. Przy dokładnych wymiarach własnego robota i narzędzia popraw wpis
-`RobotModel` (pole `visual` steruje też promieniami kapsuł) i parametry
-`--tool-radius`, `--cutter-len`, `--cutter-radius`.
+Czego model **nie** obejmuje: kolizji z kablami i osprzętem na ramieniu
+(pakiety energetyczne nie są w siatkach), ruchów PTP (sprawdzane są tylko
+ruchy po ścieżce) i dynamiki. Kapsuły obejmują siatki z zapasem, więc wynik
+jest po stronie bezpiecznej. Przy własnym narzędziu ustaw `--tool-radius`,
+`--cutter-len`, `--cutter-radius`; przy własnym robocie użyj
+`gcode2krl-import`.
 
 Dodanie własnego modelu: nowy wpis `RobotModel(...)` w `gcode2krl/robot.py`
 (wymiary, limity, prędkości, podpowiedzi wizualne) pojawia się automatycznie
@@ -316,8 +338,9 @@ na kawałki, bo CAM zapisuje wierzchołki z błędem do ±0,0007 mm.
 
 * Orientacja narzędzia jest stała (3-osiowy G-code). Brak obsługi osi A/B/C
   z G-code i kinematyk zewnętrznych (E1–E6).
-* Model robota ma przybliżone wymiary, kapsuły zamiast dokładnych obudów i
-  nie zna osprzętu na ramieniu; nie zastępuje testu na sterowniku.
+* Model robota: siatki z ROS-Industrial (konwersja z CAD KUKA), kapsuły
+  z zapasem zamiast dokładnych obudów, brak osprzętu na ramieniu; dane osi z
+  URDF do sprawdzenia z kartą katalogową; nie zastępuje testu na sterowniku.
 * `PTP $POS_ACT` jako ruch BCO na początku (`--no-bco` wyłącza); wejście na
   ścieżkę z pozycji HOME trzeba dopisać w programie nadrzędnym.
 * Limit liczby punktów w bloku `SPLINE` zależy od wersji KSS; domyślne 500
@@ -350,8 +373,11 @@ gcode2krl/
   simplify.py       Douglas-Peucker (przerzedzanie punktów SPL)
   translator.py     łańcuchy G1 -> elementy ruchu, helisy, pełne okręgi, grupowanie SPL
   krl_writer.py     generowanie .src/.dat, bloki SPLINE, LIN/CIRC, podział na podprogramy
-  robot.py          modele KUKA, kinematyka prosta/odwrotna, sprawdzenie zasięgu i limitów
+  robot.py          model KUKA z JSON (origins z URDF), kinematyka prosta/odwrotna, zasięg i limity
+  robot_import.py   importer URDF/xacro + STL -> definicja JSON, kapsuły i OBB z siatek (gcode2krl-import)
+  meshio.py         czytanie/zapis STL
   collision.py      kapsuły, przeszkody, dokładne odległości, sprawdzanie ciągłe, raport kolizji
+  robots/           definicje robotów (JSON ze źródłami), siatki STL, LICENSE i NOTICE (Apache-2.0)
   cli.py            interfejs wiersza poleceń (gcode2krl)
   server.py         lokalny serwer HTTP + API JSON (gcode2krl-gui)
   web/              GUI: index.html, app.js, viewer.js (WebGL), robot.js (model robota), style.css

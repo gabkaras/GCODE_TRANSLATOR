@@ -119,7 +119,7 @@ OBSTACLE_HELP = """# one obstacle per line:  kind name frame params... [workpiec
 # sphere NAME robot|base cx cy cz radius
 # floor NAME robot|base z
 floor posadzka robot 0
-box stol robot 1200 0 240 1200 900 480
+box stol robot 1300 0 240 900 900 480
 box material base 50 30 -10 140 100 20 workpiece"""
 
 
@@ -179,43 +179,84 @@ class Capsule:
     kind: str = "body"  # body | tool | cutter
 
 
-def robot_capsules(robot: RobotModel, tool: np.ndarray, tool_radius: float = 25.0, cutter_len: float = 20.0,
-                   cutter_radius: float = 6.0) -> list[Capsule]:
-    """Capsule model matching the visual links. Link indices: 0 base, 1 column(A1), 2 upper, 3 fore, 4 w4, 5 w5, 6 flange."""
+LINK_PL = ["podstawa", "kolumna", "ramie", "przedramie", "nadgarstek", "A5", "kolnierz", "flansza"]
+FLANGE_LINK = 7
+
+
+def procedural_capsules(robot: RobotModel) -> list[Capsule]:
+    """Fallback capsule model when no mesh-derived capsules exist (sizes from ``visual``)."""
     V = robot.visual or {}
     br, bh = V.get("base_r", 300), V.get("base_h", 250)
     col, arm, fa, wr = V.get("column", 400), V.get("arm", 240), V.get("forearm", 190), V.get("wrist", 150)
-    caps = [
+    o = robot.origins
+    return [
         Capsule("podstawa", 0, np.array([0, 0, 0.0]), np.array([0, 0, bh * 0.6]), br * 0.95),
-        Capsule("kolumna", 1, np.array([robot.a1 * 0.3, 0, bh]), np.array([robot.a1, 0, robot.d1]), col * 0.6),
-        Capsule("ramie", 2, np.array([0.0, 0, 0]), np.array([robot.a2, 0, 0]), arm * 0.6),
-        Capsule("przedramie", 3, np.array([fa * 0.2, 0, -robot.a3]), np.array([robot.d4 - wr * 0.8, 0, -robot.a3]), fa * 0.6),
-        Capsule("nadgarstek", 4, np.array([0.0, -wr * 0.5, 0]), np.array([0.0, wr * 0.5, 0]), wr * 0.6),
-        Capsule("A6", 5, np.array([0.0, 0, 0]), np.array([robot.d6 - 10.0, 0, 0]), wr * 0.42),
+        Capsule("kolumna", 1, np.array([o[1][0] * 0.3, 0, bh - o[0][2]]), np.array([o[1][0], 0, 0.0]), col * 0.6),
+        Capsule("ramie", 2, np.array([0.0, 0, 0]), np.array([o[2][0], 0, 0]), arm * 0.6),
+        Capsule("przedramie", 3, np.array([fa * 0.2, 0, o[3][2]]), np.array([o[3][0] - wr * 0.8, 0, o[3][2]]), fa * 0.6),
+        Capsule("nadgarstek", 4, np.array([0.0, -wr * 0.5, 0]), np.array([o[4][0], wr * 0.5, 0]), wr * 0.6),
+        Capsule("A5", 5, np.array([0.0, 0, 0]), np.array([max(o[5][0] + o[6][0] - 10.0, 1.0), 0, 0]), wr * 0.42),
     ]
+
+
+def robot_capsules(robot: RobotModel, tool: np.ndarray, tool_radius: float = 25.0, cutter_len: float = 20.0,
+                   cutter_radius: float = 6.0) -> list[Capsule]:
+    """Body capsules (mesh-derived when the definition has them) + tool capsules on the flange."""
+    caps: list[Capsule] = []
+    if robot.capsules:
+        for c in robot.capsules:
+            if c.get("type") == "box":
+                continue  # static base box, handled by base_boxes()
+            caps.append(Capsule(str(c.get("name", LINK_PL[int(c["link"])])), int(c["link"]), np.array(c["a"], float),
+                                np.array(c["b"], float), float(c["radius"])))
+    else:
+        caps = procedural_capsules(robot)
     tcp = tool[:3, 3]
     length = float(np.linalg.norm(tcp))
     if length > 1e-6:
         d = tcp / length
         cut = min(cutter_len, length)
         cutter_start = d * (length - cut)
-        # the holder capsule is rounded by tool_radius: end its axis so the cap stops at the cutter start
         shank_end = d * max(0.0, length - cut - tool_radius)
-        caps.append(Capsule("narzedzie", 6, np.zeros(3), shank_end, tool_radius, "tool"))
-        caps.append(Capsule("ostrze", 6, cutter_start, tcp, cutter_radius, "cutter"))
+        caps.append(Capsule("narzedzie", FLANGE_LINK, np.zeros(3), shank_end, tool_radius, "tool"))
+        caps.append(Capsule("ostrze", FLANGE_LINK, cutter_start, tcp, cutter_radius, "cutter"))
     else:
-        caps.append(Capsule("narzedzie", 6, np.zeros(3), np.array([0, 0, 1e-3]), tool_radius, "tool"))
+        caps.append(Capsule("narzedzie", FLANGE_LINK, np.zeros(3), np.array([0, 0, 1e-3]), tool_radius, "tool"))
     return caps
 
 
-# pairs of capsules checked for self collision (by name); neighbours are skipped
-SELF_PAIRS = [
-    ("przedramie", "podstawa"), ("przedramie", "kolumna"),
-    ("nadgarstek", "podstawa"), ("nadgarstek", "kolumna"), ("nadgarstek", "ramie"),
-    ("A6", "podstawa"), ("A6", "kolumna"), ("A6", "ramie"),
-    ("narzedzie", "podstawa"), ("narzedzie", "kolumna"), ("narzedzie", "ramie"), ("narzedzie", "przedramie"),
-    ("ostrze", "podstawa"), ("ostrze", "kolumna"), ("ostrze", "ramie"), ("ostrze", "przedramie"),
-]
+def base_boxes(robot: RobotModel) -> list[Obstacle]:
+    """The robot base (link 0, static) as oriented boxes in the robot frame."""
+    out = []
+    for c in robot.capsules:
+        if c.get("type") == "box" and int(c.get("link", 0)) == 0:
+            rot = np.array(c["rot"], float).reshape(3, 3)
+            out.append(Obstacle(str(c.get("name", "podstawa")), "box", np.array(c["center"], float), rot,
+                                np.array(c["half"], float), frame="robot"))
+    return out
+
+
+def self_pairs(caps: list[Capsule], disabled: set[tuple[int, int]] | None = None) -> list[tuple[int, int]]:
+    """Capsule index pairs for self collision: links at least two joints apart, tool vs links 0-3."""
+    disabled = disabled or set()
+    out = []
+    for i, a in enumerate(caps):
+        for j, b in enumerate(caps):
+            if j <= i:
+                continue
+            la, lb = a.link, b.link
+            if la == lb:
+                continue
+            hi, lo = max(la, lb), min(la, lb)
+            if hi == FLANGE_LINK:
+                if lo > 3:
+                    continue
+            elif hi - lo < 2:
+                continue
+            if (lo, hi) in disabled:
+                continue
+            out.append((i, j))
+    return out
 
 
 # --------------------------------------------------------------- batch FK
@@ -253,29 +294,21 @@ def _rz(a):
 
 
 def batch_fk(robot: RobotModel, q_deg: np.ndarray) -> list[tuple[np.ndarray, np.ndarray]]:
-    """Frames (R (N,3,3), p (N,3)) for links 0..6: base, column, upper arm, forearm, w4, w5, flange."""
+    """Frames (R (N,3,3), p (N,3)) for [base, link_1..link_6, flange] - same as robot.forward."""
     q = np.asarray(q_deg, dtype=float) * DEG
     n = len(q)
-    eye = np.broadcast_to(np.eye(3), (n, 3, 3)).copy()
-    zero = np.zeros((n, 3))
-    out = [(eye, zero)]
-    r1 = _rz(-q[:, 0])
-    p1 = zero
-    out.append((r1, p1))
-    r2 = r1 @ _ry(q[:, 1])
-    p2 = p1 + r1 @ np.array([robot.a1, 0, robot.d1])
-    out.append((r2, p2))
-    r3 = r2 @ _ry(q[:, 2])
-    p3 = p2 + r2 @ np.array([robot.a2, 0, 0.0])
-    out.append((r3, p3))
-    r4 = r3 @ _rx(-q[:, 3])
-    p4 = p3 + r3 @ np.array([robot.d4, 0, -robot.a3])
-    out.append((r4, p4))
-    r5 = r4 @ _ry(q[:, 4])
-    out.append((r5, p4))
-    r6 = r5 @ _rx(-q[:, 5]) @ FLANGE0
-    p6 = p4 + r5 @ np.array([robot.d6, 0, 0.0])
-    out.append((r6, p6))
+    o = [np.array(v, dtype=float) for v in robot.origins]
+    r = np.broadcast_to(np.eye(3), (n, 3, 3)).copy()
+    p = np.zeros((n, 3))
+    out = [(r, p)]
+    rots = [_rz(-q[:, 0]), _ry(q[:, 1]), _ry(q[:, 2]), _rx(-q[:, 3]), _ry(q[:, 4]), _rx(-q[:, 5])]
+    for k in range(6):
+        p = p + r @ o[k]
+        r = r @ rots[k]
+        out.append((r, p))
+    p = p + r @ o[6]
+    r = r @ FLANGE0
+    out.append((r, p))
     return out
 
 
@@ -401,16 +434,20 @@ def pair_clearances(robot: RobotModel, q: np.ndarray, caps: list[Capsule], obsta
     """Clearance (N, P) for every checked pair (self pairs + capsule x obstacle)."""
     frames = batch_fk(robot, q)
     ends = capsule_endpoints(frames, caps)
-    idx = {c.name: k for k, c in enumerate(caps)}
     cols: list[np.ndarray] = []
     names: list[tuple[str, str, str]] = []
-    for a, b in SELF_PAIRS:
-        if a not in idx or b not in idx:
-            continue
-        ka, kb = idx[a], idx[b]
+    disabled = {tuple(p) for p in getattr(robot, "disabled_pairs", [])}
+    for ka, kb in self_pairs(caps, disabled):
         d = seg_seg_distance(ends[:, ka, 0], ends[:, ka, 1], ends[:, kb, 0], ends[:, kb, 1]) - caps[ka].radius - caps[kb].radius
         cols.append(d)
-        names.append((a, b, "self"))
+        names.append((caps[ka].name, caps[kb].name, "self"))
+    for box in base_boxes(robot):
+        for k, c in enumerate(caps):
+            if c.link < 2 or (0, c.link) in disabled:
+                continue
+            d = seg_convex_distance(ends[:, k, 0], ends[:, k, 1], box.distance) - c.radius
+            cols.append(d)
+            names.append((c.name, box.name, "self"))
     for ob in obstacles:
         for k, c in enumerate(caps):
             if ob.workpiece and c.kind == "cutter":

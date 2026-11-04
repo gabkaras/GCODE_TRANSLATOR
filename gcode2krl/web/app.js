@@ -267,7 +267,12 @@
     const R = ROBOTS[key];
     if (!robotView) return;
     if (!R) { robotView.setVisible(false); $('#joints').classList.add('hidden'); return; }
-    if (!robotView.model || robotView.model.key !== key) { robotView.setModel(R); buildJointRows(R); }
+    if (!robotView.model || robotView.model.key !== key) {
+      robotView.setModel(R, null); buildJointRows(R);
+      if (R.has_mesh) fetch('/api/robot_mesh/' + key).then(r => r.json()).then(m => { if (robotView.model && robotView.model.key === key) { robotView.setModel(R, m); applyFrames(); } }).catch(() => {});
+      const src = $('#robot-sources');
+      src.innerHTML = Object.entries(R.sources || {}).map(([k, v]) => `<div><b>${k}:</b> ${v}</div>`).join('') + (R.notes || []).map(n => `<div class="warn">${n}</div>`).join('');
+    }
     robotView.setVisible($('#show-robot').checked);
     $('#joints').classList.remove('hidden');
     applyFrames();

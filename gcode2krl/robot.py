@@ -18,7 +18,10 @@ enough for reach/limit checks and visualisation, not for calibration.
 """
 from __future__ import annotations
 
+import json
 import math
+import os
+import sys
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -28,21 +31,52 @@ DEG = math.pi / 180.0
 
 @dataclass
 class RobotModel:
+    """KUKA 6R robot. ``origins`` are the joint origins (mm) of the standard chain
+    exactly as in the ROS-Industrial URDFs: a1 (0,0,d1), a2 (a1,0,0), a3 (a2,0,0),
+    a4 (d4a,0,a3), a5 (d4b,0,0), a6 (d6a,0,0), flange (d6b,0,0)."""
+
     key: str
     name: str
-    d1: float
-    a1: float
-    a2: float
-    a3: float
-    d4: float
-    d6: float
+    origins: list[list[float]]
     limits: list[tuple[float, float]]  # deg, per axis
     speeds: list[float]  # deg/s, per axis (nominal)
     payload: float = 0.0
     reach: float = 0.0
+    mass: float = 0.0
     home: tuple[float, ...] = (0.0, -90.0, 90.0, 0.0, 0.0, 0.0)
-    # visual hints (mm): base radius, column width, arm section sizes
-    visual: dict = field(default_factory=dict)
+    sources: dict = field(default_factory=dict)
+    meshes: dict = field(default_factory=dict)  # link index (str) -> relative STL path
+    capsules: list = field(default_factory=list)  # mesh-derived capsules {link, a, b, radius, name}
+    notes: list = field(default_factory=list)
+    visual: dict = field(default_factory=dict)  # procedural fallback sizes
+    base_dir: str = ""
+    disabled_pairs: list = field(default_factory=list)  # link index pairs always touching (skipped in self collision)
+
+    # ---- derived link parameters used by the closed-form IK
+    @property
+    def d1(self) -> float:
+        return self.origins[0][2]
+
+    @property
+    def a1(self) -> float:
+        return self.origins[1][0]
+
+    @property
+    def a2(self) -> float:
+        return self.origins[2][0]
+
+    @property
+    def a3(self) -> float:
+        """Signed offset of the forearm axis from the A3 axis (local Z; negative = below)."""
+        return self.origins[3][2]
+
+    @property
+    def d4(self) -> float:
+        return self.origins[3][0] + self.origins[4][0]
+
+    @property
+    def d6(self) -> float:
+        return self.origins[5][0] + self.origins[6][0]
 
     @property
     def wrist_reach(self) -> float:
@@ -50,45 +84,60 @@ class RobotModel:
 
     def to_dict(self) -> dict:
         return {
-            "key": self.key, "name": self.name, "d1": self.d1, "a1": self.a1, "a2": self.a2, "a3": self.a3,
-            "d4": self.d4, "d6": self.d6, "limits": self.limits, "speeds": self.speeds, "payload": self.payload,
-            "reach": self.reach, "home": list(self.home), "visual": self.visual, "wrist_reach": self.wrist_reach,
+            "key": self.key, "name": self.name, "origins": self.origins, "d1": self.d1, "a1": self.a1, "a2": self.a2,
+            "a3": self.a3, "d4": self.d4, "d6": self.d6, "limits": self.limits, "speeds": self.speeds,
+            "payload": self.payload, "reach": self.reach, "mass": self.mass, "home": list(self.home),
+            "visual": self.visual, "wrist_reach": self.wrist_reach, "sources": self.sources, "notes": self.notes,
+            "has_mesh": bool(self.meshes), "capsules": self.capsules, "disabled_pairs": self.disabled_pairs,
         }
 
 
+def _visual_from_origins(o) -> dict:
+    scale = max(0.2, (o[2][0] + o[3][0] + o[4][0]) / 2350.0)
+    return {"base_r": 330 * scale, "base_h": 280 * scale, "column": 420 * scale, "arm": 260 * scale,
+            "forearm": 200 * scale, "wrist": 160 * scale}
+
+
+def model_from_dict(d: dict, base_dir: str = "") -> RobotModel:
+    m = RobotModel(
+        key=d["key"], name=d.get("name", d["key"]), origins=[list(map(float, o)) for o in d["origins"]],
+        limits=[tuple(map(float, l)) for l in d["limits"]], speeds=[float(v) for v in d["speeds"]],
+        payload=float(d.get("payload", 0) or 0), reach=float(d.get("reach", 0) or 0), mass=float(d.get("mass", 0) or 0),
+        home=tuple(float(v) for v in d.get("home", (0, -90, 90, 0, 0, 0))), sources=d.get("sources", {}),
+        meshes=d.get("meshes", {}), capsules=d.get("capsules", []), notes=d.get("notes", []),
+        visual=d.get("visual") or _visual_from_origins(d["origins"]), base_dir=base_dir,
+        disabled_pairs=[tuple(p) for p in d.get("disabled_pairs", [])],
+    )
+    return m
+
+
 ROBOTS: dict[str, RobotModel] = {}
+ROBOT_DIRS = [os.path.join(os.path.dirname(os.path.abspath(__file__)), "robots"),
+              os.path.join(os.path.expanduser("~"), ".gcode2krl", "robots")]
 
 
-def _add(m: RobotModel) -> None:
-    ROBOTS[m.key] = m
+def load_robots(dirs: list[str] | None = None) -> dict[str, RobotModel]:
+    """(Re)load robot definitions from the package data dir and ~/.gcode2krl/robots."""
+    ROBOTS.clear()
+    for d in dirs or ROBOT_DIRS:
+        if not os.path.isdir(d):
+            continue
+        for f in sorted(os.listdir(d)):
+            if f.lower().endswith(".json"):
+                try:
+                    with open(os.path.join(d, f), encoding="utf-8") as fh:
+                        data = json.load(fh)
+                    m = model_from_dict(data, d)
+                    ROBOTS[m.key] = m
+                except (ValueError, KeyError, OSError) as exc:
+                    print(f"robot definition {f} skipped: {exc}", file=sys.stderr)
+    return ROBOTS
 
-
-_add(RobotModel("KR90R2700PRO", "KUKA KR 90 R2700 pro (QUANTEC)", d1=675, a1=350, a2=1150, a3=41, d4=1200, d6=215,
-                limits=[(-185, 185), (-140, -5), (-120, 155), (-350, 350), (-125, 125), (-350, 350)],
-                speeds=[136, 120, 120, 190, 190, 260], payload=90, reach=2696,
-                visual={"base_r": 330, "base_h": 280, "column": 420, "arm": 260, "forearm": 200, "wrist": 160}))
-_add(RobotModel("KR120R2700EXTRA", "KUKA KR 120 R2700 extra (QUANTEC)", d1=675, a1=350, a2=1150, a3=41, d4=1200, d6=215,
-                limits=[(-185, 185), (-140, -5), (-120, 155), (-350, 350), (-125, 125), (-350, 350)],
-                speeds=[120, 115, 120, 190, 180, 260], payload=120, reach=2701,
-                visual={"base_r": 330, "base_h": 280, "column": 420, "arm": 260, "forearm": 200, "wrist": 160}))
-_add(RobotModel("KR210R2700EXTRA", "KUKA KR 210 R2700 extra (QUANTEC)", d1=675, a1=350, a2=1150, a3=41, d4=1200, d6=240,
-                limits=[(-185, 185), (-140, -5), (-120, 155), (-350, 350), (-125, 125), (-350, 350)],
-                speeds=[123, 115, 112, 179, 172, 219], payload=210, reach=2701,
-                visual={"base_r": 340, "base_h": 280, "column": 440, "arm": 280, "forearm": 220, "wrist": 180}))
-_add(RobotModel("KR60R2033", "KUKA KR 60-3 (approx.)", d1=815, a1=350, a2=850, a3=0, d4=820, d6=170,
-                limits=[(-185, 185), (-135, 35), (-120, 158), (-350, 350), (-119, 119), (-350, 350)],
-                speeds=[128, 102, 128, 260, 245, 322], payload=60, reach=2033,
-                visual={"base_r": 300, "base_h": 260, "column": 380, "arm": 220, "forearm": 170, "wrist": 140}))
-_add(RobotModel("KR16R1610", "KUKA KR 16-2 (approx.)", d1=675, a1=260, a2=680, a3=35, d4=670, d6=158,
-                limits=[(-185, 185), (-155, 35), (-130, 154), (-350, 350), (-130, 130), (-350, 350)],
-                speeds=[156, 156, 156, 330, 330, 615], payload=16, reach=1611,
-                visual={"base_r": 220, "base_h": 200, "column": 280, "arm": 170, "forearm": 130, "wrist": 110}))
-_add(RobotModel("KR6R900", "KUKA KR 6 R900 sixx (AGILUS)", d1=400, a1=25, a2=455, a3=35, d4=420, d6=80,
-                limits=[(-170, 170), (-190, 45), (-120, 156), (-185, 185), (-120, 120), (-350, 350)],
-                speeds=[360, 300, 360, 381, 388, 615], payload=6, reach=901,
-                visual={"base_r": 110, "base_h": 120, "column": 150, "arm": 100, "forearm": 80, "wrist": 70}))
 
 DEFAULT_ROBOT = "KR90R2700PRO"
+load_robots()
+if DEFAULT_ROBOT not in ROBOTS and ROBOTS:
+    DEFAULT_ROBOT = next(iter(ROBOTS))
 
 
 # --------------------------------------------------------------- transforms
@@ -145,29 +194,30 @@ FLANGE0 = rot_y(math.pi / 2)  # flange orientation in the forearm frame at A4=A5
 
 # ------------------------------------------------------------------ forward
 def forward(robot: RobotModel, joints_deg) -> list[np.ndarray]:
-    """Return 4x4 frames: [base, A2 axis, A3 axis, A5 centre (wrist), flange]."""
+    """Return 4x4 frames [base, link_1 .. link_6, flange] (URDF link frames; flange Z out)."""
     q = [float(v) * DEG for v in joints_deg]
+    o = robot.origins
     t = np.eye(4)
     frames = [t.copy()]
-    r1 = rot_z(-q[0])
-    t = t @ _h(r1, (0, 0, 0))
-    t = t @ _h(np.eye(3), (robot.a1, 0, robot.d1))
-    frames.append(t.copy())  # A2 axis
-    t = t @ _h(rot_y(q[1]), (0, 0, 0))
-    t = t @ _h(np.eye(3), (robot.a2, 0, 0))
-    frames.append(t.copy())  # A3 axis
-    t = t @ _h(rot_y(q[2]), (0, 0, 0))
-    t = t @ _h(np.eye(3), (robot.d4, 0, -robot.a3))
-    frames.append(t.copy())  # A5 centre
-    t = t @ _h(rot_x(-q[3]), (0, 0, 0))
-    t = t @ _h(rot_y(q[4]), (0, 0, 0))
-    t = t @ _h(rot_x(-q[5]), (0, 0, 0))
-    t = t @ _h(FLANGE0, (robot.d6, 0, 0))
-    frames.append(t.copy())  # flange (Z out of the flange)
+    t = t @ _h(rot_z(-q[0]), o[0])
+    frames.append(t.copy())  # link_1
+    t = t @ _h(rot_y(q[1]), o[1])
+    frames.append(t.copy())  # link_2
+    t = t @ _h(rot_y(q[2]), o[2])
+    frames.append(t.copy())  # link_3
+    t = t @ _h(rot_x(-q[3]), o[3])
+    frames.append(t.copy())  # link_4
+    t = t @ _h(rot_y(q[4]), o[4])
+    frames.append(t.copy())  # link_5
+    t = t @ _h(rot_x(-q[5]), o[5])
+    frames.append(t.copy())  # link_6
+    t = t @ _h(FLANGE0, o[6])
+    frames.append(t.copy())  # flange
     return frames
 
 
 def _h(r: np.ndarray, p) -> np.ndarray:
+    """Translate by p (parent frame) then rotate by r: the URDF joint convention."""
     t = np.eye(4)
     t[:3, :3] = r
     t[:3, 3] = p
@@ -196,7 +246,7 @@ def inverse_all(robot: RobotModel, flange: np.ndarray) -> list[list[float]]:
     sols: list[list[float]] = []
     base_angle = math.atan2(wc[1], wc[0])
     l2 = math.hypot(robot.d4, robot.a3)
-    phi = math.atan2(robot.a3, robot.d4)
+    phi = math.atan2(-robot.a3, robot.d4)  # angle from the forearm axis to the A3->A5 line (a3 < 0: below)
     for shoulder in (0, 1):
         th1 = -(base_angle + shoulder * math.pi)  # A1 about -Z
         # position of the wrist centre in the arm plane (after undoing A1)

@@ -18,10 +18,14 @@ def test_home_pose_matches_kuka_quantec():
 
 def test_a2_a3_conventions():
     r = ROBOTS["KR90R2700PRO"]
+    # frames: [base, link_1 (A1, at height d1), link_2 (A2 axis), link_3 (A3 axis), link_4, link_5, link_6, flange]
     # A2 = 0: upper arm horizontal forward -> A3 axis at (350+1150, 0, 675)
-    assert np.allclose(forward(r, (0, 0, 0, 0, 0, 0))[2][:3, 3], [1500, 0, 675])
+    assert np.allclose(forward(r, (0, 0, 0, 0, 0, 0))[3][:3, 3], [1500, 0, 675])
+    assert np.allclose(forward(r, (0, 0, 0, 0, 0, 0))[2][:3, 3], [350, 0, 675])
     # A2 = -90: vertical
-    assert np.allclose(forward(r, (0, -90, 0, 0, 0, 0))[2][:3, 3], [350, 0, 1825])
+    assert np.allclose(forward(r, (0, -90, 0, 0, 0, 0))[3][:3, 3], [350, 0, 1825])
+    # link parameters come from the URDF joint origins
+    assert (r.d1, r.a1, r.a2, r.a3, r.d4, r.d6) == (675, 350, 1150, -41, 1200, 215)
     # A1 positive turns clockwise seen from above (towards -Y)
     assert forward(r, (30, -90, 90, 0, 0, 0))[-1][1, 3] < 0
 
@@ -80,3 +84,24 @@ def test_check_path_reach_and_limits():
     # far away: unreachable
     rep2 = check_path(r, np.array([[3000.0, 0, 0]]), (0, 180, 0), base, tool)
     assert rep2.n_unreachable == 1
+
+
+def test_definitions_have_sources_and_meshes():
+    for key, r in ROBOTS.items():
+        assert r.sources.get("geometry") and r.sources.get("axes"), key
+        assert len(r.origins) == 7 and len(r.limits) == 6 and len(r.speeds) == 6
+        assert r.capsules, key
+        for idx, rel in r.meshes.items():
+            import os
+            assert os.path.isfile(os.path.join(r.base_dir, rel)), (key, rel)
+    kr90 = ROBOTS["KR90R2700PRO"]
+    assert kr90.speeds == [136, 130, 120, 292, 258, 284]
+    assert kr90.limits[1] == (-140, -5) and kr90.payload == 90 and kr90.reach == 2696
+
+
+def test_agilus_wrist_offset_is_positive():
+    r = ROBOTS["KR6R900SIXX"]
+    assert r.a3 == 35 and r.d4 == 420 and r.d6 == 80
+    fl = forward(r, r.home)[-1]
+    # HOME of the KR 6 R900 sixx: flange at X = 25 + 420 + 80, Z = 400 + 455 + 35
+    assert np.allclose(fl[:3, 3], [525, 0, 890])

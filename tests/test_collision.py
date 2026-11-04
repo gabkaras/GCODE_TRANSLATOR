@@ -105,13 +105,40 @@ def test_obstacle_between_samples_is_found_by_refinement():
 
 def test_self_collision_detected_in_folded_pose():
     r = ROBOTS["KR90R2700PRO"]
-    caps = robot_capsules(r, frame((0, 0, 600, 0, 0, 0)), tool_radius=40)
-    folded = np.array([[0, -140, 150, 0, 120, 0]], float)  # arm back, forearm folded, long tool bent down
+    caps = robot_capsules(r, frame((0, 0, 900, 0, 0, 0)), tool_radius=40)
+    # forearm folded back with a long tool bent 125 deg: the tool runs into the column / upper arm
+    folded = np.array([[0, -90, 120, 0, 125, 0]], float)
     rep = check_collisions(r, folded, np.ones(1, bool), caps, [], margin=10)
-    assert rep.n_collision >= 1 or rep.min_clearance < 10
+    assert rep.n_collision >= 1, rep.pairs[:3]
+    assert any(p.a in ("narzedzie", "ostrze") or p.b in ("narzedzie", "ostrze") for p in rep.pairs if p.min_clearance <= 0)
     home = np.array([r.home], float)
     rep2 = check_collisions(r, home, np.ones(1, bool), caps, [], margin=10)
     assert rep2.n_collision == 0 and rep2.min_clearance > 10
+
+
+def test_mesh_capsules_enclose_meshes():
+    import os
+    from gcode2krl.meshio import load_stl
+    from gcode2krl.robot_import import surface_outside
+    r = ROBOTS["KR90R2700PRO"]
+    for idx, rel in r.meshes.items():
+        if idx == "0":
+            continue  # base is an oriented box
+        tris = load_stl(os.path.join(r.base_dir, rel))
+        caps = [c for c in r.capsules if int(c["link"]) == int(idx) and c.get("type") != "box"]
+        assert caps and surface_outside(tris, caps, max_edge=10.0) <= 1e-6, idx
+
+
+def test_base_box_is_static_obstacle_for_wrist():
+    from gcode2krl.collision import base_boxes
+    r = ROBOTS["KR90R2700PRO"]
+    boxes = base_boxes(r)
+    assert len(boxes) == 1 and boxes[0].kind == "box"
+    caps = robot_capsules(r, frame((0, 0, 0, 0, 0, 0)))
+    # wrist straight down next to the base: A2 forward, A3 folded down
+    q = np.array([[0, -5, -110, 0, 0, 0]], float)
+    rep = check_collisions(r, q, np.ones(1, bool), caps, [], margin=10)
+    assert any(p.b == "podstawa" for p in rep.pairs)
 
 
 def test_dense_sampling_step():

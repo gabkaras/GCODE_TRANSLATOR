@@ -76,7 +76,8 @@
       <label class="row"><span>Ostrze: długość / promień</span><span class="pair2"><input type="number" id="opt_cutter_len" data-default="20" value="20" min="0" step="1"><input type="number" id="opt_cutter_radius" data-default="6" value="6" min="0.5" step="0.5"></span></label>
       <label class="col"><span>Przeszkody <small>(jedna na linię, <code>#</code> komentarz)</small></span>
         <textarea id="opt_obstacles" rows="7" spellcheck="false" data-default=""></textarea></label>
-      <div class="row-note muted">Model uproszczony: wymiary i limity z kart katalogowych, kapsuły kolizyjne zgodne z bryłami w podglądzie. Ostrze może wchodzić w przeszkody oznaczone <code>workpiece</code>, uchwyt nie.</div>
+      <div id="robot-sources" class="row-note muted sources"></div>
+      <div class="row-note muted">Geometria i siatki z URDF/CAD, dane osi z kart katalogowych (pole „źródła” powyżej). Kapsuły kolizyjne obejmują wszystkie wierzchołki siatek. Ostrze może wchodzić w przeszkody oznaczone <code>workpiece</code>, uchwyt nie.</div>
     </details>
 
     <details>

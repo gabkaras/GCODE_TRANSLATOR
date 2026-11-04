@@ -17,12 +17,13 @@ test = ["pytest>=7"]
 [project.scripts]
 gcode2krl = "gcode2krl.cli:main"
 gcode2krl-gui = "gcode2krl.server:main"
+gcode2krl-import = "gcode2krl.robot_import:main"
 
 [tool.setuptools.packages.find]
 include = ["gcode2krl*"]
 
 [tool.setuptools.package-data]
-gcode2krl = ["web/*"]
+gcode2krl = ["web/*", "robots/*.json", "robots/LICENSE", "robots/NOTICE.md", "robots/meshes/*/*.stl"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
