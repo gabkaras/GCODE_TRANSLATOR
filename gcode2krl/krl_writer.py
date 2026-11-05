@@ -42,6 +42,7 @@ class KrlOptions:
     advance: int = 3
     source_name: str = ""
     halt_on_tool_change: bool = True
+    extruder_out: int = 0  # digital output switched on while material is deposited (0 = comment only)
     base_frame: tuple[float, ...] | None = None  # literal $BASE {X Y Z A B C} instead of BASE_DATA[n]
     tool_frame: tuple[float, ...] | None = None  # literal $TOOL {X Y Z A B C} instead of TOOL_DATA[n]
 
@@ -222,6 +223,12 @@ class KrlWriter:
             lines = [f"; coolant {'on' if on else 'off'}"]
             if self.o.coolant_out > 0:
                 lines.append(f"$OUT[{self.o.coolant_out}] = {'TRUE' if on else 'FALSE'}")
+            self.emit(lines)
+        elif k in ("extruder_on", "extruder_off"):
+            on = k == "extruder_on"
+            lines = [f"; extruder {'on' if on else 'off'}"]
+            if self.o.extruder_out > 0:
+                lines.append(f"$OUT[{self.o.extruder_out}] = {'TRUE' if on else 'FALSE'}")
             self.emit(lines)
         elif k == "tool_change":
             lines = [f"; tool change T{ev.value}"]

@@ -53,6 +53,7 @@ def build_parser() -> argparse.ArgumentParser:
     k.add_argument("--spindle-anout", type=int, default=0, help="analog output for spindle speed, 0 = none")
     k.add_argument("--spindle-max-rpm", type=float, default=24000.0, help="rpm that maps to analog output 1.0")
     k.add_argument("--coolant-out", type=int, default=0, help="digital output for coolant, 0 = comment only")
+    k.add_argument("--extruder-out", type=int, default=-1, help="3D printing: digital output switched on for extruding moves (0 = comments only, -1 = ignore E)")
     k.add_argument("--no-halt-tool-change", action="store_true", help="do not HALT at M6")
     k.add_argument("--dwell-ms", action="store_true", help="interpret G4 P as milliseconds instead of seconds")
     k.add_argument("--start", type=float, nargs=3, default=(0.0, 0.0, 0.0), metavar=("X", "Y", "Z"),
@@ -110,14 +111,14 @@ def run(argv: list[str] | None = None) -> int:
                              min_arc_points=args.min_arc_points, refine_shift=args.refine_shift,
                              spl_max_segment=args.spl_max_segment, corner_angle_deg=args.corner_angle,
                              default_feed=args.default_feed, offset=tuple(args.offset),
-                             fit_arcs=not args.no_arcs, use_spl=not args.no_spl)
+                             fit_arcs=not args.no_arcs, use_spl=not args.no_spl, extruder=args.extruder_out >= 0)
     items, stats = translate(parsed, topts)
     kopts = KrlOptions(name=args.name or derive_name(args.input), mode=args.mode, tool=args.tool, base=args.base,
                        abc=tuple(args.abc), rapid_vel=args.rapid_vel, max_vel=args.max_vel, acc=args.acc,
                        cdis=args.cdis, corner_angle_deg=args.corner_angle, exact_corners=not args.round_corners,
                        max_block_segments=args.max_block_segments, max_motions_per_file=args.max_motions_per_file,
                        block_approx=not args.no_block_approx, spindle_out=args.spindle_out,
-                       coolant_out=args.coolant_out, spindle_anout=args.spindle_anout,
+                       coolant_out=args.coolant_out, spindle_anout=args.spindle_anout, extruder_out=max(0, args.extruder_out),
                        spindle_max_rpm=args.spindle_max_rpm, bco_ptp=not args.no_bco, advance=args.advance,
                        source_name=os.path.basename(args.input), halt_on_tool_change=not args.no_halt_tool_change,
                        base_frame=tuple(args.base_frame) if args.base_frame else None,

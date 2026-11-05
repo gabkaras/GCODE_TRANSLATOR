@@ -68,6 +68,29 @@
       <label class="row"><span>Pozycja startowa X Y Z</span><input type="text" id="opt_start" data-default="0 0 0" value="0 0 0"></label>
     </details>
 
+    <details id="slicer">
+      <summary>Slicer: model → G-code</summary>
+      <div class="frame-block">
+        <div class="fb-head"><span>Model do pokrojenia</span>
+          <label class="file-btn mini">wczytaj STEP/STL/OBJ<input type="file" id="slice-file" accept=".stl,.obj,.step,.stp,.iges,.igs" hidden></label>
+        </div>
+        <div class="fb-row"><select id="slice-mesh" title="wgrane modele"><option value="">wybierz model…</option></select>
+          <select id="slice-units" title="jednostki STL/OBJ"><option value="mm">mm</option><option value="cm">cm</option><option value="m">m</option><option value="in">cale</option></select></div>
+        <div class="row"><span>Wysokość warstwy / pierwsza [mm]</span><span class="pair2"><input type="number" id="sl_layer_height" value="1" min="0.05" step="0.1"><input type="number" id="sl_first_layer_height" value="1" min="0.05" step="0.1"></span></div>
+        <div class="row"><span>Szerokość ścieżki [mm]</span><input type="number" id="sl_bead_width" value="2" min="0.1" step="0.1"></div>
+        <div class="row"><span>Obrysy / warstwy dół / góra</span><span class="pair3"><input type="number" id="sl_perimeters" value="2" min="0" step="1"><input type="number" id="sl_bottom_layers" value="3" min="0" step="1"><input type="number" id="sl_top_layers" value="3" min="0" step="1"></span></div>
+        <div class="row"><span>Wypełnienie [%] / wzór / kąt</span><span class="pair3"><input type="number" id="sl_infill" value="20" min="0" max="100" step="5"><select id="sl_infill_pattern"><option value="lines">linie</option><option value="grid">siatka</option><option value="concentric">koncentryczne</option><option value="none">brak</option></select><input type="number" id="sl_infill_angle" value="45" step="15"></select></span></div>
+        <div class="row"><span>Prędkości obrys zewn. / wewn. / wypełnienie [mm/min]</span><span class="pair3"><input type="number" id="sl_speed_outer" value="1200" step="100"><input type="number" id="sl_speed_perimeter" value="1800" step="100"><input type="number" id="sl_speed_infill" value="2400" step="100"></span></div>
+        <div class="row"><span>Pierwsza warstwa / przejazdy [mm/min]</span><span class="pair2"><input type="number" id="sl_speed_first_layer" value="900" step="100"><input type="number" id="sl_speed_travel" value="6000" step="500"></span></div>
+        <div class="row"><span>Ekstruzja E</span><select id="sl_extrusion_mode"><option value="volumetric">objętościowa (mm³)</option><option value="filament">filament 1,75</option><option value="none">bez E</option></select></div>
+        <div class="row"><span>Retrakcja [mm] / z-hop [mm]</span><span class="pair2"><input type="number" id="sl_retract_length" value="0" min="0" step="0.5"><input type="number" id="sl_z_hop" value="0" min="0" step="0.5"></span></div>
+        <div class="row"><span>Szew</span><select id="sl_seam"><option value="nearest">najbliższy</option><option value="aligned">wyrównany</option><option value="random">losowy</option></select></div>
+        <div class="row"><span>Skirt pętle / brim [mm]</span><span class="pair2"><input type="number" id="sl_skirt_loops" value="0" min="0" step="1"><input type="number" id="sl_brim_width" value="0" min="0" step="1"></span></div>
+        <div class="fb-row"><button type="button" id="btn-slice" class="primary">Pokrój i wczytaj G-code</button><span id="slice-info" class="muted"></span></div>
+        <div class="row-note muted">Własny slicer (MIT): warstwy, obrysy, wypełnienie, przejazdy, E. Wynik trafia do translatora jak wgrany plik; włącz „Ekstruder” w sekcji M-kody, żeby KRL przełączał wyjście ekstrudera na ruchach z E.</div>
+      </div>
+    </details>
+
     <details open id="cell-setup">
       <summary>Stanowisko: TCP, baza, stół</summary>
       <div class="frame-block">
@@ -164,6 +187,8 @@
       <label class="row"><span>Obroty dla $ANOUT = 1.0</span><input type="number" id="opt_spindle_max_rpm" data-default="24000" value="24000" min="1" step="1000"></label>
       <label class="row"><span>Chłodziwo $OUT[n] (0 = brak)</span><input type="number" id="opt_coolant_out" data-default="0" value="0" min="0" max="4096" step="1"></label>
       <label class="row check"><input type="checkbox" id="opt_halt_tool_change" data-default="true" checked><span>HALT przy M6</span></label>
+      <label class="row check"><input type="checkbox" id="opt_extruder" data-default="false"><span>Ekstruder: włączaj na ruchach z E (druk 3D)</span></label>
+      <label class="row"><span>Ekstruder $OUT[n] (0 = komentarz)</span><input type="number" id="opt_extruder_out" data-default="0" value="0" min="0" max="4096" step="1"></label>
       <label class="row check"><input type="checkbox" id="opt_dwell_ms" data-default="false"><span>G4 P w milisekundach</span></label>
     </details>
   </form>

@@ -29,6 +29,7 @@ class LinearMove:
     feed: float
     rapid: bool
     line_no: int
+    extrude: float = 0.0  # E delta of this move (> 0 = material deposited)
 
 
 @dataclass
@@ -40,6 +41,7 @@ class ArcMove:
     ccw: bool
     feed: float
     line_no: int
+    extrude: float = 0.0
 
     @property
     def helical(self) -> bool:
@@ -124,6 +126,8 @@ class GCodeParser:
         self.feed = default_feed
         self.rpm = 0.0
         self.inverse_time = False
+        self.e = 0.0
+        self.e_absolute = True
         self.dwell_in_ms = dwell_in_ms
         self.keep_comments = keep_comments
         self.result = ParseResult()
@@ -220,6 +224,9 @@ class GCodeParser:
             elif g in (28.0, 30.0, 28.1, 30.1):
                 self.warn(line_no, f"G{g:g} homing skipped; position is assumed unchanged")
                 return
+            elif g == 92.0 and "E" in words and not any(a in words for a in "XYZ"):
+                self.e = words["E"]
+                return
             elif g in (92.0, 92.1, 92.2, 92.3, 53.0, 10.0, 52.0, 68.0):
                 self.warn(line_no, f"G{g:g} is not supported and was skipped")
                 return
@@ -239,6 +246,12 @@ class GCodeParser:
             return
 
         for m in mcodes:
+            if m == 82:
+                self.e_absolute = True
+                continue
+            if m == 83:
+                self.e_absolute = False
+                continue
             if m == 0:
                 self.emit(Pause(False, line_no))
             elif m == 1:
@@ -255,13 +268,21 @@ class GCodeParser:
                 self.emit(Coolant(True, line_no))
             elif m == 9:
                 self.emit(Coolant(False, line_no))
-            elif m in (48, 49, 10, 11, 60):
+            elif m in (48, 49, 10, 11, 60, 104, 105, 106, 107, 109, 140, 190, 117, 73, 220, 221, 400):
                 pass
             else:
                 self.warn(line_no, f"M{m} ignored")
 
         has_axis = any(a in words for a in "XYZ")
         has_arc_words = any(a in words for a in "IJKR")
+        de = 0.0
+        if "E" in words:
+            if self.e_absolute:
+                de = words["E"] - self.e
+                self.e = words["E"]
+            else:
+                de = words["E"]
+                self.e += de
         if self.motion is None:
             if has_axis:
                 self.warn(line_no, "axis words without a motion mode (G0/G1/G2/G3) ignored")
@@ -278,7 +299,7 @@ class GCodeParser:
         if self.motion in (0, 1):
             self.result.counts[f"G{self.motion}"] += 1
             if float(np.linalg.norm(target - self.pos)) > 1e-9:
-                self.emit(LinearMove(self.pos.copy(), target, self.feed, self.motion == 0, line_no))
+                self.emit(LinearMove(self.pos.copy(), target, self.feed, self.motion == 0, line_no, de))
             self.pos = target
             return
 
@@ -310,7 +331,7 @@ class GCodeParser:
                 return
             center[inorm] = start[inorm]
             center = self._reconcile_center(start, target, center, ia, ib, line_no)
-        self.emit(ArcMove(start, target, center, normal, ccw, self.feed, line_no))
+        self.emit(ArcMove(start, target, center, normal, ccw, self.feed, line_no, de))
         self.pos = target
 
     # ------------------------------------------------------------------ arcs

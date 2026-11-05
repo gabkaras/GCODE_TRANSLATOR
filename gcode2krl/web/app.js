@@ -45,7 +45,7 @@
   }).catch(() => {});
 
   // ----------------------------------------------------------------- options
-  const OPTION_IDS = ['robot','base_frame','tool_frame','base_literal','tool_literal','robot_samples','path_step','margin',
+  const OPTION_IDS = ['extruder','extruder_out','robot','base_frame','tool_frame','base_literal','tool_literal','robot_samples','path_step','margin',
     'tbl_sx','tbl_sy','tbl_cx','tbl_cy','mat_t','mat_pad','tool_mesh','tool_mesh_units',
     'tool_radius','cutter_len','cutter_radius','obstacles','tol','max_radius','min_radius','min_arc_points','refine_shift','spl_max_segment','corner_angle',
     'default_feed','offset','fit_arcs','use_spl','name','mode','tool','base','abc','rapid_vel','max_vel','acc','cdis',
@@ -448,6 +448,7 @@
   async function refreshMeshMeta() {
     try {
       const d = await (await fetch('/api/meshes')).json(); meshMeta = {}; for (const m of d.meshes) meshMeta[m.id] = m;
+      refreshSliceMeshes();
       const sb = $('#step-backend');
       if (sb) sb.textContent = d.step_backends && d.step_backends.length ? `Import STEP/IGES: kernel ${d.step_backends.join(', ')} (OpenCASCADE), jednostki z pliku.` : 'Import STEP wymaga kernela CAD: pip install cadquery-ocp (albo pip install gmsh).';
     } catch (e) {}
@@ -519,6 +520,44 @@
     if (toolMeshLoaded === key) return;
     try { const g = await (await fetch('/api/mesh/' + id + '?units=' + units)).json(); if (!g.error) { robotView.setToolMesh(g); toolMeshLoaded = key; } } catch (e) {}
   }
+  // ---- slicer ------------------------------------------------------------
+  const SL_FIELDS = ['layer_height','first_layer_height','bead_width','perimeters','bottom_layers','top_layers','infill_pattern','infill_angle',
+    'speed_outer','speed_perimeter','speed_infill','speed_first_layer','speed_travel','extrusion_mode','retract_length','z_hop','seam','skirt_loops','brim_width'];
+  function sliceParams() {
+    const o = {};
+    for (const k of SL_FIELDS) { const el = $('#sl_' + k); if (el) o[k] = el.value; }
+    o.infill_density = (Number($('#sl_infill').value) || 0) / 100;
+    return o;
+  }
+  function refreshSliceMeshes() {
+    const sel = $('#slice-mesh'); if (!sel) return;
+    const cur = sel.value;
+    sel.innerHTML = '<option value="">wybierz model…</option>';
+    for (const m of Object.values(meshMeta)) { const o = document.createElement('option'); o.value = m.id; o.textContent = `${m.name} (${m.tris} tr.)`; sel.appendChild(o); }
+    if (cur && meshMeta[cur]) sel.value = cur;
+  }
+  $('#slice-file').addEventListener('change', async ev => {
+    const f = ev.target.files[0]; ev.target.value = ''; if (!f) return;
+    try {
+      setStatus(`Wgrywanie ${f.name}…`, 'busy');
+      const meta = await uploadMesh(f); meshMeta[meta.id] = meta; refreshSliceMeshes(); $('#slice-mesh').value = meta.id;
+      setStatus(`Model ${meta.name}: ${meta.tris} trójkątów, ${meta.min.map((v, i) => (meta.max[i] - v).toFixed(0)).join('×')} ${$('#slice-units').value}`, 'ok');
+    } catch (err) { setStatus('Błąd wgrywania: ' + err.message, 'err'); }
+  });
+  $('#btn-slice').addEventListener('click', async () => {
+    const ref = $('#slice-mesh').value; if (!ref) { setStatus('Wybierz model do pokrojenia', 'err'); return; }
+    setStatus('Krojenie…', 'busy'); $('#btn-slice').disabled = true;
+    try {
+      const res = await fetch('/api/slice', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mesh: ref, units: $('#slice-units').value, params: sliceParams() }) });
+      const d = await res.json();
+      if (!res.ok || d.error) throw new Error(d.error || res.statusText);
+      const st = d.stats;
+      $('#slice-info').textContent = `${st.layers} warstw · ${st.paths} ścieżek · ekstruzja ${(st.extrusion_length / 1000).toFixed(1)} m · przejazdy ${(st.travel_length / 1000).toFixed(1)} m · ok. ${(st.time_s / 60).toFixed(0)} min` + (st.dropped_chains ? ` · ${st.dropped_chains} otwartych konturów pominięto` : '');
+      $('#opt_extruder').checked = true; saveOptions();
+      setGcode(d.gcode, (d.name || 'model').replace(/\.[^.]+$/, '') + '.gcode');
+    } catch (err) { setStatus('Błąd krojenia: ' + err.message, 'err'); }
+    finally { $('#btn-slice').disabled = false; }
+  });
   function drawFrames() {
     if (!viewer) return;
     const b = viewer.bounds; const span = Math.max(b.max[0] - b.min[0], b.max[1] - b.min[1], 50);

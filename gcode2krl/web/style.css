@@ -205,3 +205,6 @@ button.mini { padding: 4px 9px; font-size: 11px; }
 .mesh-item .mi-actions { display: flex; gap: 4px; }
 .mesh-item label.wp { display: flex; gap: 4px; align-items: center; color: var(--muted); font-size: 11px; }
 .fb-row select { background: var(--field); color: var(--text); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 3px 6px; font-size: 11.5px; }
+
+.row .pair3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 4px; }
+.row .pair3 select { padding: 4px 3px; font-size: 11px; }

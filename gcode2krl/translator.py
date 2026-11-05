@@ -26,6 +26,7 @@ class TranslateOptions:
     offset: tuple[float, float, float] = (0.0, 0.0, 0.0)
     fit_arcs: bool = True
     use_spl: bool = True
+    extruder: bool = False  # emit extruder on/off events around extruding moves (3D printing / WAAM)
 
 
 # ---------------------------------------------------------------- items
@@ -123,6 +124,7 @@ class Translator:
         self.chain: list[np.ndarray] = []
         self.chain_feed = 0.0
         self.pending_comments: list[EventItem] = []
+        self.extruding = False
         self.offset = np.array(opts.offset, dtype=float)
         self.fit_params = FitParams(tol=opts.tol, max_radius=opts.max_radius, min_radius=opts.min_radius,
                                     min_arc_points=opts.min_arc_points, refine_shift=opts.refine_shift)
@@ -264,6 +266,8 @@ class Translator:
         self.stats.warnings.extend(parsed.warnings)
         for cmd in parsed.commands:
             if isinstance(cmd, LinearMove):
+                if self.o.extruder:
+                    self.set_extruding(cmd.extrude > 1e-9 and not cmd.rapid)
                 if cmd.rapid:
                     self.flush()
                     self.items.append(RapidItem(cmd.end + self.offset, cmd.start + self.offset))
@@ -271,6 +275,8 @@ class Translator:
                 else:
                     self.push_linear(cmd.start + self.offset, cmd.end + self.offset, cmd.feed)
             elif isinstance(cmd, ArcMove):
+                if self.o.extruder:
+                    self.set_extruding(cmd.extrude > 1e-9)
                 self.push_arc(cmd)
             elif isinstance(cmd, Comment):
                 # comments never break a chain (CAM output is full of them);
@@ -283,12 +289,22 @@ class Translator:
                 self.flush()
                 self.items.append(self.event(cmd))
         self.flush()
+        if self.o.extruder and self.extruding:
+            self.items.append(EventItem("extruder_off"))
+            self.extruding = False
         if not any(isinstance(i, EventItem) and i.kind == "end" for i in self.items):
             self.items.append(EventItem("end"))
         if "no-feed" in self.stats.warnings:
             self.stats.warnings.remove("no-feed")
             self.stats.warnings.append(f"feed never set in G-code; default {self.o.default_feed:g} mm/min used")
         return self.items, self.stats
+
+    def set_extruding(self, on: bool) -> None:
+        if on == self.extruding:
+            return
+        self.flush()
+        self.items.append(EventItem("extruder_on" if on else "extruder_off"))
+        self.extruding = on
 
     @staticmethod
     def event(cmd) -> EventItem:

@@ -68,6 +68,41 @@ API JSON serwera (do własnej automatyzacji):
 | POST | `/api/translate` | `{gcode, filename, options}` → statystyki, ostrzeżenia, pliki, geometria podglądu (float32 w base64), raport robota ze śladem osi |
 | GET | `/api/zip/<token>` | zip z plikami ostatniego tłumaczenia |
 
+## Slicer (model → G-code dla ekstrudera na robocie)
+
+Własny slicer na licencji MIT, bez kodu z rodziny Slic3r/PrusaSlicer/Bambu/Orca
+(AGPL). Operacje na wielokątach wykonuje Shapely (BSD-3; GEOS na LGPL przez
+dynamiczne linkowanie), więc licencja projektu pozostaje MIT.
+
+```bash
+pip install -e .[slicer]
+gcode2krl-slice czesc.step -o czesc.gcode --layer-height 1 --bead-width 2 --perimeters 2 --infill-density 0.2
+gcode2krl czesc.gcode -o out/ --extruder-out 7 --robot KR90R2700PRO --base-frame 1400 0 500 0 0 0
+```
+
+Co robi:
+
+* **cięcie siatki** (STL/OBJ/STEP/IGES) płaszczyznami warstw na zamknięte
+  kontury; segmenty łączone z tolerancją, więc drobne szczeliny w siatce nie
+  psują konturu, a otwarte łańcuchy są raportowane,
+* **wielokąty warstwy** z zagnieżdżeniem parzystym (otwory), usuwanie cech
+  cieńszych niż `min_feature`,
+* **obrysy** (`perimeters`, od wewnątrz na zewnątrz), **wypełnienie**: linie
+  (kąt zmienny co warstwę), siatka, koncentryczne; **warstwy pełne** górne i
+  dolne wykrywane z pokrycia przez sąsiednie warstwy; nakładka wypełnienia na
+  obrys,
+* **kolejność** najbliższego sąsiada w blokach obrysy → skin → wypełnienie,
+  szew najbliższy / wyrównany / losowy, skirt i brim,
+* **G-code** z `;LAYER`, `;TYPE`, G0 na przejazdach, E bezwzględne (objętościowe
+  w mm³, filament 1,75 mm albo bez E), retrakcja i z-hop opcjonalne, szacunek
+  czasu.
+
+W GUI sekcja *Slicer* kroi wgrany model i od razu wczytuje G-code do
+translatora. Translator rozumie E (M82/M83, G92 E0) i z opcją *Ekstruder*
+wstawia `$OUT[n] = TRUE/FALSE` wokół ruchów z ekstruzją, dzięki czemu KRL
+steruje ekstruderem na robocie. Łuki, zasięg i kolizje działają na wyniku
+slicera tak samo jak na G-code z CAM.
+
 ## Model robota (KR 90 R2700 pro i inne)
 
 ![robot w podglądzie 3D](docs/gui_robot.png)
@@ -430,6 +465,9 @@ gcode2krl/
   collision.py      kapsuły, przeszkody, dokładne odległości, sprawdzanie ciągłe, raport kolizji
   robots/           definicje robotów (JSON ze źródłami), siatki STL, LICENSE i NOTICE (Apache-2.0)
   cli.py            interfejs wiersza poleceń (gcode2krl)
+  slicer/           slicer MIT: mesh_slice (kontury), toolpath (obrysy, wypełnienie), gcode_writer, cli (gcode2krl-slice)
+  stepio.py         tesselacja STEP/IGES (OpenCASCADE przez OCP lub gmsh)
+  meshstore.py      magazyn wgranych modeli (STL/OBJ/STEP)
   server.py         lokalny serwer HTTP + API JSON (gcode2krl-gui)
   web/              GUI: index.html, app.js, viewer.js (WebGL), robot.js (model robota), style.css
 examples/           fillet_rect.nc, circle_g1.nc, mixed.nc

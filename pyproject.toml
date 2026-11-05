@@ -14,11 +14,13 @@ dependencies = ["numpy>=1.22"]
 [project.optional-dependencies]
 test = ["pytest>=7"]
 step = ["cadquery-ocp>=7.7"]
+slicer = ["shapely>=2.0"]
 
 [project.scripts]
 gcode2krl = "gcode2krl.cli:main"
 gcode2krl-gui = "gcode2krl.server:main"
 gcode2krl-import = "gcode2krl.robot_import:main"
+gcode2krl-slice = "gcode2krl.slicer.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["gcode2krl*"]

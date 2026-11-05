@@ -99,6 +99,7 @@ def build_options(options: dict, filename: str) -> tuple[TranslateOptions, KrlOp
         offset=_triple(options, "offset", (0.0, 0.0, 0.0)),
         fit_arcs=_opt(options, "fit_arcs", True, bool),
         use_spl=_opt(options, "use_spl", True, bool),
+        extruder=_opt(options, "extruder", False, bool),
     )
     base = os.path.splitext(os.path.basename(filename or "PROG"))[0]
     default_name = "".join(c if c.isalnum() else "_" for c in base).upper()[:20] or "PROG"
@@ -123,6 +124,7 @@ def build_options(options: dict, filename: str) -> tuple[TranslateOptions, KrlOp
         coolant_out=_opt(options, "coolant_out", 0, int),
         spindle_anout=_opt(options, "spindle_anout", 0, int),
         spindle_max_rpm=_opt(options, "spindle_max_rpm", 24000.0, float),
+        extruder_out=_opt(options, "extruder_out", 0, int),
         bco_ptp=_opt(options, "bco", True, bool),
         advance=_opt(options, "advance", 3, int),
         source_name=os.path.basename(filename or ""),
@@ -481,6 +483,30 @@ class Handler(SimpleHTTPRequestHandler):
                 self.send_json({"error": str(exc)}, 400)
                 return
             self.send_json({"deleted": ok})
+            return
+        if path == "/api/slice":
+            try:
+                body = self.read_json()
+                from .slicer import SliceParams, slice_triangles
+                ref = str(body.get("mesh") or "")
+                if not ref:
+                    raise ValueError("no mesh given")
+                tris, key = meshstore.load(ref, str(body.get("units") or "mm"), float(body.get("deflection") or 0.1))
+                params = SliceParams.from_dict(body.get("params") or {})
+                t0 = time.perf_counter()
+                gcode, st, layers = slice_triangles(tris, params, source=ref)
+                res = {"gcode": gcode, "stats": {**{k: v for k, v in vars(st).items()}, "time": time.perf_counter() - t0},
+                       "name": (meshstore.list_meshes() and next((m["name"] for m in meshstore.list_meshes() if m["id"] == ref), ref)) or ref}
+            except ImportError as exc:
+                self.send_json({"error": f"slicer needs shapely: pip install shapely ({exc})"}, 500)
+                return
+            except ValueError as exc:
+                self.send_json({"error": str(exc)}, 400)
+                return
+            except Exception as exc:  # noqa: BLE001
+                self.send_json({"error": f"{type(exc).__name__}: {exc}"}, 500)
+                return
+            self.send_json(res)
             return
         if path != "/api/translate":
             self.send_json({"error": "not found"}, 404)
