@@ -14,12 +14,15 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("-o", "--output", default=None, help="output .gcode (default: input name with .gcode)")
     p.add_argument("--units", default="mm", help="STL/OBJ units (mm, cm, m, in); STEP uses its own")
     p.add_argument("--deflection", type=float, default=0.1, help="STEP tessellation tolerance, mm")
+    p.add_argument("--segments", default=None, help="multi-direction printing: file with 'segment NAME dx dy dz' / 'plane px py pz nx ny nz' lines")
     d = SliceParams()
     for name, val in d.to_dict().items():
         if name in ("start_gcode", "end_gcode"):
             p.add_argument("--" + name.replace("_", "-"), default=val, help=f"{name} text")
         elif isinstance(val, bool):
             p.add_argument("--" + name.replace("_", "-"), default=val, type=lambda v: v.lower() in ("1", "true", "yes", "on"), help=f"{name} (default {val})")
+        elif val is None:
+            p.add_argument("--" + name.replace("_", "-"), default=None, type=float, help=f"{name} (default auto)")
         else:
             p.add_argument("--" + name.replace("_", "-"), default=val, type=type(val), help=f"{name} (default {val})")
     return p
@@ -28,12 +31,14 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
     params = SliceParams.from_dict({k: getattr(args, k) for k in SliceParams().to_dict()})
-    gcode, st, _ = slice_mesh(args.input, params, args.units, args.deflection)
+    segments = open(args.segments, encoding="utf-8").read() if args.segments else None
+    gcode, st, _ = slice_mesh(args.input, params, args.units, args.deflection, segments=segments)
     out = args.output or (args.input.rsplit(".", 1)[0] + ".gcode")
     with open(out, "w", encoding="utf-8") as fh:
         fh.write(gcode)
     print(f"{out}: {st.layers} layers, {st.paths} paths, extrusion {st.extrusion_length:.0f} mm, travel {st.travel_length:.0f} mm, "
-          f"E {st.e_total:.1f}, est. {st.time_s / 60:.1f} min" + (f", {st.dropped_chains} open chains dropped" if st.dropped_chains else ""))
+          f"E {st.e_total:.1f}, est. {st.time_s / 60:.1f} min, mode {st.layer_mode}, max tilt {st.max_tilt:.1f} deg, "
+          f"support {st.support_area:.0f} mm2 on {st.support_layers} layers" + (f", {st.dropped_chains} open chains dropped" if st.dropped_chains else ""))
     return 0
 
 

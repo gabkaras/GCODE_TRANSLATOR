@@ -54,6 +54,13 @@ def build_parser() -> argparse.ArgumentParser:
     k.add_argument("--spindle-max-rpm", type=float, default=24000.0, help="rpm that maps to analog output 1.0")
     k.add_argument("--coolant-out", type=int, default=0, help="digital output for coolant, 0 = comment only")
     k.add_argument("--extruder-out", type=int, default=-1, help="3D printing: digital output switched on for extruding moves (0 = comments only, -1 = ignore E)")
+    k.add_argument("--extruder-anout", type=int, default=0, help="analog output driven proportionally to path velocity while extruding (ANOUT ON ... $VEL_ACT)")
+    k.add_argument("--extruder-flow-full", type=float, default=100.0, help="E units per second at analog signal 1.0 (default 100)")
+    k.add_argument("--extruder-delay", type=float, default=0.0, help="ANOUT DELAY in seconds (default 0)")
+    k.add_argument("--no-orient-solve", action="store_true", help="keep zero spin for I J K tool axes instead of the singularity-aware solver (needs --robot)")
+    k.add_argument("--spin-step", type=float, default=15.0, help="orientation solver: spin sampling step, deg (default 15)")
+    k.add_argument("--singular-deg", type=float, default=8.0, help="orientation solver: keep |A5| above this, deg (default 8)")
+    k.add_argument("--max-tilt", type=float, default=0.0, help="orientation solver: allowed extra tilt of the tool axis, deg (default 0)")
     k.add_argument("--no-halt-tool-change", action="store_true", help="do not HALT at M6")
     k.add_argument("--dwell-ms", action="store_true", help="interpret G4 P as milliseconds instead of seconds")
     k.add_argument("--start", type=float, nargs=3, default=(0.0, 0.0, 0.0), metavar=("X", "Y", "Z"),
@@ -111,7 +118,8 @@ def run(argv: list[str] | None = None) -> int:
                              min_arc_points=args.min_arc_points, refine_shift=args.refine_shift,
                              spl_max_segment=args.spl_max_segment, corner_angle_deg=args.corner_angle,
                              default_feed=args.default_feed, offset=tuple(args.offset),
-                             fit_arcs=not args.no_arcs, use_spl=not args.no_spl, extruder=args.extruder_out >= 0)
+                             fit_arcs=not args.no_arcs, use_spl=not args.no_spl, extruder=args.extruder_out >= 0 or args.extruder_anout > 0,
+                             extruder_analog=args.extruder_anout > 0)
     items, stats = translate(parsed, topts)
     kopts = KrlOptions(name=args.name or derive_name(args.input), mode=args.mode, tool=args.tool, base=args.base,
                        abc=tuple(args.abc), rapid_vel=args.rapid_vel, max_vel=args.max_vel, acc=args.acc,
@@ -119,12 +127,14 @@ def run(argv: list[str] | None = None) -> int:
                        max_block_segments=args.max_block_segments, max_motions_per_file=args.max_motions_per_file,
                        block_approx=not args.no_block_approx, spindle_out=args.spindle_out,
                        coolant_out=args.coolant_out, spindle_anout=args.spindle_anout, extruder_out=max(0, args.extruder_out),
+                       extruder_anout=args.extruder_anout, extruder_flow_full=args.extruder_flow_full, extruder_delay=args.extruder_delay,
                        spindle_max_rpm=args.spindle_max_rpm, bco_ptp=not args.no_bco, advance=args.advance,
                        source_name=os.path.basename(args.input), halt_on_tool_change=not args.no_halt_tool_change,
                        base_frame=tuple(args.base_frame) if args.base_frame else None,
                        tool_frame=tuple(args.tool_frame) if args.tool_frame else None)
-    prog = write_krl(items, kopts, stats)
+    from .translator import has_orientation, resolve_orientations
     robot_rep = None
+    orient_info = None
     if args.robot.lower() != "none":
         from .robot import ROBOTS, check_path, frame
         from .translator import sample_items
@@ -132,10 +142,21 @@ def run(argv: list[str] | None = None) -> int:
         if robot is None:
             print(f"unknown robot {args.robot}; use --robot list", file=sys.stderr)
             return 2
-        pts = sample_items(items, max_samples=args.robot_samples, step=args.path_step if args.path_step > 0 else None)
         base_t = frame(args.base_frame or (0,) * 6)
         tool_t = frame(args.tool_frame or (0,) * 6)
-        robot_rep = check_path(robot, pts, kopts.abc, base_t, tool_t)
+        if has_orientation(items) and not args.no_orient_solve:
+            orient_info = resolve_orientations(items, robot, base_t, tool_t, ref=kopts.abc, spin_step=args.spin_step,
+                                               singular_deg=args.singular_deg, max_tilt_deg=args.max_tilt)
+        if has_orientation(items):
+            pts, abc_used = sample_items(items, max_samples=args.robot_samples, step=args.path_step if args.path_step > 0 else None,
+                                         default_abc=kopts.abc, with_abc=True)
+        else:
+            pts = sample_items(items, max_samples=args.robot_samples, step=args.path_step if args.path_step > 0 else None)
+            abc_used = kopts.abc
+        robot_rep = check_path(robot, pts, abc_used, base_t, tool_t)
+    kopts.ori_var = has_orientation(items)
+    prog = write_krl(items, kopts, stats)
+    if args.robot.lower() != "none":
         col_rep = None
         if not args.no_collisions:
             from .collision import OBSTACLE_HELP, obstacle_from_dict, parse_obstacles
@@ -147,7 +168,7 @@ def run(argv: list[str] | None = None) -> int:
             if args.tool_mesh:
                 from . import meshstore
                 tool_mesh, tool_mesh_key = meshstore.load(args.tool_mesh, args.tool_mesh_units)
-            col_rep, _ = check_path_collisions(robot, pts, kopts.abc, base_t, tool_t, robot_rep, obstacles, margin=args.margin,
+            col_rep, _ = check_path_collisions(robot, pts, abc_used, base_t, tool_t, robot_rep, obstacles, margin=args.margin,
                                                tool_radius=args.tool_radius, cutter_len=args.cutter_len, cutter_radius=args.cutter_radius,
                                                tool_mesh=tool_mesh, tool_mesh_key=tool_mesh_key)
     os.makedirs(args.out_dir, exist_ok=True)
@@ -167,6 +188,9 @@ def run(argv: list[str] | None = None) -> int:
         if robot_rep is not None:
             print(f"robot : {args.robot.upper()} - {robot_rep.n_samples} samples, {robot_rep.n_unreachable} out of reach, "
                   f"{robot_rep.n_limit} beyond axis limits")
+            if orient_info:
+                print(f"orient: {orient_info['points']} oriented points, {orient_info['resampled']} spins re-sampled, "
+                      f"{orient_info['singular']} near singularity, {orient_info['unreachable']} unreachable at every spin")
             for k in range(6):
                 lo, hi = robot_rep.joint_min[k], robot_rep.joint_max[k]
                 if lo != float("inf"):

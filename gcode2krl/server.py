@@ -100,6 +100,7 @@ def build_options(options: dict, filename: str) -> tuple[TranslateOptions, KrlOp
         fit_arcs=_opt(options, "fit_arcs", True, bool),
         use_spl=_opt(options, "use_spl", True, bool),
         extruder=_opt(options, "extruder", False, bool),
+        extruder_analog=_opt(options, "extruder_analog", False, bool),
     )
     base = os.path.splitext(os.path.basename(filename or "PROG"))[0]
     default_name = "".join(c if c.isalnum() else "_" for c in base).upper()[:20] or "PROG"
@@ -125,6 +126,9 @@ def build_options(options: dict, filename: str) -> tuple[TranslateOptions, KrlOp
         spindle_anout=_opt(options, "spindle_anout", 0, int),
         spindle_max_rpm=_opt(options, "spindle_max_rpm", 24000.0, float),
         extruder_out=_opt(options, "extruder_out", 0, int),
+        extruder_anout=_opt(options, "extruder_anout", 0, int),
+        extruder_flow_full=_opt(options, "extruder_flow_full", 100.0, float),
+        extruder_delay=_opt(options, "extruder_delay", 0.0, float),
         bco_ptp=_opt(options, "bco", True, bool),
         advance=_opt(options, "advance", 3, int),
         source_name=os.path.basename(filename or ""),
@@ -230,10 +234,24 @@ def robot_report(items, options: dict, abc) -> dict | None:
     tool = frame(_ntuple(options, "tool_frame", (0, 0, 0, 0, 0, 0), 6))
     step = _opt(options, "path_step", 5.0, float)
     max_samples = _opt(options, "robot_samples", 20000, int)
-    pts = sample_items(items, max_samples=max_samples, step=step if step > 0 else None)
-    rep = check_path(robot, pts, abc, base, tool)
+    from .translator import has_orientation, resolve_orientations
+    orient_info = None
+    if has_orientation(items) and _opt(options, "orient_solve", True, bool):
+        orient_info = resolve_orientations(items, robot, base, tool, ref=tuple(abc),
+                                           spin_step=_opt(options, "spin_step", 15.0, float),
+                                           singular_deg=_opt(options, "singular_deg", 8.0, float),
+                                           max_tilt_deg=_opt(options, "max_tilt", 0.0, float))
+    if has_orientation(items):
+        pts, abcs = sample_items(items, max_samples=max_samples, step=step if step > 0 else None, default_abc=abc, with_abc=True)
+        abc_used = abcs
+    else:
+        pts = sample_items(items, max_samples=max_samples, step=step if step > 0 else None)
+        abc_used = abc
+    rep = check_path(robot, pts, abc_used, base, tool)
     d = rep.to_dict()
     d["robot"] = robot.key
+    d["orientation"] = orient_info
+    d["oriented"] = bool(has_orientation(items))
     d["step"] = step
     d["points"] = _f32(pts.ravel())
     d["joints"] = _f32(np.nan_to_num(rep.joints, nan=0.0).ravel()) if rep.joints is not None else ""
@@ -258,7 +276,7 @@ def robot_report(items, options: dict, abc) -> dict | None:
     tool_mesh_ref = str(options.get("tool_mesh") or "").strip()
     if tool_mesh_ref:
         tool_mesh, tool_mesh_key = meshstore.load(tool_mesh_ref, _opt(options, "tool_mesh_units", "mm", str))
-    col, caps = check_path_collisions(robot, pts, abc, base, tool, rep, obstacles, margin=margin,
+    col, caps = check_path_collisions(robot, pts, abc_used, base, tool, rep, obstacles, margin=margin,
                                       tool_radius=_opt(options, "tool_radius", 25.0, float),
                                       cutter_len=_opt(options, "cutter_len", 20.0, float),
                                       cutter_radius=_opt(options, "cutter_radius", 6.0, float),
@@ -305,11 +323,13 @@ def run_translation(gcode: str, filename: str, options: dict) -> dict:
     t1 = time.perf_counter()
     items, stats = translate(parsed, topts)
     t2 = time.perf_counter()
-    prog = write_krl(items, kopts, stats)
+    robot = robot_report(items, options or {}, kopts.abc)  # may refine orientations (spin solver) before writing
     t3 = time.perf_counter()
-    token = _remember(prog.files)
-    robot = robot_report(items, options or {}, kopts.abc)
+    from .translator import has_orientation
+    kopts.ori_var = has_orientation(items)
+    prog = write_krl(items, kopts, stats)
     t4 = time.perf_counter()
+    token = _remember(prog.files)
     if robot:
         if robot["n_unreachable"]:
             stats.warnings.append(f"robot {robot['robot']}: {robot['n_unreachable']} of {robot['n_samples']} path samples are out of reach")
@@ -349,9 +369,10 @@ def run_translation(gcode: str, filename: str, options: dict) -> dict:
             "tol": topts.tol,
             "time_parse": t1 - t0,
             "time_fit": t2 - t1,
-            "time_write": t3 - t2,
-            "time_robot": t4 - t3,
+            "time_write": t4 - t3,
+            "time_robot": t3 - t2,
             "time_total": t4 - t0,
+            "oriented_vertices": stats.oriented_vertices,
         },
         "warnings": stats.warnings,
         "preview": preview_geometry(parsed, items, topts.offset),
@@ -494,7 +515,8 @@ class Handler(SimpleHTTPRequestHandler):
                 tris, key = meshstore.load(ref, str(body.get("units") or "mm"), float(body.get("deflection") or 0.1))
                 params = SliceParams.from_dict(body.get("params") or {})
                 t0 = time.perf_counter()
-                gcode, st, layers = slice_triangles(tris, params, source=ref)
+                segments = body.get("segments") or None
+                gcode, st, layers = slice_triangles(tris, params, source=ref, segments=segments)
                 res = {"gcode": gcode, "stats": {**{k: v for k, v in vars(st).items()}, "time": time.perf_counter() - t0},
                        "name": (meshstore.list_meshes() and next((m["name"] for m in meshstore.list_meshes() if m["id"] == ref), ref)) or ref}
             except ImportError as exc:

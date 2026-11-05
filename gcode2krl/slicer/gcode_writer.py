@@ -21,6 +21,10 @@ class SliceStats:
     dropped_chains: int = 0
     bounds: dict = field(default_factory=dict)
     by_type: dict = field(default_factory=dict)
+    layer_mode: str = "planar"
+    support_area: float = 0.0
+    support_layers: int = 0
+    max_tilt: float = 0.0  # largest tool tilt from vertical (deg)
 
 
 def write_gcode(layers: list[Layer], params: SliceParams, source: str = "") -> tuple[str, SliceStats]:
@@ -41,6 +45,7 @@ def write_gcode(layers: list[Layer], params: SliceParams, source: str = "") -> t
     cur_z = None
     retracted = False
     all_pts = []
+    st.layer_mode = p.layer_mode
     for L in layers:
         if not L.paths:
             continue
@@ -56,23 +61,33 @@ def write_gcode(layers: list[Layer], params: SliceParams, source: str = "") -> t
             st.paths += 1
             if p.comments:
                 out.append(f";TYPE:{path.kind}")
-            start = pts[0]
+            planar = path.xyz is None
+            P3 = path.xyz if not planar else np.column_stack([pts, np.full(len(pts), z)])
+            if not planar:
+                P3 = P3 + np.array([0.0, 0.0, p.z_offset])
+            axes = path.axes if (not planar and p.tool_axis) else None
+            tf = path.tf if path.tf is not None else np.ones(len(P3))
+            start = P3[0]
             # ---- travel to the start
             dist = float(np.linalg.norm(start - cur)) if cur is not None else 0.0
-            if cur is None or dist > 1e-6 or cur_z != z:
+            if cur is None or dist > 1e-6:
                 if p.retract_length > 0 and dist >= p.min_travel_for_retract and not retracted:
                     e -= p.retract_length
                     out.append(f"G1 E{e:.5f} F{p.retract_speed:.0f}")
                     retracted = True
                 hop = p.z_hop if (p.z_hop > 0 and dist >= p.min_travel_for_retract) else 0.0
+                zt = float(start[2])
+                ax = f" I{axes[0][0]:.4f} J{axes[0][1]:.4f} K{axes[0][2]:.4f}" if axes is not None else ""
                 if hop > 0:
-                    out.append(f"G0 Z{f(z + hop)} F{p.speed_travel:.0f}")
-                if cur_z != z and hop == 0:
-                    out.append(f"G0 Z{f(z)} F{p.speed_travel:.0f}")
-                out.append(f"G0 X{f(start[0])} Y{f(start[1])} F{p.speed_travel:.0f}")
-                if hop > 0:
-                    out.append(f"G0 Z{f(z)} F{p.speed_travel:.0f}")
-                cur_z = z
+                    out.append(f"G0 Z{f(max(zt, (cur[2] if cur is not None else zt)) + hop)} F{p.speed_travel:.0f}")
+                    out.append(f"G0 X{f(start[0])} Y{f(start[1])}{ax} F{p.speed_travel:.0f}")
+                    out.append(f"G0 Z{f(zt)} F{p.speed_travel:.0f}")
+                elif planar and cur is not None and abs(zt - cur[2]) > 1e-6 and abs(start[0] - cur[0]) < 1e-6 and abs(start[1] - cur[1]) < 1e-6:
+                    out.append(f"G0 Z{f(zt)} F{p.speed_travel:.0f}")
+                else:
+                    if planar and (cur is None or abs(zt - cur[2]) > 1e-6):
+                        out.append(f"G0 Z{f(zt)} F{p.speed_travel:.0f}")
+                    out.append(f"G0 X{f(start[0])} Y{f(start[1])}{'' if planar else ' Z' + f(zt)}{ax} F{p.speed_travel:.0f}")
                 st.travel_length += dist
                 st.time_s += dist / (p.speed_travel / 60.0)
                 if retracted:
@@ -80,28 +95,34 @@ def write_gcode(layers: list[Layer], params: SliceParams, source: str = "") -> t
                     out.append(f"G1 E{e:.5f} F{p.retract_speed:.0f}")
                     retracted = False
             # ---- extrude along the path
-            seq = list(pts) + ([pts[0]] if path.closed else [])
+            idx = list(range(1, len(P3))) + ([0] if path.closed else [])
             feed = path.speed
             out.append(f"G1 F{feed:.0f}")
-            prev = start
-            for q in seq[1:]:
-                d = float(np.linalg.norm(q - prev))
+            prev_i = 0
+            for i in idx:
+                q = P3[i]
+                d = float(np.linalg.norm(q - P3[prev_i]))
                 if d < 1e-6:
+                    prev_i = i
                     continue
-                e += d * e_per_mm
-                out.append(f"G1 X{f(q[0])} Y{f(q[1])} E{e:.5f}")
+                e += d * e_per_mm * float((tf[i] + tf[prev_i]) / 2.0)
+                ax = f" I{axes[i][0]:.4f} J{axes[i][1]:.4f} K{axes[i][2]:.4f}" if axes is not None else ""
+                zs = "" if planar else f" Z{f(q[2])}"
+                out.append(f"G1 X{f(q[0])} Y{f(q[1])}{zs}{ax} E{e:.5f}")
+                if axes is not None:
+                    st.max_tilt = max(st.max_tilt, math.degrees(math.acos(max(-1.0, min(1.0, float(axes[i][2]))))))
                 st.extrusion_length += d
                 st.time_s += d / (feed / 60.0)
                 st.by_type[path.kind] = st.by_type.get(path.kind, 0.0) + d
-                prev = q
-            cur = seq[-1]
-            all_pts.append(pts)
+                prev_i = i
+            cur = P3[idx[-1]] if idx else start
+            all_pts.append(P3)
     st.e_total = e
     if p.end_gcode.strip():
         out.extend(p.end_gcode.splitlines())
     out.append("M30")
     if all_pts:
         a = np.concatenate(all_pts)
-        st.bounds = {"min": [float(a[:, 0].min()), float(a[:, 1].min()), float(layers[0].z + p.z_offset)],
-                     "max": [float(a[:, 0].max()), float(a[:, 1].max()), float(layers[-1].z + p.z_offset)]}
+        st.bounds = {"min": [float(a[:, 0].min()), float(a[:, 1].min()), float(a[:, 2].min())],
+                     "max": [float(a[:, 0].max()), float(a[:, 1].max()), float(a[:, 2].max())]}
     return "\n".join(out) + "\n", st

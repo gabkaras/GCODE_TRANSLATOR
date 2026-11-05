@@ -21,14 +21,17 @@ EMPTY = MultiPolygon()
 @dataclass
 class Path:
     kind: str  # WALL-OUTER | WALL-INNER | SKIN | FILL | SKIRT | BRIM
-    points: np.ndarray  # (k, 2)
+    points: np.ndarray  # (k, 2) in slicing space
     closed: bool
     width: float
     speed: float
+    xyz: np.ndarray | None = None  # (k, 3) model-space points (non-planar modes)
+    axes: np.ndarray | None = None  # (k, 3) tool axes (away from the part)
+    tf: np.ndarray | None = None  # (k,) real thickness / slicing layer height
 
     @property
     def length(self) -> float:
-        p = self.points
+        p = self.xyz if self.xyz is not None else self.points
         if len(p) < 2:
             return 0.0
         d = float(np.linalg.norm(np.diff(p, axis=0), axis=1).sum())
@@ -237,19 +240,20 @@ def build_layers(layer_loops: list[list[np.ndarray]], zs: list[float], params: S
             continue
         # ---- solid (top/bottom) detection
         solid = None
-        if i < params.bottom_layers or i >= n - params.top_layers:
+        if (params.bottom_layers and i < params.bottom_layers) or (params.top_layers and i >= n - params.top_layers):
             solid = fill_area
-        else:
+        elif params.top_layers or params.bottom_layers:
             above = [layers[j].region for j in range(i + 1, min(n, i + 1 + params.top_layers))]
             below = [layers[j].region for j in range(max(0, i - params.bottom_layers), i)]
-            cover_above = above[0]
-            for g in above[1:]:
-                cover_above = cover_above.intersection(g)
-            cover_below = below[0]
-            for g in below[1:]:
-                cover_below = cover_below.intersection(g)
-            uncovered = fill_area.difference(cover_above.buffer(-0.01)).union(fill_area.difference(cover_below.buffer(-0.01)))
-            uncovered = as_multi(uncovered.buffer(w).buffer(-w).intersection(fill_area))
+            uncovered = EMPTY
+            for group in (above, below):
+                if not group:
+                    continue
+                cover = group[0]
+                for g in group[1:]:
+                    cover = cover.intersection(g)
+                uncovered = uncovered.union(fill_area.difference(cover.buffer(-0.01)))
+            uncovered = as_multi(uncovered.buffer(w).buffer(-w).intersection(fill_area)) if not uncovered.is_empty else EMPTY
             solid = uncovered if not uncovered.is_empty else None
         sparse_area = fill_area if solid is None else as_multi(fill_area.difference(solid))
         speed_fill = params.speed_first_layer if first else params.speed_infill
@@ -279,3 +283,25 @@ def build_layers(layer_loops: list[list[np.ndarray]], zs: list[float], params: S
                 cur = last.points[0] if last.closed else last.points[-1]
         L.paths = ordered
     return layers
+
+
+def support_report(layers: list[Layer], bead_width: float, overhang_max_deg: float) -> dict:
+    """Area (mm^2) of each layer not supported by the layer below within the printable
+    overhang angle, and the number of layers needing support. Computed in slicing
+    space (exact for planar, approximate for deformed layers)."""
+    reach = math.tan(math.radians(overhang_max_deg))
+    total = 0.0
+    n_layers = 0
+    worst = 0.0
+    for i in range(1, len(layers)):
+        cur, prev = layers[i].region, layers[i - 1].region
+        if cur.is_empty:
+            continue
+        allowed = prev.buffer(reach * layers[i].height + 0.5 * bead_width) if not prev.is_empty else None
+        unsupported = cur if allowed is None else cur.difference(allowed)
+        a = float(unsupported.area)
+        if a > 0.25 * bead_width * bead_width:
+            total += a
+            n_layers += 1
+            worst = max(worst, a)
+    return {"support_area": total, "support_layers": n_layers, "worst_layer_area": worst}

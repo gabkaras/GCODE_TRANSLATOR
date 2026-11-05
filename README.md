@@ -97,6 +97,57 @@ Co robi:
   w mm³, filament 1,75 mm albo bez E), retrakcja i z-hop opcjonalne, szacunek
   czasu.
 
+### Druk 6-osiowy: tryby warstw i orientacja narzędzia
+
+![warstwy stożkowe w podglądzie 3D](docs/gui_conical.png)
+
+Slicer ma przełącznik *Tryb warstw* (w CLI `--layer-mode`), a cały łańcuch
+(parser, translator, KRL, zasięg, kolizje) obsługuje orientację narzędzia
+zmienną wzdłuż ścieżki:
+
+| tryb | co robi | literatura |
+|---|---|---|
+| `planar` | warstwy płaskie, stała orientacja | |
+| `conical` | warstwy stożkowe: model deformowany `z' = z ± tan(α)·r`, cięty płasko, ścieżki cofane; dysza pochylona o α na zewnątrz lub do środka, nawisy do 90° bez podpór | Wüthrich, Gubser 2021 (RotBot) |
+| `bottom` | warstwy równoległe do powierzchni dolnej (druk na zakrzywionym podłożu, napawanie, naprawa): pole wysokości z siatki, `z' = z − h(x,y)` | Curved Layer FDM: Chakraborty 2008, Singamneni 2012 |
+| `top` | warstwy dochodzące do powierzchni górnej bez schodków: `z' = z·H/h(x,y)` | Etienne i in. 2019 (CurviSlicer), Ahlers 2019 |
+| `multi` | dekompozycja wielokierunkowa: segmenty ograniczone płaszczyznami, każdy drukowany płasko we własnym kierunku, kolejność z listy | Wu i in. 2017 (RoboFDM), Wu i in. 2019 |
+
+W trybach nieplanarnych każdy punkt G-code dostaje oś narzędzia `I J K`
+(wektor od detalu na zewnątrz, normalna warstwy), grubość ścieżki jest
+korygowana o `cos(pochylenie)`, a nachylenia pola wysokości są ograniczane do
+`max_slope`. Wskaźnik podpór liczy dla każdego trybu powierzchnię warstw
+niepodpartą przez warstwę niżej w granicach `overhang_max` (porównanie
+płaskie/stożkowe od ręki).
+
+Parser rozumie `A B C` (orientacja KUKA, modalna) i `I J K` na G0/G1 (oś
+narzędzia). Translator utrzymuje orientację per punkt (`SPL` z orientacją,
+`$ORI_TYPE = #VAR`), łuki są odtwarzane tylko w łańcuchach o stałej
+orientacji. Dla osi `I J K` wolny obrót wokół osi narzędzia dobiera
+**solver orientacji** (Zhang i in., IEEE RA-L 2021, w wersji uproszczonej):
+poprzedni obrót jest utrzymywany, dopóki pozycja jest osiągalna i |A5| jest
+powyżej progu; inaczej próbkowane są obroty (i opcjonalnie dodatkowe
+pochylenie w stożku) i wybierany jest najtańszy w sensie ruchu osi. Zasięg i
+kolizje są liczone z orientacją per próbkę (interpolowaną wzdłuż SPL).
+
+Ekstruder: oprócz wyjścia cyfrowego jest tryb analogowy proporcjonalny do
+prędkości toru, `ANOUT ON $ANOUT[n] = k · $VEL_ACT` z `$VEL_FLT_OFF = TRUE`
+(przykład dozowania z dokumentacji KRL); współczynnik `k` liczony jest z
+E/mm segmentów slicera i wydajności ekstrudera przy sygnale 1,0, a przy
+zmianie E/mm (np. inna wysokość warstwy) wyjście jest przeprogramowywane.
+
+```bash
+gcode2krl-slice czesc.step -o czesc.gcode --layer-mode conical --cone-angle 30
+gcode2krl-slice czesc.step -o czesc.gcode --segments segmenty.txt      # tryb multi
+gcode2krl czesc.gcode -o out/ --robot KR90R2700PRO --base-frame 1400 0 500 0 0 0 --tool-frame 0 0 150 0 0 0 \
+    --extruder-anout 2 --extruder-flow-full 50 --spin-step 15 --singular-deg 8
+```
+
+Nie ma (jeszcze): optymalizacji pola skalarnego warstw (Dai 2018, S3-Slicer
+2022, Neural Slicer 2024), automatycznej dekompozycji, osi zewnętrznych,
+kolizji z już wydrukowanym materiałem (dodaj segmenty jako przeszkody
+ręcznie).
+
 W GUI sekcja *Slicer* kroi wgrany model i od razu wczytuje G-code do
 translatora. Translator rozumie E (M82/M83, G92 E0) i z opcją *Ekstruder*
 wstawia `$OUT[n] = TRUE/FALSE` wokół ruchów z ekstruzją, dzięki czemu KRL

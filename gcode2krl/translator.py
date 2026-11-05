@@ -27,6 +27,7 @@ class TranslateOptions:
     fit_arcs: bool = True
     use_spl: bool = True
     extruder: bool = False  # emit extruder on/off events around extruding moves (3D printing / WAAM)
+    extruder_analog: bool = False  # also emit extrusion-rate events (E per mm) for a velocity-proportional analog output
 
 
 # ---------------------------------------------------------------- items
@@ -34,6 +35,8 @@ class TranslateOptions:
 class RapidItem:
     target: np.ndarray
     start: np.ndarray
+    abc: tuple | None = None
+    axis: tuple | None = None
 
 
 @dataclass
@@ -42,6 +45,7 @@ class LineItem:
     end: np.ndarray
     feed: float
     n_points: int = 2
+    abc: tuple | None = None  # orientation at the end point (None = program default)
 
     @property
     def t_in(self):
@@ -57,6 +61,7 @@ class ArcItem:
     end: np.ndarray
     feed: float
     fit: ArcFit
+    abc: tuple | None = None
 
     @property
     def t_in(self):
@@ -71,6 +76,8 @@ class ArcItem:
 class SplItem:
     points: np.ndarray  # includes the start point as row 0
     feed: float
+    abcs: np.ndarray | None = None  # (n, 3) orientation per point (row 0 = start), None = default
+    axes: np.ndarray | None = None  # (n, 3) tool axes when the orientation is still to be resolved
 
     @property
     def start(self):
@@ -103,6 +110,7 @@ class Stats:
     input_counts: dict = field(default_factory=dict)
     chains: int = 0
     chain_vertices: int = 0
+    oriented_vertices: int = 0
     lines_out: int = 0
     arcs_out: int = 0
     spl_runs: int = 0
@@ -123,8 +131,11 @@ class Translator:
         self.stats = Stats()
         self.chain: list[np.ndarray] = []
         self.chain_feed = 0.0
+        self.chain_ori: list = []  # per chain point: ("abc", (a,b,c)) | ("axis", (i,j,k)) | None
         self.pending_comments: list[EventItem] = []
         self.extruding = False
+        self.rate = None
+        self.last_ori = None
         self.offset = np.array(opts.offset, dtype=float)
         self.fit_params = FitParams(tol=opts.tol, max_radius=opts.max_radius, min_radius=opts.min_radius,
                                     min_arc_points=opts.min_arc_points, refine_shift=opts.refine_shift)
@@ -137,24 +148,64 @@ class Translator:
             return self.o.default_feed
         return f
 
-    def push_linear(self, start: np.ndarray, end: np.ndarray, feed: float) -> None:
+    def push_linear(self, start: np.ndarray, end: np.ndarray, feed: float, ori=None, ori0=None) -> None:
         feed = self.feed_of(feed)
         if self.chain and (feed != self.chain_feed or float(np.linalg.norm(self.chain[-1] - start)) > 1e-9):
             self.flush()
         if not self.chain:
             self.chain = [start]
             self.chain_feed = feed
+            self.chain_ori = [ori0 if ori0 is not None else self.last_ori]
         self.chain.append(end)
+        self.chain_ori.append(ori)
+        self.last_ori = ori
 
     def flush(self) -> None:
         if len(self.chain) < 2:
             self.chain = []
+            self.chain_ori = []
             self.items.extend(self.pending_comments)
             self.pending_comments = []
             return
-        pts = dedupe_points(np.array(self.chain))
+        raw = np.array(self.chain)
+        oris = list(self.chain_ori)
         feed = self.chain_feed
         self.chain = []
+        self.chain_ori = []
+        # orientation varies along the chain -> keep every vertex with its orientation (SPL interpolates it)
+        kinds = {o[0] for o in oris if o is not None}
+        values = {tuple(np.round(o[1], 6)) for o in oris if o is not None}
+        if len(values) > 1:
+            keep = [0] + [k for k in range(1, len(raw)) if float(np.linalg.norm(raw[k] - raw[k - 1])) > 1e-9]
+            pts_v = raw[keep]
+            o_v = [oris[k] for k in keep]
+            self.stats.chains += 1
+            self.stats.chain_vertices += len(pts_v)
+            self.stats.oriented_vertices += len(pts_v)
+            # fill leading None with the first defined orientation
+            first = next((o for o in o_v if o is not None), None)
+            o_v = [o if o is not None else first for o in o_v]
+            from .robot import abc_from_axis
+            if "abc" in kinds:
+                # explicit A B C (possibly mixed with I J K at transitions): fixed orientations, no spin solving
+                abcs = np.array([(o[1] if o[0] == "abc" else abc_from_axis(o[1])) for o in o_v], dtype=float)
+                self.add_motion(SplItem(pts_v, feed, abcs=abcs))
+            else:
+                axes = np.array([o[1] for o in o_v], dtype=float)
+                abcs = np.array([abc_from_axis(ax) for ax in axes], dtype=float)
+                self.add_motion(SplItem(pts_v, feed, abcs=abcs, axes=axes))
+            self.items.extend(self.pending_comments)
+            self.pending_comments = []
+            return
+        chain_abc = None
+        if values:
+            o0 = next(o for o in oris if o is not None)
+            if o0[0] == "abc":
+                chain_abc = tuple(float(v) for v in o0[1])
+            else:
+                from .robot import abc_from_axis
+                chain_abc = abc_from_axis(o0[1])
+        pts = dedupe_points(raw)
         if len(pts) < 2:
             return
         self.stats.chains += 1
@@ -173,6 +224,11 @@ class Translator:
         if self.o.use_spl:
             motion = self.group_spl(motion, pts)
         for m in motion:
+            if chain_abc is not None:
+                if isinstance(m, SplItem):
+                    m.abcs = np.tile(np.array(chain_abc, dtype=float), (len(m.points), 1))
+                else:
+                    m.abc = chain_abc
             self.add_motion(m)
         self.items.extend(self.pending_comments)
         self.pending_comments = []
@@ -257,8 +313,16 @@ class Translator:
                 self.push_linear(samples[idx - 1] + fit.normal * (rise_n * (idx - 1) / k), p, feed)
             return
         self.flush()
+        abc = None
+        if mv.abc is not None:
+            abc = tuple(float(v) for v in mv.abc)
+        elif mv.axis is not None:
+            from .robot import abc_from_axis
+            abc = abc_from_axis(mv.axis)
         for item in self.arc_items(fit, start, end, feed):
+            item.abc = abc
             self.add_motion(item)
+        self.last_ori = ("abc", mv.abc) if mv.abc is not None else (("axis", mv.axis) if mv.axis is not None else None)
 
     # -------------------------------------------------------------- run
     def translate(self, parsed: ParseResult) -> tuple[list, Stats]:
@@ -266,17 +330,25 @@ class Translator:
         self.stats.warnings.extend(parsed.warnings)
         for cmd in parsed.commands:
             if isinstance(cmd, LinearMove):
+                ori = ("abc", cmd.abc) if cmd.abc is not None else (("axis", cmd.axis) if cmd.axis is not None else None)
+                ori0 = ("abc", cmd.abc0) if cmd.abc0 is not None else (("axis", cmd.axis0) if cmd.axis0 is not None else None)
                 if self.o.extruder:
-                    self.set_extruding(cmd.extrude > 1e-9 and not cmd.rapid)
+                    self.set_extruding(cmd.extrude > 1e-9 and not cmd.rapid, cmd.extrude, cmd.start, cmd.end)
                 if cmd.rapid:
                     self.flush()
-                    self.items.append(RapidItem(cmd.end + self.offset, cmd.start + self.offset))
+                    rabc = cmd.abc
+                    if rabc is None and cmd.axis is not None:
+                        from .robot import abc_from_axis
+                        rabc = abc_from_axis(cmd.axis)
+                    self.items.append(RapidItem(cmd.end + self.offset, cmd.start + self.offset,
+                                                abc=rabc, axis=cmd.axis))
+                    self.last_ori = ori
                     self.stats.rapids += 1
                 else:
-                    self.push_linear(cmd.start + self.offset, cmd.end + self.offset, cmd.feed)
+                    self.push_linear(cmd.start + self.offset, cmd.end + self.offset, cmd.feed, ori, ori0)
             elif isinstance(cmd, ArcMove):
                 if self.o.extruder:
-                    self.set_extruding(cmd.extrude > 1e-9)
+                    self.set_extruding(cmd.extrude > 1e-9, cmd.extrude, cmd.start, cmd.end)
                 self.push_arc(cmd)
             elif isinstance(cmd, Comment):
                 # comments never break a chain (CAM output is full of them);
@@ -299,7 +371,15 @@ class Translator:
             self.stats.warnings.append(f"feed never set in G-code; default {self.o.default_feed:g} mm/min used")
         return self.items, self.stats
 
-    def set_extruding(self, on: bool) -> None:
+    def set_extruding(self, on: bool, de: float = 0.0, start=None, end=None) -> None:
+        if on and self.o.extruder_analog and start is not None:
+            length = float(np.linalg.norm(np.asarray(end) - np.asarray(start)))
+            if length > 1e-9:
+                rate = round(de / length, 5)  # E per mm of path
+                if self.rate is None or abs(rate - self.rate) > max(1e-6, 0.02 * abs(self.rate)):
+                    self.flush()
+                    self.items.append(EventItem("extruder_rate", rate))
+                    self.rate = rate
         if on == self.extruding:
             return
         self.flush()
@@ -331,42 +411,95 @@ def translate(parsed: ParseResult, opts: TranslateOptions | None = None) -> tupl
     return Translator(opts or TranslateOptions()).translate(parsed)
 
 
-def sample_items(items: list, arc_points: int = 8, max_samples: int = 3000, step: float | None = None) -> np.ndarray:
+def sample_items(items: list, arc_points: int = 8, max_samples: int = 3000, step: float | None = None,
+                 default_abc=(0.0, 180.0, 0.0), with_abc: bool = False):
     """Representative TCP positions along the output path (for reach / collision checks).
 
     With ``step`` every line, arc and SPL segment is subdivided so that
     consecutive samples are at most ``step`` mm apart (rapids included).
+    With ``with_abc`` also returns an (N, 3) array of orientations (linear
+    interpolation of A B C along SPL runs with varying orientation).
     """
     from .geometry import sample_arc
 
     pts: list[np.ndarray] = []
+    abcs: list[np.ndarray] = []
+    d_abc = np.array(default_abc, dtype=float)
 
-    def seg(a: np.ndarray, b: np.ndarray) -> None:
+    from .robot import _slerp_rot, abc_to_rot, rot_to_abc
+
+    def seg(a: np.ndarray, b: np.ndarray, oa=None, ob=None) -> None:
+        oa = d_abc if oa is None else np.asarray(oa, float)
+        ob = d_abc if ob is None else np.asarray(ob, float)
         if step is None or step <= 0:
             pts.append(b)
+            abcs.append(ob)
             return
         n = max(1, int(math.ceil(float(np.linalg.norm(b - a)) / step)))
+        same = np.allclose(oa, ob)
+        if not same:
+            ra, rb = abc_to_rot(*oa), abc_to_rot(*ob)
         for k in range(1, n + 1):
-            pts.append(a + (b - a) * (k / n))
+            t = k / n
+            pts.append(a + (b - a) * t)
+            if same:
+                abcs.append(ob)
+            else:
+                # orientation interpolated as a rotation (like the controller), not as Euler angles
+                abcs.append(np.array(rot_to_abc(_slerp_rot(ra, rb, t))) if k < n else ob)
 
+    last_abc = None
     for it in items:
         if isinstance(it, RapidItem):
-            seg(it.start, it.target)
+            o = it.abc if it.abc is not None else last_abc
+            seg(it.start, it.target, last_abc, o)
+            last_abc = o
         elif isinstance(it, LineItem):
-            seg(it.start, it.end)
+            o = it.abc if it.abc is not None else last_abc
+            seg(it.start, it.end, last_abc, o)
+            last_abc = o
         elif isinstance(it, ArcItem):
-            if step is None or step <= 0:
-                pts.extend(sample_arc(it.fit, 1e9, min_points=arc_points)[1:])
-            else:
-                n = max(arc_points, int(math.ceil(it.fit.radius * it.fit.sweep / step)) + 1)
-                pts.extend(sample_arc(it.fit, 1e9, min_points=n)[1:])
+            o = it.abc if it.abc is not None else last_abc
+            n = arc_points if (step is None or step <= 0) else max(arc_points, int(math.ceil(it.fit.radius * it.fit.sweep / step)) + 1)
+            arc_pts = sample_arc(it.fit, 1e9, min_points=n)[1:]
+            pts.extend(arc_pts)
+            abcs.extend([d_abc if o is None else np.asarray(o, float)] * len(arc_pts))
+            last_abc = o
         elif isinstance(it, SplItem):
-            for a, b in zip(it.points[:-1], it.points[1:]):
-                seg(a, b)
+            for k in range(len(it.points) - 1):
+                oa = it.abcs[k] if it.abcs is not None else last_abc
+                ob = it.abcs[k + 1] if it.abcs is not None else last_abc
+                seg(it.points[k], it.points[k + 1], oa, ob)
+            last_abc = it.abcs[-1] if it.abcs is not None else last_abc
     if not pts:
-        return np.zeros((0, 3))
+        return (np.zeros((0, 3)), np.zeros((0, 3))) if with_abc else np.zeros((0, 3))
     arr = np.array(pts)
+    arr_abc = np.array(abcs)
     if len(arr) > max_samples:
         idx = np.unique(np.linspace(0, len(arr) - 1, max_samples).astype(int))
         arr = arr[idx]
-    return arr
+        arr_abc = arr_abc[idx]
+    return (arr, arr_abc) if with_abc else arr
+
+
+def resolve_orientations(items: list, robot, base: np.ndarray, tool: np.ndarray, ref=(0.0, 180.0, 0.0),
+                         spin_step: float = 15.0, singular_deg: float = 8.0, max_tilt_deg: float = 0.0) -> dict:
+    """Replace zero-spin orientations of axis-defined SPL runs by singularity-aware ones."""
+    from .robot import solve_spins
+
+    info = {"resampled": 0, "unreachable": 0, "singular": 0, "points": 0}
+    start = None
+    for it in items:
+        if isinstance(it, SplItem) and it.axes is not None:
+            abcs, inf = solve_spins(robot, it.points, it.axes, base, tool, ref=ref, spin_step=spin_step,
+                                    singular_deg=singular_deg, max_tilt_deg=max_tilt_deg, start=start)
+            it.abcs = abcs
+            for k in ("resampled", "unreachable", "singular"):
+                info[k] += inf[k]
+            info["points"] += len(it.points)
+    return info
+
+
+def has_orientation(items: list) -> bool:
+    return any((isinstance(i, (LineItem, ArcItem, RapidItem)) and i.abc is not None) or (isinstance(i, SplItem) and i.abcs is not None)
+               for i in items)

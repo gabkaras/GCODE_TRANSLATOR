@@ -45,7 +45,8 @@
   }).catch(() => {});
 
   // ----------------------------------------------------------------- options
-  const OPTION_IDS = ['extruder','extruder_out','robot','base_frame','tool_frame','base_literal','tool_literal','robot_samples','path_step','margin',
+  const OPTION_IDS = ['extruder','extruder_out','extruder_analog','extruder_anout','extruder_flow_full','extruder_delay',
+    'orient_solve','spin_step','singular_deg','max_tilt','robot','base_frame','tool_frame','base_literal','tool_literal','robot_samples','path_step','margin',
     'tbl_sx','tbl_sy','tbl_cx','tbl_cy','mat_t','mat_pad','tool_mesh','tool_mesh_units',
     'tool_radius','cutter_len','cutter_radius','obstacles','tol','max_radius','min_radius','min_arc_points','refine_shift','spl_max_segment','corner_angle',
     'default_feed','offset','fit_arcs','use_spl','name','mode','tool','base','abc','rapid_vel','max_vel','acc','cdis',
@@ -522,13 +523,23 @@
   }
   // ---- slicer ------------------------------------------------------------
   const SL_FIELDS = ['layer_height','first_layer_height','bead_width','perimeters','bottom_layers','top_layers','infill_pattern','infill_angle',
-    'speed_outer','speed_perimeter','speed_infill','speed_first_layer','speed_travel','extrusion_mode','retract_length','z_hop','seam','skirt_loops','brim_width'];
+    'speed_outer','speed_perimeter','speed_infill','speed_first_layer','speed_travel','extrusion_mode','retract_length','z_hop','seam','skirt_loops','brim_width',
+    'layer_mode','cone_angle','cone_outward','cone_cx','cone_cy','hf_cell','max_slope','overhang_max'];
   function sliceParams() {
     const o = {};
     for (const k of SL_FIELDS) { const el = $('#sl_' + k); if (el) o[k] = el.value; }
     o.infill_density = (Number($('#sl_infill').value) || 0) / 100;
+    o.tool_axis = $('#sl_tool_axis').checked;
     return o;
   }
+  function updateLayerModeUI() {
+    const m = $('#sl_layer_mode').value;
+    $$('.mode-conical').forEach(el => el.classList.toggle('hidden', m !== 'conical'));
+    $$('.mode-hf').forEach(el => el.classList.toggle('hidden', m !== 'bottom' && m !== 'top'));
+    $$('.mode-multi').forEach(el => el.classList.toggle('hidden', m !== 'multi'));
+  }
+  $('#sl_layer_mode').addEventListener('change', updateLayerModeUI);
+  updateLayerModeUI();
   function refreshSliceMeshes() {
     const sel = $('#slice-mesh'); if (!sel) return;
     const cur = sel.value;
@@ -548,11 +559,18 @@
     const ref = $('#slice-mesh').value; if (!ref) { setStatus('Wybierz model do pokrojenia', 'err'); return; }
     setStatus('Krojenie…', 'busy'); $('#btn-slice').disabled = true;
     try {
-      const res = await fetch('/api/slice', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mesh: ref, units: $('#slice-units').value, params: sliceParams() }) });
+      const params = sliceParams();
+      const body = { mesh: ref, units: $('#slice-units').value, params };
+      if (params.layer_mode === 'multi') { body.segments = $('#sl_segments').value; params.layer_mode = 'planar'; if (!body.segments.trim()) throw new Error('tryb wielokierunkowy wymaga definicji segmentów'); }
+      const res = await fetch('/api/slice', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       const d = await res.json();
       if (!res.ok || d.error) throw new Error(d.error || res.statusText);
       const st = d.stats;
-      $('#slice-info').textContent = `${st.layers} warstw · ${st.paths} ścieżek · ekstruzja ${(st.extrusion_length / 1000).toFixed(1)} m · przejazdy ${(st.travel_length / 1000).toFixed(1)} m · ok. ${(st.time_s / 60).toFixed(0)} min` + (st.dropped_chains ? ` · ${st.dropped_chains} otwartych konturów pominięto` : '');
+      const modeTxt = { planar: 'płaskie', conical: 'stożkowe', bottom: 'konforemne (dół)', top: 'konforemne (góra)', multi: 'wielokierunkowe' }[st.layer_mode] || st.layer_mode;
+      $('#slice-info').textContent = `${st.layers} warstw (${modeTxt}) · ${st.paths} ścieżek · ekstruzja ${(st.extrusion_length / 1000).toFixed(1)} m · przejazdy ${(st.travel_length / 1000).toFixed(1)} m · ok. ${(st.time_s / 60).toFixed(0)} min`
+        + (st.max_tilt > 0.01 ? ` · maks. pochylenie narzędzia ${st.max_tilt.toFixed(1)}°` : '')
+        + (st.support_layers ? ` · PODPORY: ${st.support_layers} warstw, ${(st.support_area / 100).toFixed(0)} cm²` : ' · bez podpór')
+        + (st.dropped_chains ? ` · ${st.dropped_chains} otwartych konturów pominięto` : '');
       $('#opt_extruder').checked = true; saveOptions();
       setGcode(d.gcode, (d.name || 'model').replace(/\.[^.]+$/, '') + '.gcode');
     } catch (err) { setStatus('Błąd krojenia: ' + err.message, 'err'); }
@@ -638,7 +656,8 @@
     reach.className = 'rb-item ' + (rep.n_unreachable ? 'bad' : 'ok');
     lim.textContent = rep.n_limit ? `${rep.n_limit} próbek poza limitami osi` : 'limity osi OK';
     lim.className = 'rb-item ' + (rep.n_limit ? 'bad' : 'ok');
-    $('#robot-axes').innerHTML = rep.joint_min.map((lo, i) => lo === null ? '' : `<span class="${rep.axis_violations[i] ? 'viol' : ''}">A${i+1} <b>${lo.toFixed(0)}…${rep.joint_max[i].toFixed(0)}°</b></span>`).join('');
+    $('#robot-axes').innerHTML = rep.joint_min.map((lo, i) => lo === null ? '' : `<span class="${rep.axis_violations[i] ? 'viol' : ''}">A${i+1} <b>${lo.toFixed(0)}…${rep.joint_max[i].toFixed(0)}°</b></span>`).join('')
+      + (rep.orientation ? `<span title="rozwiązywanie obrotu wokół osi narzędzia">orient. <b>${rep.orientation.points}</b> pkt · ${rep.orientation.resampled} przestawień${rep.orientation.singular ? ` · <span class="viol">${rep.orientation.singular} osobl.</span>` : ''}${rep.orientation.unreachable ? ` · <span class="viol">${rep.orientation.unreachable} nieosiąg.</span>` : ''}</span>` : (rep.oriented ? '<span>orientacja z G-code</span>' : ''));
     showCollisions(rep.collision, rep);
     // animation data
     anim.joints = decode(rep.joints); anim.ok = Uint8Array.from(atob(rep.ok), c => c.charCodeAt(0)); anim.n = anim.joints.length / 6; anim.pos = 0;

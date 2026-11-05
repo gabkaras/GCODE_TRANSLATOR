@@ -95,3 +95,87 @@ def test_concentric_and_grid_patterns():
         assert st.layers == 6
         has_fill = any(q.kind == "FILL" for L in layers for q in L.paths)
         assert has_fill == (pat != "none")
+
+
+def test_conical_slicing_tilts_tool_and_keeps_geometry():
+    tris = box((40, 40, 20), (0, 0, 10))
+    p = SliceParams(layer_height=1.0, bead_width=2.0, perimeters=1, infill_density=0.0, top_layers=0, bottom_layers=0,
+                    layer_mode="conical", cone_angle=30.0)
+    gcode, st, layers = slice_triangles(tris, p)
+    assert st.layer_mode == "conical" and st.max_tilt == pytest.approx(30.0, abs=0.5)
+    pts = np.concatenate([q.xyz for L in layers for q in L.paths])
+    assert pts[:, 2].min() >= -1e-6 and pts[:, 2].max() <= 20.0 + 1e-6
+    # outer walls lie inside the box footprint (offset half a bead)
+    assert np.abs(pts[:, 0]).max() <= 19.0 + 1e-6 and np.abs(pts[:, 1]).max() <= 19.0 + 1e-6
+    # the G-code carries the tool axis and real Z
+    lines = [l for l in gcode.splitlines() if l.startswith("G1 X")]
+    assert all(" I" in l and " K" in l and " Z" in l for l in lines)
+    # axis points outward and up for an outward cone
+    axes = np.concatenate([q.axes for L in layers for q in L.paths])
+    assert axes[:, 2].min() > 0.8
+    # translates into KRL with varying orientation
+    from gcode2krl.gcode_parser import parse_gcode
+    from gcode2krl.translator import SplItem, TranslateOptions, has_orientation, translate
+    items, _ = translate(parse_gcode(gcode), TranslateOptions())
+    assert has_orientation(items) and any(isinstance(i, SplItem) and i.axes is not None for i in items)
+
+
+def test_bottom_following_layers_follow_sloped_base():
+    # wedge-shaped slab: bottom surface rises 10 mm over 100 mm in X, 20 mm thick
+    base_z = lambda x: 0.1 * (x + 50)  # noqa: E731
+    v = np.array([[x, y, base_z(x) + dz] for x in (-50, 50) for y in (-20, 20) for dz in (0, 20)], float)
+    faces = [(0, 1, 3, 2), (4, 6, 7, 5), (0, 4, 5, 1), (2, 3, 7, 6), (0, 2, 6, 4), (1, 5, 7, 3)]
+    tris = np.array([[v[a], v[b], v[c]] for a, b, c, d in faces] + [[v[a], v[c], v[d]] for a, b, c, d in faces], float)
+    p = SliceParams(layer_height=2.0, bead_width=2.0, perimeters=1, infill_density=0.0, top_layers=0, bottom_layers=0,
+                    layer_mode="bottom", hf_cell=5.0, max_slope=45.0)
+    gcode, st, layers = slice_triangles(tris, p)
+    assert st.layers == pytest.approx(10, abs=1)
+    first = np.concatenate([q.xyz for q in layers[0].paths])
+    # the first layer follows the sloped bottom: z grows with x at the base slope
+    slope = np.polyfit(first[:, 0], first[:, 2], 1)[0]
+    assert slope == pytest.approx(0.1, abs=0.02)
+    axes = np.concatenate([q.axes for q in layers[0].paths])
+    assert np.degrees(np.arccos(axes[:, 2].mean())) == pytest.approx(np.degrees(np.arctan(0.1)), abs=1.0)
+    assert st.support_layers == 0
+
+
+def test_support_indicator_flags_overhang():
+    # T shape: narrow stem then a wide top -> the top layers are unsupported
+    stem = box((20, 20, 20), (0, 0, 10))
+    cap = box((80, 80, 10), (0, 0, 25))
+    gcode, st, layers = slice_triangles(np.concatenate([stem, cap]), SliceParams(layer_height=2, bead_width=2, perimeters=1, infill_density=0.1, top_layers=1, bottom_layers=1))
+    assert st.support_layers >= 1 and st.support_area > 1000
+    gcode2, st2, _ = slice_triangles(stem, SliceParams(layer_height=2, bead_width=2, perimeters=1, infill_density=0.1, top_layers=1, bottom_layers=1))
+    assert st2.support_layers == 0
+
+
+def test_multi_direction_segments():
+    from gcode2krl.slicer.decompose import parse_segments, rotation_to_z, slice_segments
+    # an L shape: vertical stem and a horizontal arm sticking out in +X; the arm is printed sideways
+    stem = box((20, 20, 60), (0, 0, 30))
+    arm = box((40, 20, 20), (30, 0, 50))
+    tris = np.concatenate([stem, arm])
+    text = """
+segment stem 0 0 1
+plane 10 0 0  -1 0 0      # keep x <= 10
+segment arm 1 0 0
+plane 10 0 0   1 0 0      # keep x >= 10
+"""
+    segs = parse_segments(text)
+    assert len(segs) == 2 and np.allclose(rotation_to_z(segs[1].direction) @ segs[1].direction, [0, 0, 1])
+    p = SliceParams(layer_height=2.0, bead_width=2.0, perimeters=1, infill_density=0.1, top_layers=1, bottom_layers=1)
+    gcode, st, per_seg = slice_segments(tris, segs, p)
+    assert len(per_seg) == 2 and st.layer_mode == "multi"
+    stem_pts = np.concatenate([q.xyz for L in per_seg[0] for q in L.paths])
+    arm_pts = np.concatenate([q.xyz for L in per_seg[1] for q in L.paths])
+    assert stem_pts[:, 0].max() <= 10.0 + 1e-6 and arm_pts[:, 0].min() >= 10.0 - 1e-6
+    # arm layers are planes of constant x
+    first_arm = np.concatenate([q.xyz for q in per_seg[1][0].paths])
+    assert np.ptp(first_arm[:, 0]) < 1e-6
+    axes = np.concatenate([q.axes for L in per_seg[1] for q in L.paths])
+    assert np.allclose(axes, [1, 0, 0])
+    assert ";SEGMENT:arm" in gcode and gcode.count("M30") == 1
+    from gcode2krl.gcode_parser import parse_gcode
+    from gcode2krl.translator import TranslateOptions, has_orientation, translate
+    items, _ = translate(parse_gcode(gcode), TranslateOptions())
+    assert has_orientation(items)

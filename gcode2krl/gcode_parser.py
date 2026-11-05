@@ -7,6 +7,9 @@ Supported:
   (ignored, warned), G40-G43/G49 (ignored), G28/G30/G92/G53 (warned, skipped),
   M0/M1 pause, M2/M30 end, M3/M4/M5 spindle, M6 tool change, M7/M8/M9 coolant,
   F/S/T words, comments in parentheses and after ';'.
+  Tool orientation: A B C words (KUKA ZYX Euler, modal) or I J K on G0/G1
+  lines as the tool axis vector pointing away from the part (5-axis style,
+  modal). Without them the orientation is constant (the translator default).
 
 All output coordinates are in millimetres, absolute.
 """
@@ -30,6 +33,10 @@ class LinearMove:
     rapid: bool
     line_no: int
     extrude: float = 0.0  # E delta of this move (> 0 = material deposited)
+    abc: tuple | None = None  # tool orientation A B C (KUKA ZYX, deg) at the end point, if given
+    axis: tuple | None = None  # tool axis unit vector (pointing away from the part) at the end point, if given
+    abc0: tuple | None = None  # orientation at the start point (modal state before this move)
+    axis0: tuple | None = None
 
 
 @dataclass
@@ -42,6 +49,10 @@ class ArcMove:
     feed: float
     line_no: int
     extrude: float = 0.0
+    abc: tuple | None = None
+    axis: tuple | None = None
+    abc0: tuple | None = None
+    axis0: tuple | None = None
 
     @property
     def helical(self) -> bool:
@@ -128,6 +139,8 @@ class GCodeParser:
         self.inverse_time = False
         self.e = 0.0
         self.e_absolute = True
+        self.abc: tuple | None = None  # modal tool orientation from A B C words
+        self.axis: tuple | None = None  # modal tool axis from I J K on G1 (5-axis style)
         self.dwell_in_ms = dwell_in_ms
         self.keep_comments = keep_comments
         self.result = ParseResult()
@@ -275,6 +288,20 @@ class GCodeParser:
 
         has_axis = any(a in words for a in "XYZ")
         has_arc_words = any(a in words for a in "IJKR")
+        abc0, axis0 = self.abc, self.axis
+        if any(a in words for a in "ABC"):
+            cur = list(self.abc) if self.abc else [0.0, 0.0, 0.0]
+            for i, a in enumerate("ABC"):
+                if a in words:
+                    cur[i] = words[a]
+            self.abc = tuple(cur)
+            self.axis = None
+        if self.motion in (0, 1) and any(a in words for a in "IJK") and "R" not in words:
+            v = np.array([words.get("I", 0.0), words.get("J", 0.0), words.get("K", 0.0)], dtype=float)
+            n = float(np.linalg.norm(v))
+            if n > 1e-9:
+                self.axis = tuple((v / n).tolist())
+                self.abc = None
         de = 0.0
         if "E" in words:
             if self.e_absolute:
@@ -299,7 +326,7 @@ class GCodeParser:
         if self.motion in (0, 1):
             self.result.counts[f"G{self.motion}"] += 1
             if float(np.linalg.norm(target - self.pos)) > 1e-9:
-                self.emit(LinearMove(self.pos.copy(), target, self.feed, self.motion == 0, line_no, de))
+                self.emit(LinearMove(self.pos.copy(), target, self.feed, self.motion == 0, line_no, de, self.abc, self.axis, abc0, axis0))
             self.pos = target
             return
 
@@ -331,7 +358,7 @@ class GCodeParser:
                 return
             center[inorm] = start[inorm]
             center = self._reconcile_center(start, target, center, ia, ib, line_no)
-        self.emit(ArcMove(start, target, center, normal, ccw, self.feed, line_no, de))
+        self.emit(ArcMove(start, target, center, normal, ccw, self.feed, line_no, de, self.abc, self.axis, abc0, axis0))
         self.pos = target
 
     # ------------------------------------------------------------------ arcs

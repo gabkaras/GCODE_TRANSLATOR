@@ -39,6 +39,16 @@ class SliceParams:
     start_gcode: str = ""
     end_gcode: str = ""
     comments: bool = True
+    # ---- multi-axis layer modes (deform -> slice -> undeform)
+    layer_mode: str = "planar"  # planar | conical | bottom | top
+    cone_angle: float = 30.0  # conical: nozzle tilt (deg)
+    cone_outward: bool = True  # conical: layers slope down away from the axis (print outwards)
+    cone_cx: float | None = None  # conical axis (model XY after centring); None = model centre
+    cone_cy: float | None = None
+    hf_cell: float = 5.0  # bottom/top: height-field cell (mm)
+    max_slope: float = 45.0  # bottom/top: max layer tilt (deg)
+    tool_axis: bool = True  # non-planar modes: write I J K (tool axis) with every point
+    overhang_max: float = 45.0  # support indicator: printable overhang angle (deg)
 
     def extrusion_per_mm(self, width: float, height: float) -> float:
         """E units per mm of path for a bead of width x height (rounded-rectangle cross section)."""
@@ -58,6 +68,9 @@ class SliceParams:
     def from_dict(cls, d: dict) -> "SliceParams":
         p = cls()
         for k, v in (d or {}).items():
+            if k in ("cone_cx", "cone_cy"):
+                setattr(p, k, None if v in (None, "", "auto") else float(v))
+                continue
             if hasattr(p, k) and v is not None and v != "":
                 cur = getattr(p, k)
                 if isinstance(cur, bool):

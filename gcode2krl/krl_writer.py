@@ -43,6 +43,10 @@ class KrlOptions:
     source_name: str = ""
     halt_on_tool_change: bool = True
     extruder_out: int = 0  # digital output switched on while material is deposited (0 = comment only)
+    extruder_anout: int = 0  # analog output driven proportionally to the path velocity while extruding (ANOUT ON)
+    extruder_flow_full: float = 100.0  # E units per second (mm^3/s or mm/s of filament) at analog signal 1.0
+    extruder_delay: float = 0.0  # ANOUT DELAY in s (negative = advance)
+    ori_var: bool = False  # orientation varies along the path ($ORI_TYPE = #VAR)
     base_frame: tuple[float, ...] | None = None  # literal $BASE {X Y Z A B C} instead of BASE_DATA[n]
     tool_frame: tuple[float, ...] | None = None  # literal $TOOL {X Y Z A B C} instead of TOOL_DATA[n]
 
@@ -86,10 +90,12 @@ class KrlWriter:
         self.last_t_out: np.ndarray | None = None
         self.global_vel: float | None = opts.rapid_vel  # set in the settings header
         self.first_motion_done = False
+        self.rate = 0.0
+        self.extruding_now = False
 
     # ------------------------------------------------------------ format
-    def frame(self, p: np.ndarray) -> str:
-        a, b, c = self.abc
+    def frame(self, p: np.ndarray, abc=None) -> str:
+        a, b, c = self.abc if abc is None else abc
         return (f"{{X {fnum(p[0])}, Y {fnum(p[1])}, Z {fnum(p[2])}, "
                 f"A {fnum(a)}, B {fnum(b)}, C {fnum(c)}}}")
 
@@ -141,16 +147,16 @@ class KrlWriter:
         if not self.block:
             self.open_block(item.feed)
         if isinstance(item, LineItem):
-            self.block.append(f"  SLIN {self.frame(item.end)}")
+            self.block.append(f"  SLIN {self.frame(item.end, item.abc)}")
             self.block_segments += 1
             self.block_motions += 1
         elif isinstance(item, ArcItem):
-            self.block.append(f"  SCIRC {self.frame(item.mid)}, {self.frame(item.end)}")
+            self.block.append(f"  SCIRC {self.frame(item.mid, item.abc)}, {self.frame(item.end, item.abc)}")
             self.block_segments += 1
             self.block_motions += 1
         else:
-            for p in item.points[1:]:
-                self.block.append(f"  SPL {self.frame(p)}")
+            for k, p in enumerate(item.points[1:], start=1):
+                self.block.append(f"  SPL {self.frame(p, None if item.abcs is None else tuple(item.abcs[k]))}")
             self.block_segments += len(item.points) - 1
             self.block_motions += len(item.points) - 1
         self.last_t_out = item.t_out
@@ -166,13 +172,14 @@ class KrlWriter:
         elif next_item is None or not hasattr(next_item, "t_in"):
             approx = ""
         if isinstance(item, LineItem):
-            self.emit([f"LIN {self.frame(item.end)}{approx}"], 1)
+            self.emit([f"LIN {self.frame(item.end, item.abc)}{approx}"], 1)
         elif isinstance(item, ArcItem):
-            self.emit([f"CIRC {self.frame(item.mid)}, {self.frame(item.end)}{approx}"], 1)
+            self.emit([f"CIRC {self.frame(item.mid, item.abc)}, {self.frame(item.end, item.abc)}{approx}"], 1)
         else:
             pts = item.points[1:]
-            lines = [f"LIN {self.frame(p)} C_DIS" for p in pts[:-1]]
-            lines.append(f"LIN {self.frame(pts[-1])}{approx}")
+            ab = None if item.abcs is None else item.abcs[1:]
+            lines = [f"LIN {self.frame(p, None if ab is None else tuple(ab[k]))} C_DIS" for k, p in enumerate(pts[:-1])]
+            lines.append(f"LIN {self.frame(pts[-1], None if ab is None else tuple(ab[-1]))}{approx}")
             self.emit(lines, len(pts))
         self.last_t_out = item.t_out
 
@@ -182,11 +189,22 @@ class KrlWriter:
         self.ensure_bco()
         self.set_global_vel(self.o.rapid_vel)
         approx = " C_DIS" if isinstance(next_item, RapidItem) else ""
-        self.emit([f"LIN {self.frame(item.target)}{approx}"], 1)
+        self.emit([f"LIN {self.frame(item.target, item.abc)}{approx}"], 1)
         self.last_t_out = None
+
+    def anout_line(self) -> str:
+        """ANOUT ON: signal = factor * $VEL_ACT (m/s). E/s = rate (E/mm) * v (mm/s) = rate * 1000 * $VEL_ACT,
+        signal 1.0 corresponds to extruder_flow_full E/s."""
+        rate = self.rate or 0.0
+        factor = rate * 1000.0 / max(self.o.extruder_flow_full, 1e-9)
+        delay = f" DELAY={self.o.extruder_delay:.3f}" if self.o.extruder_delay else ""
+        self.extruding_now = True
+        return f"ANOUT ON $ANOUT[{self.o.extruder_anout}] = {factor:.5f} * $VEL_ACT + 0.0{delay} MINIMUM=0.0 MAXIMUM=1.0"
 
     def event(self, ev: EventItem) -> None:
         k = ev.kind
+        if k == "extruder_off":
+            self.extruding_now = False
         if k == "comment":
             text = str(ev.value).replace("\n", " ")
             if self.block:
@@ -229,6 +247,18 @@ class KrlWriter:
             lines = [f"; extruder {'on' if on else 'off'}"]
             if self.o.extruder_out > 0:
                 lines.append(f"$OUT[{self.o.extruder_out}] = {'TRUE' if on else 'FALSE'}")
+            if self.o.extruder_anout > 0:
+                if on:
+                    lines.append(self.anout_line())
+                else:
+                    lines.append(f"ANOUT OFF $ANOUT[{self.o.extruder_anout}]")
+            self.emit(lines)
+        elif k == "extruder_rate":
+            self.rate = float(ev.value)
+            lines = [f"; extrusion rate {self.rate:.5f} E/mm"]
+            if self.o.extruder_anout > 0 and self.extruding_now:
+                lines.append(f"ANOUT OFF $ANOUT[{self.o.extruder_anout}]")
+                lines.append(self.anout_line())
             self.emit(lines)
         elif k == "tool_change":
             lines = [f"; tool change T{ev.value}"]
@@ -289,7 +319,8 @@ class KrlWriter:
             f"$ACC.CP = {fnum(self.o.acc, 2)}",
             f"$APO.CDIS = {fnum(self.o.cdis, 2)}",
             f"$ADVANCE = {self.o.advance}",
-        ]
+        ] + (["$ORI_TYPE = #VAR  ; orientation varies along the path"] if self.o.ori_var else []) + (
+            ["$VEL_FLT_OFF = TRUE  ; unfiltered $VEL_ACT for ANOUT"] if self.o.extruder_anout > 0 else [])
 
     def assemble(self, stats: Stats | None) -> KrlProgram:
         prog = KrlProgram(main=self.o.name)

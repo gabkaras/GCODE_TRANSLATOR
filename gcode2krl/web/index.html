@@ -86,6 +86,20 @@
         <div class="row"><span>Retrakcja [mm] / z-hop [mm]</span><span class="pair2"><input type="number" id="sl_retract_length" value="0" min="0" step="0.5"><input type="number" id="sl_z_hop" value="0" min="0" step="0.5"></span></div>
         <div class="row"><span>Szew</span><select id="sl_seam"><option value="nearest">najbliższy</option><option value="aligned">wyrównany</option><option value="random">losowy</option></select></div>
         <div class="row"><span>Skirt pętle / brim [mm]</span><span class="pair2"><input type="number" id="sl_skirt_loops" value="0" min="0" step="1"><input type="number" id="sl_brim_width" value="0" min="0" step="1"></span></div>
+        <div class="fb-head" style="margin-top:8px"><span>Tryb warstw (robot 6-osiowy)</span></div>
+        <div class="row"><span>Warstwy</span><select id="sl_layer_mode">
+          <option value="planar">płaskie</option>
+          <option value="conical">stożkowe (RotBot)</option>
+          <option value="bottom">konforemne do powierzchni dolnej</option>
+          <option value="top">konforemne do powierzchni górnej</option>
+          <option value="multi">wielokierunkowe (segmenty)</option></select></div>
+        <div class="row mode-conical"><span>Stożek: kąt [°] / kierunek</span><span class="pair2"><input type="number" id="sl_cone_angle" value="30" min="1" max="80" step="5"><select id="sl_cone_outward"><option value="true">na zewnątrz</option><option value="false">do środka</option></select></span></div>
+        <div class="row mode-conical"><span>Oś stożka X, Y <small>(puste = środek)</small></span><span class="pair2"><input type="number" id="sl_cone_cx" placeholder="auto" step="5"><input type="number" id="sl_cone_cy" placeholder="auto" step="5"></span></div>
+        <div class="row mode-hf"><span>Pole wysokości: komórka / maks. nachylenie [°]</span><span class="pair2"><input type="number" id="sl_hf_cell" value="5" min="0.5" step="1"><input type="number" id="sl_max_slope" value="45" min="1" max="85" step="5"></span></div>
+        <label class="col mode-multi"><span>Segmenty <small>(segment NAZWA dx dy dz; plane px py pz nx ny nz, strona wskazana przez normalną)</small></span>
+          <textarea id="sl_segments" rows="5" spellcheck="false" placeholder="segment korpus 0 0 1&#10;plane 0 0 40 0 0 -1&#10;segment ramie 1 0 0&#10;plane 0 0 40 0 0 1"></textarea></label>
+        <label class="row check"><input type="checkbox" id="sl_tool_axis" checked><span>Zapisuj oś narzędzia I J K przy każdym punkcie</span></label>
+        <div class="row"><span>Wskaźnik podpór: maks. nawis [°]</span><input type="number" id="sl_overhang_max" value="45" min="0" max="90" step="5"></div>
         <div class="fb-row"><button type="button" id="btn-slice" class="primary">Pokrój i wczytaj G-code</button><span id="slice-info" class="muted"></span></div>
         <div class="row-note muted">Własny slicer (MIT): warstwy, obrysy, wypełnienie, przejazdy, E. Wynik trafia do translatora jak wgrany plik; włącz „Ekstruder” w sekcji M-kody, żeby KRL przełączał wyjście ekstrudera na ruchach z E.</div>
       </div>
@@ -155,6 +169,8 @@
       <label class="row check"><input type="checkbox" id="opt_base_literal" data-default="false"><span>Zapisz $BASE literalnie w KRL</span></label>
       <label class="row check"><input type="checkbox" id="opt_tool_literal" data-default="false"><span>Zapisz $TOOL literalnie w KRL</span></label>
       <label class="row"><span>Krok próbkowania [mm]</span><input type="number" id="opt_path_step" data-default="5" value="5" min="0.5" step="1"></label>
+      <label class="row check"><input type="checkbox" id="opt_orient_solve" data-default="true" checked><span>Orientacja z osi I J K: dobieraj obrót wokół osi narzędzia (osobliwości, ciągłość)</span></label>
+      <label class="row"><span>Krok obrotu [°] / min |A5| [°] / dod. pochylenie [°]</span><span class="pair3"><input type="number" id="opt_spin_step" data-default="15" value="15" min="1" max="90" step="5"><input type="number" id="opt_singular_deg" data-default="8" value="8" min="0" max="45" step="1"><input type="number" id="opt_max_tilt" data-default="0" value="0" min="0" max="45" step="5"></span></label>
       <label class="row"><span>Próbki IK (maks.)</span><input type="number" id="opt_robot_samples" data-default="20000" value="20000" min="10" step="1000"></label>
       <label class="row"><span>Wymagany prześwit [mm]</span><input type="number" id="opt_margin" data-default="10" value="10" min="0" step="1"></label>
       <label class="row"><span>Promień uchwytu [mm]</span><input type="number" id="opt_tool_radius" data-default="25" value="25" min="1" step="1"></label>
@@ -189,6 +205,8 @@
       <label class="row check"><input type="checkbox" id="opt_halt_tool_change" data-default="true" checked><span>HALT przy M6</span></label>
       <label class="row check"><input type="checkbox" id="opt_extruder" data-default="false"><span>Ekstruder: włączaj na ruchach z E (druk 3D)</span></label>
       <label class="row"><span>Ekstruder $OUT[n] (0 = komentarz)</span><input type="number" id="opt_extruder_out" data-default="0" value="0" min="0" max="4096" step="1"></label>
+      <label class="row check"><input type="checkbox" id="opt_extruder_analog" data-default="false"><span>Ekstruder analogowo ∝ prędkości (ANOUT ON $VEL_ACT)</span></label>
+      <label class="row"><span>$ANOUT[n] / E/s przy 1.0 / opóźnienie [s]</span><span class="pair3"><input type="number" id="opt_extruder_anout" data-default="0" value="0" min="0" max="32" step="1"><input type="number" id="opt_extruder_flow_full" data-default="100" value="100" min="0.1" step="10"><input type="number" id="opt_extruder_delay" data-default="0" value="0" step="0.01"></span></label>
       <label class="row check"><input type="checkbox" id="opt_dwell_ms" data-default="false"><span>G4 P w milisekundach</span></label>
     </details>
   </form>
