@@ -4,24 +4,6 @@
 // (the help lands inside the matched element, e.g. a section header).
 (() => {
   const HELP = {
-    // ---- slicer ----------------------------------------------------------
-    sl_layer_height: ['Wysokość warstwy', 'Odstęp między kolejnymi warstwami. Pierwsza warstwa może być inna (zwykle grubsza, lepsza przyczepność do stołu). Dla ekstruzji robotem typowo 1–3 mm przy dyszy 3–6 mm.'],
-    sl_bead_width: ['Szerokość ścieżki', 'Szerokość jednej wytłoczonej ścieżki (bead). Wyznacza odstęp obrysów i linii wypełnienia oraz ilość materiału E na milimetr ruchu.'],
-    sl_perimeters: ['Obrysy i warstwy pełne', 'Obrysy: liczba pętli konturu na każdej warstwie (zewnętrzna + wewnętrzne). Warstwy dół / góra: ile pierwszych i ostatnich warstw (oraz warstw pod/nad otworami) wypełnić w 100 %.'],
-    sl_infill: ['Wypełnienie', 'Gęstość wypełnienia wnętrza w procentach (0 = pusty). Wzór: linie (naprzemienne kierunki co warstwę), siatka (dwa kierunki w jednej warstwie), koncentryczne (pętle równoległe do obrysu). Kąt: kierunek linii pierwszej warstwy; kolejne warstwy obracają się o 90°.'],
-    sl_speed_outer: ['Prędkości drukowania', 'Posuw w mm/min dla obrysu zewnętrznego (wolniej = ładniejsza powierzchnia), obrysów wewnętrznych i wypełnienia. Trafia do G-code jako F, a dalej do $VEL.CP w KRL.'],
-    sl_speed_first_layer: ['Pierwsza warstwa i przejazdy', 'Pierwsza warstwa: wolniejszy posuw dla lepszej przyczepności. Przejazdy: prędkość ruchów bez ekstruzji (G0) między ścieżkami.'],
-    sl_extrusion_mode: ['Sposób liczenia E', 'Objętościowa: E w mm³ wytłoczonego materiału (szerokość × wysokość × długość) — dla pomp i ekstruderów granulatu. Filament 1,75: E w mm filamentu jak w drukarkach FDM. Bez E: tylko geometria, ekstruder sterowany osobno.'],
-    sl_retract_length: ['Retrakcja i z-hop', 'Retrakcja: cofnięcie materiału (E ujemne) przed przejazdem, żeby nie ciągnąć nitek; 0 = brak. Z-hop: podniesienie narzędzia na czas przejazdu, chroni wydruk przed zahaczeniem dyszą.'],
-    sl_seam: ['Szew', 'Gdzie zaczynać każdą pętlę obrysu. Najbliższy: od punktu najbliższego poprzedniej pozycji (krótsze przejazdy). Wyrównany: zawsze w tym samym miejscu (szew w jednej linii, łatwy do ukrycia). Losowy: rozrzucone starty, szew mniej widoczny.'],
-    sl_skirt_loops: ['Skirt i brim', 'Skirt: luźne pętle wokół modelu na pierwszej warstwie, rozruch ekstrudera (0 = brak). Brim: obwódka przyklejona do modelu o podanej szerokości, poprawia przyczepność małych podstaw.'],
-    sl_layer_mode: ['Tryb warstw', 'Płaskie: klasyczne poziome warstwy, narzędzie pionowo. Stożkowe (RotBot): warstwy na stożku, pozwalają drukować nawisy bez podpór. Konforemne: warstwy kopiują kształt powierzchni dolnej lub górnej modelu (np. druk na krzywej podstawie). Wielokierunkowe: model dzielony na segmenty, każdy drukowany w innym kierunku; wymaga definicji segmentów niżej.'],
-    sl_cone_angle: ['Stożek', 'Kąt między warstwą a poziomem (0 = płasko). Kierunek: na zewnątrz — warstwy opadają od osi (nawisy wiszące na zewnątrz), do środka — wznoszą się od osi (nawisy nad pustką w środku). Robot pochyla narzędzie o ten kąt.'],
-    sl_cone_cx: ['Oś stożka', 'Punkt X, Y w układzie modelu, przez który przechodzi pionowa oś stożka. Puste = środek obrysu modelu.'],
-    sl_hf_cell: ['Pole wysokości', 'Komórka: rozdzielczość siatki, na której próbkowana jest powierzchnia modelu (mniejsza = dokładniej, wolniej). Maks. nachylenie: ogranicza pochylenie warstw, a więc i narzędzia, żeby robot nie wchodził w nieosiągalne orientacje.'],
-    sl_segments: ['Segmenty', 'Jedna definicja na linię. „segment NAZWA dx dy dz” zaczyna segment drukowany w kierunku (dx, dy, dz). Kolejne linie „plane px py pz nx ny nz” to płaszczyzny tnące: do segmentu należy strona wskazana przez normalną (nx, ny, nz). Segmenty drukowane są po kolei.'],
-    sl_tool_axis: ['Oś narzędzia I J K', 'Zapisuje przy każdym punkcie G-code wektor osi narzędzia (I J K). Translator używa go do ustawienia orientacji robota; bez tego ścieżka jest tłumaczona z narzędziem pionowym.'],
-    sl_overhang_max: ['Wskaźnik podpór', 'Największy dopuszczalny nawis ściany względem pionu. Obszary warstwy wiszące nad pustką pod większym kątem są zliczane jako wymagające podpór (podpory nie są generowane — to ostrzeżenie).'],
     // ---- arc fitting ----------------------------------------------------
     opt_tol: ['Tolerancja', 'Największa dopuszczalna odległość między oryginalną łamaną a dopasowanym łukiem lub odcinkiem. Mniejsza = wierniej, ale więcej ruchów KRL. Kafelek „Maks. odchyłka” pokazuje faktyczny wynik.'],
     opt_max_radius: ['Maks. promień', 'Łuki o większym promieniu są zapisywane jako odcinki SLIN — bardzo duże promienie są numerycznie niepewne i nie dają już oszczędności.'],
@@ -109,7 +91,8 @@
   document.addEventListener('scroll', closePop, true);
 
   let n = 0;
-  for (const [key, [title, text]] of Object.entries(HELP)) {
+  const ALL = Object.assign({}, window.SLICER_FORM ? window.SLICER_FORM.help : {}, HELP);
+  for (const [key, [title, text]] of Object.entries(ALL)) {
     let host;
     if (/^[#.]/.test(key)) host = document.querySelector(key);
     else {

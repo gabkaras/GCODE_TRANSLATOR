@@ -104,9 +104,11 @@ def test_conical_slicing_tilts_tool_and_keeps_geometry():
     gcode, st, layers = slice_triangles(tris, p)
     assert st.layer_mode == "conical" and st.max_tilt == pytest.approx(30.0, abs=0.5)
     pts = np.concatenate([q.xyz for L in layers for q in L.paths])
-    assert pts[:, 2].min() >= -1e-6 and pts[:, 2].max() <= 20.0 + 1e-6
-    # outer walls lie inside the box footprint (offset half a bead)
-    assert np.abs(pts[:, 0]).max() <= 19.0 + 1e-6 and np.abs(pts[:, 1]).max() <= 19.0 + 1e-6
+    assert pts[:, 2].min() >= -1e-6 and pts[:, 2].max() <= 20.0 + 0.05  # densified wall points: chord error of the cone map
+    # outer walls lie inside the box footprint (offset half a bead); gap-fill beads stay within the part
+    walls = np.concatenate([q.xyz for L in layers for q in L.paths if q.kind.startswith("WALL")])
+    assert np.abs(walls[:, :2]).max() <= 19.0 + 1e-6
+    assert all(np.abs(q.xyz[:, :2]).max() + q.width / 2.0 <= 20.0 + 0.5 for L in layers for q in L.paths)
     # the G-code carries the tool axis and real Z
     lines = [l for l in gcode.splitlines() if l.startswith("G1 X")]
     assert all(" I" in l and " K" in l and " Z" in l for l in lines)

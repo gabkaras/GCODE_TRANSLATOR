@@ -1,33 +1,44 @@
-"""Layer tool paths: perimeters, solid and sparse infill, skirt/brim, ordering.
+"""Layer tool paths: walls, gap fill, top/bottom skins, bridges, sparse infill,
+support, raft, skirt/brim, overhang slow-down, spiral vase, ordering.
 
-Polygon work uses Shapely. All coordinates in mm.
+Polygon work uses Shapely. All coordinates in mm (slicing space).
 """
 from __future__ import annotations
 
+import dataclasses
 import math
 import random
 from dataclasses import dataclass, field
 
 import numpy as np
-from shapely.geometry import LineString, MultiLineString, MultiPolygon, Point, Polygon
-from shapely.ops import unary_union
+from shapely.geometry import MultiPolygon, Polygon
 from shapely.validation import make_valid
 
+from . import infill as _infill
+from .features import densify, overhang_speeds, split_bridges
 from .params import SliceParams
+from .support import overhang_areas, support_areas
 
 EMPTY = MultiPolygon()
+
+WALL_KINDS = ("WALL-OUTER", "WALL-INNER")
+MODEL_ORDER = (("WALL-INNER", "WALL-OUTER"), ("GAP",), ("BRIDGE",), ("SKIN",), ("FILL",))
 
 
 @dataclass
 class Path:
-    kind: str  # WALL-OUTER | WALL-INNER | SKIN | FILL | SKIRT | BRIM
+    kind: str  # WALL-OUTER | WALL-INNER | GAP | SKIN | BRIDGE | FILL | SUPPORT | SUPPORT-INTERFACE | SKIRT | BRIM | RAFT
     points: np.ndarray  # (k, 2) in slicing space
     closed: bool
     width: float
     speed: float
-    xyz: np.ndarray | None = None  # (k, 3) model-space points (non-planar modes)
+    xyz: np.ndarray | None = None  # (k, 3) model-space points (non-planar modes / spiral vase)
     axes: np.ndarray | None = None  # (k, 3) tool axes (away from the part)
     tf: np.ndarray | None = None  # (k,) real thickness / slicing layer height
+    speeds: np.ndarray | None = None  # (k,) feed of the segment ending at vertex i (overhang slow-down)
+    flow: float = 1.0  # extrusion factor (bridges, combined infill)
+    island: int = 0
+    spiral: bool = False  # spiral-vase ring: Z ramps along the path
 
     @property
     def length(self) -> float:
@@ -47,6 +58,10 @@ class Layer:
     height: float
     region: MultiPolygon
     paths: list[Path] = field(default_factory=list)
+    kind: str = "model"  # model | raft
+    support: MultiPolygon = EMPTY
+    sparse: MultiPolygon = EMPTY  # sparse-infill area (for infill combining)
+    overhang_area: float = 0.0
 
 
 # ------------------------------------------------------------------ polygons
@@ -64,7 +79,6 @@ def loops_to_region(loops: list[np.ndarray], min_feature: float) -> MultiPolygon
         polys.append(p)
     if not polys:
         return EMPTY
-    # even-odd fill: XOR of all loop polygons = inside an odd number of loops
     result = polys[0]
     for q in polys[1:]:
         result = result.symmetric_difference(q)
@@ -103,70 +117,81 @@ def offset(g, d: float) -> MultiPolygon:
     return as_multi(g.buffer(d, join_style="mitre", mitre_limit=2.0))
 
 
-# ------------------------------------------------------------------- infill
-def line_fill(area, spacing: float, angle_deg: float) -> list[np.ndarray]:
-    """Parallel lines at ``angle_deg`` with ``spacing`` clipped to ``area``, zig-zag ordered."""
-    if area is None or area.is_empty or spacing <= 0:
-        return []
-    minx, miny, maxx, maxy = area.bounds
-    cx, cy = (minx + maxx) / 2.0, (miny + maxy) / 2.0
-    diag = math.hypot(maxx - minx, maxy - miny) + spacing
-    a = math.radians(angle_deg)
-    d = np.array([math.cos(a), math.sin(a)])
-    nrm = np.array([-d[1], d[0]])
-    n_lines = int(diag / spacing) + 1
-    lines = []
-    for k in range(-n_lines // 2 - 1, n_lines // 2 + 2):
-        o = np.array([cx, cy]) + nrm * (k * spacing)
-        lines.append(LineString([o - d * diag, o + d * diag]))
-    clipped = area.intersection(MultiLineString(lines))
-    segs = []
-    geoms = list(getattr(clipped, "geoms", [clipped])) if not clipped.is_empty else []
-    for g in geoms:
-        if g.geom_type == "LineString" and g.length > 1e-6:
-            segs.append(np.array(g.coords))
-        elif g.geom_type == "MultiLineString":
-            segs.extend(np.array(x.coords) for x in g.geoms if x.length > 1e-6)
-    if not segs:
-        return []
-    # order: by line index (projection on the normal), alternate direction along d
-    keyed = sorted(segs, key=lambda s: (round(float((s[0] - [cx, cy]) @ nrm) / spacing), float(s[0] @ d)))
+def compensate(region: MultiPolygon, xy: float, hole: float) -> MultiPolygon:
+    """XY size compensation (grow contours by ``xy``) and hole compensation (grow holes by ``hole``)."""
+    if abs(xy) < 1e-9 and abs(hole) < 1e-9:
+        return region
     out = []
-    flip = False
-    last_k = None
-    for s in keyed:
-        k = round(float((s[0] - [cx, cy]) @ nrm) / spacing)
-        if k != last_k:
-            flip = not flip
-            last_k = k
-        out.append(s[::-1] if flip else s)
-    return out
+    for poly in as_multi(region).geoms:
+        ext = Polygon(poly.exterior).buffer(xy, join_style="mitre", mitre_limit=2.0)
+        for ring in poly.interiors:
+            ext = ext.difference(Polygon(ring).buffer(hole, join_style="mitre", mitre_limit=2.0))
+        out.append(ext)
+    g = out[0]
+    for q in out[1:]:
+        g = g.union(q)
+    return as_multi(g)
+
+
+def intersect_all(regs: list) -> MultiPolygon:
+    if not regs:
+        return EMPTY
+    g = regs[0]
+    for r in regs[1:]:
+        g = g.intersection(r)
+        if g.is_empty:
+            return EMPTY
+    return as_multi(g)
+
+
+# ------------------------------------------------------------------- infill
+line_fill = _infill.line_fill  # re-exported for tests / callers
 
 
 def concentric_fill(area, spacing: float) -> list[np.ndarray]:
-    out = []
-    g = area
-    while g is not None and not g.is_empty:
-        out.extend(rings(g))
-        g = offset(g, -spacing)
-    return out
+    return _infill.concentric_fill(area, spacing, rings)
 
 
 # ----------------------------------------------------------------- ordering
+def start_index(points: np.ndarray, from_pt: np.ndarray, seam: str, rng: random.Random) -> int:
+    if seam == "random":
+        return rng.randrange(len(points))
+    if seam == "aligned":
+        return int(np.argmax(points[:, 0] + points[:, 1]))
+    if seam == "rear":
+        return int(np.argmax(points[:, 1] * 1000.0 + points[:, 0]))
+    return int(np.argmin(np.linalg.norm(points - from_pt, axis=1)))
+
+
 def nearest_start(points: np.ndarray, closed: bool, from_pt: np.ndarray, seam: str, rng: random.Random) -> np.ndarray:
     if not closed or len(points) < 3:
         return points
-    if seam == "random":
-        k = rng.randrange(len(points))
-    elif seam == "aligned":
-        k = int(np.argmax(points[:, 0] + points[:, 1]))
-    else:
-        k = int(np.argmin(np.linalg.norm(points - from_pt, axis=1)))
-    return np.roll(points, -k, axis=0)
+    return np.roll(points, -start_index(points, from_pt, seam, rng), axis=0)
+
+
+def _roll_path(p: Path, k: int) -> Path:
+    """Rotate a closed path so that it starts at vertex k (speeds follow)."""
+    if k == 0:
+        return p
+    sp = p.speeds
+    if sp is not None:
+        # speeds[i] belongs to the segment ending at vertex i; after rolling, the segment
+        # ending at the new vertex 0 is the old segment ending at old vertex k
+        sp = np.roll(sp, -k)
+    return dataclasses.replace(p, points=np.roll(p.points, -k, axis=0), speeds=sp)
+
+
+def _reverse_path(p: Path) -> Path:
+    sp = p.speeds
+    if sp is not None:
+        # segment i (ending at vertex i) becomes the segment ending at vertex n-i for the reversed order
+        sp = np.roll(sp[::-1], 1) if p.closed else np.roll(sp[::-1], -1)
+    return dataclasses.replace(p, points=p.points[::-1].copy(), speeds=sp)
 
 
 def order_paths(paths: list[Path], start: np.ndarray, seam: str, rng: random.Random) -> list[Path]:
-    """Greedy nearest-neighbour ordering, respecting the kind priority already in the list order groups."""
+    """Greedy nearest-neighbour ordering; closed loops are rotated to the seam, open
+    lines are reversed when their far end is closer."""
     out = []
     cur = start.copy()
     remaining = list(paths)
@@ -183,125 +208,341 @@ def order_paths(paths: list[Path], start: np.ndarray, seam: str, rng: random.Ran
             if best is None or d < best:
                 best, bi, bflip = d, i, flip
         p = remaining.pop(bi)
-        pts = p.points[::-1] if bflip else p.points
-        pts = nearest_start(pts, p.closed, cur, seam, rng)
-        out.append(Path(p.kind, pts, p.closed, p.width, p.speed))
-        cur = pts[0] if p.closed else pts[-1]
+        if bflip:
+            p = _reverse_path(p)
+        if p.closed and len(p.points) >= 3:
+            p = _roll_path(p, start_index(p.points, cur, seam, rng))
+        out.append(p)
+        cur = p.points[0] if p.closed else p.points[-1]
     return out
 
 
+def order_layer(paths: list[Path], cur: np.ndarray, params: SliceParams, rng: random.Random) -> tuple[list[Path], np.ndarray]:
+    """Adhesion first, then island by island (walls, gap, bridges, skin, fill), then support."""
+    ordered: list[Path] = []
+
+    def block(ps):
+        nonlocal cur
+        if ps:
+            ordered.extend(order_paths(ps, cur, params.seam, rng))
+            last = ordered[-1]
+            cur = last.points[0] if last.closed else last.points[-1]
+
+    block([p for p in paths if p.kind in ("BRIM", "SKIRT")])
+    block([p for p in paths if p.kind == "RAFT"])
+    islands = sorted({p.island for p in paths if p.kind in ("WALL-OUTER", "WALL-INNER", "GAP", "BRIDGE", "SKIN", "FILL")})
+    # visit islands nearest-first
+    rep = {}
+    for isl in islands:
+        pts = np.concatenate([p.points for p in paths if p.island == isl and p.kind in ("WALL-OUTER", "WALL-INNER", "GAP", "BRIDGE", "SKIN", "FILL")])
+        rep[isl] = pts
+    remaining = list(islands)
+    while remaining:
+        isl = min(remaining, key=lambda k: float(np.min(np.linalg.norm(rep[k] - cur, axis=1))))
+        remaining.remove(isl)
+        groups = MODEL_ORDER if params.wall_order != "outer_inner" else (("WALL-OUTER",), ("WALL-INNER",)) + MODEL_ORDER[1:]
+        for kinds in groups:
+            block([p for p in paths if p.island == isl and p.kind in kinds])
+    block([p for p in paths if p.kind == "SUPPORT-INTERFACE"])
+    block([p for p in paths if p.kind == "SUPPORT"])
+    return ordered, cur
+
+
 # ------------------------------------------------------------------- layers
-def build_layers(layer_loops: list[list[np.ndarray]], zs: list[float], params: SliceParams) -> list[Layer]:
-    regions = [loops_to_region(loops, params.min_feature) for loops in layer_loops]
-    layers = []
-    for i, (z, reg) in enumerate(zip(zs, regions)):
-        h = params.first_layer_height if i == 0 else params.layer_height
-        layers.append(Layer(i, z, h, reg))
+def _wall_paths(island, i_model: int, L: Layer, prev_region, params: SliceParams, first_on_plate: bool, isl: int) -> tuple[list[Path], list]:
+    """Perimeter rings of one island. Returns (paths, coverage polygons of the beads)."""
+    w_o, w_i = params.width("WALL-OUTER"), params.width("WALL-INNER")
+    n_walls = 1 if params.spiral_vase and i_model >= params.bottom_layers else params.perimeters
+    paths, cover = [], []
+    for k in range(n_walls):
+        w = w_o if k == 0 else w_i
+        centre = w_o / 2.0 if k == 0 else w_o + (k - 0.5) * w_i
+        ring_region = offset(island, -centre)
+        if ring_region.is_empty:
+            break
+        cover.append(ring_region.buffer(w / 2.0 + 0.01))
+        kind = "WALL-OUTER" if k == 0 else "WALL-INNER"
+        base_speed = params.speed_first_layer if first_on_plate else (params.speed_outer if k == 0 else params.speed_perimeter)
+        for r in rings(ring_region):
+            length = float(np.linalg.norm(np.diff(np.vstack([r, r[:1]]), axis=0), axis=1).sum())
+            speed = base_speed
+            if params.small_perimeter_length > 0 and length < params.small_perimeter_length and not first_on_plate:
+                speed = min(speed, params.small_perimeter_speed)
+            pts = r
+            speeds = None
+            if params.overhang_detect and not first_on_plate:
+                pts = densify(r, True, w)
+                speeds, _ = overhang_speeds(pts, prev_region, w, speed, params.speed_overhang)
+            paths.append(Path(kind, pts, True, w, speed, speeds=speeds, island=isl,
+                              spiral=params.spiral_vase and i_model >= params.bottom_layers))
+    return paths, cover
+
+
+def _gap_paths(island, cover: list, fill_area, params: SliceParams, speed: float, isl: int) -> list[Path]:
+    """Single beads in the space the walls and the infill do not cover (gaps between
+    walls, thin walls, tips)."""
     w = params.bead_width
-    n = len(layers)
+    covered = fill_area.buffer(params.width("FILL") / 2.0) if not fill_area.is_empty else EMPTY
+    for c in cover:
+        covered = covered.union(c)
+    gaps = island.difference(covered) if not covered.is_empty else island
+    min_w = max(params.gap_fill_min_width * w, 0.05)
+    gaps = as_multi(gaps.buffer(-min_w / 2.0).buffer(min_w / 2.0))
+    out = []
+    for g in gaps.geoms:
+        if g.area < 0.5 * w * w:
+            continue
+        est_w = min(w, max(min_w, 2.0 * g.area / max(g.length, 1e-6)))
+        rect = g.minimum_rotated_rectangle
+        rc = np.array(rect.exterior.coords)[:4]
+        e0, e1 = rc[1] - rc[0], rc[2] - rc[1]
+        axis = e0 if np.linalg.norm(e0) >= np.linalg.norm(e1) else e1
+        ang = math.degrees(math.atan2(axis[1], axis[0]))
+        a = math.radians(ang)
+        nrm = np.array([-math.sin(a), math.cos(a)])
+        c = np.array(g.centroid.coords[0])
+        for seg in _infill.line_fill(g, max(est_w, 0.5 * w), ang, shift=float(c @ nrm)):
+            seg = _shorten(seg, est_w / 2.0)
+            if seg is not None:
+                out.append(Path("GAP", seg, False, est_w, speed, island=isl))
+    return out
+
+
+def _shorten(seg: np.ndarray, d: float) -> np.ndarray | None:
+    """Trim ``d`` from both ends of a polyline (so the bead ends inside the area)."""
+    if len(seg) < 2:
+        return None
+    lens = np.linalg.norm(np.diff(seg, axis=0), axis=1)
+    total = float(lens.sum())
+    if total <= 2.0 * d + 1e-6:
+        return None
+    pts = [seg[0]]
+    cum = np.concatenate([[0.0], np.cumsum(lens)])
+    out = []
+    for a, b in ((d, total - d),):
+        ia = int(np.searchsorted(cum, a, side="right") - 1)
+        ib = int(np.searchsorted(cum, b, side="right") - 1)
+        pa = seg[ia] + (seg[ia + 1] - seg[ia]) * ((a - cum[ia]) / max(lens[ia], 1e-9))
+        pb = seg[ib] + (seg[min(ib + 1, len(seg) - 1)] - seg[ib]) * ((b - cum[ib]) / max(lens[min(ib, len(lens) - 1)], 1e-9)) if ib < len(seg) - 1 else seg[-1]
+        out = [pa] + [seg[k] for k in range(ia + 1, ib + 1)] + [pb]
+    return np.array(out)
+
+
+def build_layers(layer_loops: list[list[np.ndarray]], zs: list[float], params: SliceParams,
+                 heights: list[float] | None = None) -> list[Layer]:
+    p = params
+    n = len(zs)
+    if heights is None:
+        heights = [p.first_layer_height if i == 0 else p.layer_height for i in range(n)]
+    regions = [compensate(loops_to_region(loops, p.min_feature), p.xy_compensation, p.hole_compensation) for loops in layer_loops]
+    if p.elephant_foot > 0 and regions and not regions[0].is_empty:
+        regions[0] = offset(regions[0], -p.elephant_foot)
+    # ---- support (planar only)
+    sup_print, sup_iface = ([EMPTY] * n, [EMPTY] * n)
+    if p.support == "normal" and p.planar and not p.spiral_vase:
+        sup_print, sup_iface = support_areas(regions, heights, p)
+    oh = overhang_areas(regions, heights, p.overhang_max, p.bead_width, 0.0)
+    # ---- raft
+    n_raft = max(0, p.raft_layers) if p.planar and not p.spiral_vase else 0
+    raft_heights = [p.first_layer_height if k == 0 else p.layer_height for k in range(n_raft)]
+    raft_h = sum(raft_heights)
+    layers: list[Layer] = []
+    if n_raft:
+        base = regions[0] if not regions[0].is_empty else EMPTY
+        for s in sup_print[:1]:
+            base = as_multi(base.union(s))
+        raft_region = offset(base, p.raft_margin)
+        zr = 0.0
+        for k in range(n_raft):
+            zr += raft_heights[k]
+            layers.append(Layer(k, round(zr, 6), raft_heights[k], raft_region, kind="raft"))
+    for i in range(n):
+        L = Layer(n_raft + i, round(zs[i] + raft_h, 6), heights[i], regions[i], kind="model", support=sup_print[i])
+        L.overhang_area = float(oh[i].area) if not oh[i].is_empty else 0.0
+        layers.append(L)
+    model = layers[n_raft:]
     rng = random.Random(1)
     cur = np.array([0.0, 0.0])
-    for i, L in enumerate(layers):
-        if L.region.is_empty:
-            continue
+    w = p.bead_width
+    w_f, w_s = p.width("FILL"), p.width("SKIN")
+    # ---- raft paths
+    for k in range(n_raft):
+        L = layers[k]
+        paths = []
+        if k == 0:
+            paths += _adhesion(L.region, p, w)
+        if k == 0:
+            segs, spacing = _infill.line_fill(L.region, 2.5 * w, 0.0), 2.5 * w
+        elif k == n_raft - 1:
+            segs = _infill.line_fill(L.region, w, 90.0 if k % 2 else 0.0)
+        else:
+            segs = _infill.line_fill(L.region, 1.5 * w, 90.0 if k % 2 else 0.0)
+        for s in segs:
+            paths.append(Path("RAFT", s, False, w, p.speed_first_layer if k == 0 else p.speed_infill, flow=1.0))
+        L.paths, cur = order_layer(paths, cur, p, rng)
+    # ---- model layers
+    for i, L in enumerate(model):
         paths: list[Path] = []
         first = i == 0
-        # ---- skirt / brim on the first layer
-        if first and params.brim_width > 0:
-            k = 0
-            while (k + 0.5) * w <= params.brim_width:
-                for r in rings(offset(L.region, (k + 0.5) * w)):
-                    paths.append(Path("BRIM", r, True, w, params.speed_first_layer))
-                k += 1
-        if first and params.skirt_loops > 0:
-            for k in range(params.skirt_loops):
-                for r in rings(offset(L.region, params.skirt_distance + (k + 0.5) * w)):
-                    paths.append(Path("SKIRT", r, True, w, params.speed_first_layer))
-        # ---- perimeters, innermost first
-        walls = []
-        inner_region = L.region
-        for k in range(params.perimeters):
-            ring_region = offset(L.region, -(k + 0.5) * w)
-            if ring_region.is_empty:
-                break
-            kind = "WALL-OUTER" if k == 0 else "WALL-INNER"
-            speed = params.speed_first_layer if first else (params.speed_outer if k == 0 else params.speed_perimeter)
-            for r in rings(ring_region):
-                walls.append(Path(kind, r, True, w, speed))
-            inner_region = offset(L.region, -(k + 1) * w)
-        walls.reverse()  # inner walls first, outer wall last
-        paths.extend(walls)
-        # ---- infill area (overlapping the innermost wall a little)
-        fill_area = offset(L.region, -(params.perimeters * w) + params.infill_overlap * w) if params.perimeters > 0 else L.region
-        if fill_area.is_empty:
-            L.paths = order_paths(paths, cur, params.seam, rng)
-            if L.paths:
-                cur = L.paths[-1].points[0] if L.paths[-1].closed else L.paths[-1].points[-1]
+        first_on_plate = first and n_raft == 0
+        prev_region = model[i - 1].region if i > 0 else (layers[n_raft - 1].region if n_raft else None)
+        # what carries this layer for the overhang slow-down: the part below plus support (under the Z gap)
+        carrier = prev_region
+        if i > 0:
+            for j in (i - 1, i - 1 - p.support_z_gap):
+                if 0 <= j < n and not sup_print[j].is_empty:
+                    carrier = as_multi((carrier if carrier is not None else EMPTY).union(sup_print[j]))
+        if first and n_raft == 0:
+            base = L.region
+            if not L.support.is_empty:
+                base = as_multi(base.union(L.support))
+            paths += _adhesion(base, p, w)
+        if L.region.is_empty and L.support.is_empty:
+            L.paths, cur = order_layer(paths, cur, p, rng)
             continue
-        # ---- solid (top/bottom) detection
-        solid = None
-        if (params.bottom_layers and i < params.bottom_layers) or (params.top_layers and i >= n - params.top_layers):
-            solid = fill_area
-        elif params.top_layers or params.bottom_layers:
-            above = [layers[j].region for j in range(i + 1, min(n, i + 1 + params.top_layers))]
-            below = [layers[j].region for j in range(max(0, i - params.bottom_layers), i)]
-            uncovered = EMPTY
-            for group in (above, below):
-                if not group:
-                    continue
-                cover = group[0]
-                for g in group[1:]:
-                    cover = cover.intersection(g)
-                uncovered = uncovered.union(fill_area.difference(cover.buffer(-0.01)))
-            uncovered = as_multi(uncovered.buffer(w).buffer(-w).intersection(fill_area)) if not uncovered.is_empty else EMPTY
-            solid = uncovered if not uncovered.is_empty else None
-        sparse_area = fill_area if solid is None else as_multi(fill_area.difference(solid))
-        speed_fill = params.speed_first_layer if first else params.speed_infill
-        if solid is not None and not solid.is_empty:
-            ang = params.infill_angle + (90.0 if i % 2 else 0.0)
-            for seg in line_fill(solid, w, ang):
-                paths.append(Path("SKIN", seg, False, w, speed_fill))
-        if params.infill_density > 0 and params.infill_pattern != "none" and not sparse_area.is_empty:
-            spacing = w / max(params.infill_density, 1e-3)
-            if params.infill_pattern == "concentric":
-                for r in concentric_fill(sparse_area, spacing):
-                    paths.append(Path("FILL", r, True, w, speed_fill))
-            elif params.infill_pattern == "grid":
-                for seg in line_fill(sparse_area, spacing * 2.0, params.infill_angle) + line_fill(sparse_area, spacing * 2.0, params.infill_angle + 90.0):
-                    paths.append(Path("FILL", seg, False, w, speed_fill))
-            else:
-                ang = params.infill_angle + (90.0 if i % 2 else 0.0)
-                for seg in line_fill(sparse_area, spacing, ang):
-                    paths.append(Path("FILL", seg, False, w, speed_fill))
-        # ---- ordering: walls block, then skin, then fill (nearest neighbour inside each block)
-        ordered: list[Path] = []
-        for kinds in (("BRIM", "SKIRT"), ("WALL-INNER", "WALL-OUTER"), ("SKIN",), ("FILL",)):
-            block = [p for p in paths if p.kind in kinds]
-            if block:
-                ordered.extend(order_paths(block, cur, params.seam, rng))
-                last = ordered[-1]
-                cur = last.points[0] if last.closed else last.points[-1]
-        L.paths = ordered
+        speed_fill = p.speed_first_layer if first_on_plate else p.speed_infill
+        speed_top = p.speed_first_layer if first_on_plate else p.speed_top
+        skin_angle = p.infill_angle + (90.0 if i % 2 else 0.0)
+        spiral_layer = p.spiral_vase and i >= p.bottom_layers
+        sparse_all = EMPTY
+        for isl, island in enumerate(L.region.geoms):
+            island = as_multi(island)
+            walls, cover = _wall_paths(island, i, L, carrier, p, first_on_plate, isl)
+            paths += walls
+            if spiral_layer:
+                continue
+            n_walls = p.perimeters
+            inset = (p.width("WALL-OUTER") + max(0, n_walls - 1) * p.width("WALL-INNER")) if n_walls > 0 else 0.0
+            fill_area = offset(island, -inset + p.infill_overlap * w_f) if n_walls > 0 else island
+            fill_area = as_multi(fill_area.intersection(island)) if not fill_area.is_empty else EMPTY
+            if p.gap_fill and n_walls > 0:
+                paths += _gap_paths(island, cover, fill_area, p, p.speed_first_layer if first_on_plate else p.speed_gap, isl)
+            if fill_area.is_empty:
+                continue
+            # ---- top / bottom solid detection
+            top_solid, bottom_solid = EMPTY, EMPTY
+            if p.bottom_layers and i < p.bottom_layers:
+                bottom_solid = fill_area
+            if p.top_layers and i >= n - p.top_layers:
+                top_solid = fill_area
+            if p.top_layers and top_solid.is_empty:
+                above = intersect_all([model[j].region for j in range(i + 1, min(n, i + 1 + p.top_layers))])
+                unc = fill_area.difference(above.buffer(-0.01)) if not above.is_empty else fill_area
+                top_solid = as_multi(unc.buffer(w).buffer(-w).intersection(fill_area)) if not unc.is_empty else EMPTY
+            if p.bottom_layers and bottom_solid.is_empty and i > 0:
+                below = intersect_all([model[j].region for j in range(max(0, i - p.bottom_layers), i)])
+                unc = fill_area.difference(below.buffer(-0.01)) if not below.is_empty else fill_area
+                bottom_solid = as_multi(unc.buffer(w).buffer(-w).intersection(fill_area)) if not unc.is_empty else EMPTY
+            solid_total = as_multi(top_solid.union(bottom_solid)) if not (top_solid.is_empty and bottom_solid.is_empty) else EMPTY
+            sparse_area = as_multi(fill_area.difference(solid_total)) if not solid_total.is_empty else fill_area
+            # small sparse islands become solid
+            if p.solid_threshold_area > 0 and not sparse_area.is_empty:
+                small = [g for g in sparse_area.geoms if g.area < p.solid_threshold_area]
+                if small:
+                    extra = MultiPolygon(small)
+                    top_solid = as_multi(top_solid.union(extra))
+                    sparse_area = as_multi(sparse_area.difference(extra))
+            # ---- bridges and bottom skins
+            if not bottom_solid.is_empty:
+                bridges, rest = ([], bottom_solid)
+                if p.bridges and i > 0 and prev_region is not None and not prev_region.is_empty:
+                    bridges, rest = split_bridges(bottom_solid, prev_region, w_s)
+                for region, ang in bridges:
+                    for seg in _infill.line_fill(region, w_s, ang):
+                        paths.append(Path("BRIDGE", seg, False, w_s, p.speed_bridge, flow=p.bridge_flow, island=isl))
+                segs, closed = _infill.solid_fill(rest, p.bottom_pattern, w_s, skin_angle, rings)
+                for seg in segs:
+                    speeds = None
+                    pts = seg
+                    if p.overhang_detect and not first_on_plate and carrier is not None:
+                        pts = densify(seg, closed, w_s)
+                        speeds, _ = overhang_speeds(pts, carrier, w_s, speed_top, p.speed_overhang)
+                    paths.append(Path("SKIN", pts, closed, w_s, speed_top, speeds=speeds, island=isl))
+                top_solid = as_multi(top_solid.difference(bottom_solid)) if not top_solid.is_empty else EMPTY
+            if not top_solid.is_empty:
+                segs, closed = _infill.solid_fill(top_solid, p.top_pattern, w_s, skin_angle, rings)
+                for seg in segs:
+                    paths.append(Path("SKIN", seg, closed, w_s, speed_top, island=isl))
+            # ---- sparse infill
+            if p.infill_density > 0 and p.infill_pattern != "none" and not sparse_area.is_empty:
+                sparse_all = as_multi(sparse_all.union(sparse_area))
+                nc = max(1, p.infill_combine)
+                area = sparse_area
+                flow = 1.0
+                if nc > 1:
+                    if (i + 1) % nc != 0 and i != n - 1:
+                        area = EMPTY
+                    else:
+                        back = [model[j].sparse for j in range(max(0, i - nc + 1), i)]
+                        area = intersect_all([sparse_area] + back) if back else sparse_area
+                        flow = float(len(back) + 1)
+                if not area.is_empty:
+                    spacing = w_f / max(p.infill_density, 1e-3)
+                    segs, closed = _infill.sparse_fill(area, p.infill_pattern, spacing, p.infill_angle, i, L.z, rings)
+                    for seg in segs:
+                        paths.append(Path("FILL", seg, closed, w_f, speed_fill, flow=flow, island=isl))
+        L.sparse = sparse_all
+        # ---- support
+        if not L.support.is_empty:
+            iface = sup_iface[i]
+            body = as_multi(L.support.difference(iface)) if not iface.is_empty else L.support
+            sp = p.speed_first_layer if first_on_plate else p.speed_support
+            if not iface.is_empty:
+                for seg in _infill.line_fill(iface, w / max(p.support_interface_density, 0.05), p.support_angle + 90.0):
+                    paths.append(Path("SUPPORT-INTERFACE", seg, False, w, sp))
+            if not body.is_empty:
+                spacing = w / max(p.support_density, 0.02)
+                segs = _infill.line_fill(body, spacing, p.support_angle)
+                if p.support_pattern == "grid":
+                    segs += _infill.line_fill(body, spacing, p.support_angle + 90.0)
+                for seg in segs:
+                    paths.append(Path("SUPPORT", seg, False, w, sp))
+        L.paths, cur = order_layer(paths, cur, p, rng)
+        if spiral_layer:
+            _spiralize(L, cur)
     return layers
 
 
-def support_report(layers: list[Layer], bead_width: float, overhang_max_deg: float) -> dict:
-    """Area (mm^2) of each layer not supported by the layer below within the printable
-    overhang angle, and the number of layers needing support. Computed in slicing
-    space (exact for planar, approximate for deformed layers)."""
-    reach = math.tan(math.radians(overhang_max_deg))
-    total = 0.0
-    n_layers = 0
-    worst = 0.0
-    for i in range(1, len(layers)):
-        cur, prev = layers[i].region, layers[i - 1].region
-        if cur.is_empty:
+def _adhesion(base, p: SliceParams, w: float) -> list[Path]:
+    paths = []
+    if p.brim_width > 0:
+        k = 0
+        while (k + 0.5) * w <= p.brim_width:
+            for r in rings(offset(base, (k + 0.5) * w)):
+                paths.append(Path("BRIM", r, True, w, p.speed_first_layer))
+            k += 1
+    if p.skirt_loops > 0:
+        for k in range(p.skirt_loops):
+            for r in rings(offset(base, p.brim_width + p.skirt_distance + (k + 0.5) * w)):
+                paths.append(Path("SKIRT", r, True, w, p.speed_first_layer))
+    return paths
+
+
+def _spiralize(L: Layer, cur: np.ndarray) -> None:
+    """Turn the outer wall of a spiral-vase layer into an open path whose Z ramps from
+    the previous layer to this one (continuous helix, no layer change seam)."""
+    out = []
+    for path in L.paths:
+        if path.kind != "WALL-OUTER" or not path.closed:
+            out.append(path)
             continue
-        allowed = prev.buffer(reach * layers[i].height + 0.5 * bead_width) if not prev.is_empty else None
-        unsupported = cur if allowed is None else cur.difference(allowed)
-        a = float(unsupported.area)
-        if a > 0.25 * bead_width * bead_width:
-            total += a
-            n_layers += 1
-            worst = max(worst, a)
+        pts = np.vstack([path.points, path.points[:1]])
+        seg = np.linalg.norm(np.diff(pts, axis=0), axis=1)
+        s = np.concatenate([[0.0], np.cumsum(seg)])
+        total = s[-1] if s[-1] > 0 else 1.0
+        z = (L.z - L.height) + L.height * (s / total)
+        sp = None
+        if path.speeds is not None:
+            sp = np.concatenate([path.speeds, path.speeds[:1]])
+        out.append(dataclasses.replace(path, points=pts, closed=False, xyz=np.column_stack([pts, z]), speeds=sp, spiral=True))
+    L.paths = out
+
+
+def support_report(layers: list[Layer], bead_width: float, overhang_max_deg: float) -> dict:
+    """Area (mm^2) of each model layer not supported by the layer below within the
+    printable overhang angle, and the number of such layers (support indicator)."""
+    model = [L for L in layers if L.kind == "model"]
+    total = sum(L.overhang_area for L in model)
+    n_layers = sum(1 for L in model if L.overhang_area > 0.25 * bead_width * bead_width)
+    worst = max([L.overhang_area for L in model], default=0.0)
     return {"support_area": total, "support_layers": n_layers, "worst_layer_area": worst}

@@ -119,6 +119,8 @@ kbd { font-family: var(--mono); border-radius: 3px; }
 /* ---- panels and cards (site .card: panel bg, border, 2px blue top) -------- */
 #options details { border-radius: var(--radius); border-top: 2px solid var(--accent); background: var(--panel2); }
 #slicer { border-radius: var(--radius); border-top: 2px solid var(--accent); background: var(--panel2); }
+.sf-group > summary { font-family: var(--mono); font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--text); }
+.sf-group[open] > summary { color: var(--accent); }
 #options summary { font-family: var(--mono); font-size: 11.5px; letter-spacing: .14em; text-transform: uppercase; font-weight: 600; color: var(--accent); }
 #options summary::before { color: var(--accent); }
 .row > span:first-child { font-size: 12.5px; }

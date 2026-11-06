@@ -232,3 +232,15 @@ button.mini, .file-btn.mini { padding: 4px 9px; font-size: 11px; }
 .fb-head .help { margin-left: 0; }
 .help-pop { position: fixed; z-index: 60; padding: 10px 12px; background: var(--panel); border: 1px solid var(--accent); border-radius: var(--radius); box-shadow: 0 10px 28px rgba(0, 0, 0, .4); font-size: 12px; line-height: 1.45; color: var(--text); }
 .help-pop b { display: block; color: var(--accent); font-family: var(--mono); font-size: 11px; letter-spacing: .1em; text-transform: uppercase; margin-bottom: 5px; }
+
+/* schema-generated slicer form */
+.slicer-form { margin: 6px 0 4px; }
+.sf-group { border: 1px solid var(--line); border-radius: var(--radius-sm); margin-bottom: 6px; background: transparent; }
+.sf-group > summary { cursor: pointer; padding: 6px 10px; font-size: 12px; font-weight: 600; list-style: none; display: flex; align-items: center; color: var(--text); }
+.sf-group > summary::before { content: "▸"; color: var(--muted); margin-right: 7px; transition: .15s; font-size: 11px; }
+.sf-group[open] > summary::before { transform: rotate(90deg); }
+.sf-group > summary::-webkit-details-marker { display: none; }
+.sf-group .row { grid-template-columns: 1fr 118px; padding: 3px 10px; }
+.sf-group .row > span:first-child small { font-size: 10.5px; color: var(--muted); }
+.sf-group .col { padding: 3px 10px 6px; }
+.sf-group .row.check { padding: 4px 10px; }

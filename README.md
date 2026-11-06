@@ -26,7 +26,7 @@ STEP/STL ──slicer──> ścieżka (G-code + I J K) ──parser──> ruch
 pip install -e .          # wymaga Python >= 3.10 i numpy
 pip install -e .[test]    # dodatkowo pytest
 pip install -e .[step]    # import STEP/IGES (OpenCASCADE)
-pytest                    # 106 testów
+pytest                    # 124 testy
 ```
 
 ## GUI
@@ -92,22 +92,63 @@ gcode2krl-slice czesc.step -o czesc.gcode --layer-height 1 --bead-width 2 --peri
 gcode2krl czesc.gcode -o out/ --extruder-out 7 --robot KR90R2700PRO --base-frame 1400 0 500 0 0 0
 ```
 
-Co robi:
+Co robi (zestaw funkcji wzorowany na PrusaSlicer / OrcaSlicer / Cura; każdy
+parametr jest w GUI, w sekcji *Slicer*, z przyciskiem „?”):
+
+![slicer: podpory i pomoc](docs/gui_slicer_pro.png)
 
 * **cięcie siatki** (STL/OBJ/STEP/IGES) płaszczyznami warstw na zamknięte
-  kontury; segmenty łączone z tolerancją, więc drobne szczeliny w siatce nie
-  psują konturu, a otwarte łańcuchy są raportowane,
-* **wielokąty warstwy** z zagnieżdżeniem parzystym (otwory), usuwanie cech
-  cieńszych niż `min_feature`,
-* **obrysy** (`perimeters`, od wewnątrz na zewnątrz), **wypełnienie**: linie
-  (kąt zmienny co warstwę), siatka, koncentryczne; **warstwy pełne** górne i
-  dolne wykrywane z pokrycia przez sąsiednie warstwy; nakładka wypełnienia na
-  obrys,
-* **kolejność** najbliższego sąsiada w blokach obrysy → skin → wypełnienie,
-  szew najbliższy / wyrównany / losowy, skirt i brim,
-* **G-code** z `;LAYER`, `;TYPE`, G0 na przejazdach, E bezwzględne (objętościowe
-  w mm³, filament 1,75 mm albo bez E), retrakcja i z-hop opcjonalne, szacunek
-  czasu.
+  kontury; segmenty łączone z tolerancją, otwarte łańcuchy raportowane;
+  **warstwy adaptacyjne** (wysokość z nachylenia powierzchni, reguła schodka
+  jak w PrusaSlicer, zakres min–maks),
+* **wielokąty warstwy** z zagnieżdżeniem parzystym (otwory), **kompensacja XY
+  i otworów**, **stopa słonia** na pierwszej warstwie, usuwanie cech cieńszych
+  niż `min_feature`,
+* **ściany**: liczba obrysów, osobne szerokości obrysu zewnętrznego /
+  wewnętrznych / wypełnienia / warstw pełnych, kolejność wewnętrzne→zewnętrzny
+  lub odwrotnie, szew najbliższy / wyrównany / z tyłu / losowy, wolniejsze małe
+  obrysy, **gap fill** (szczeliny między obrysami i cienkie ściany pojedynczą,
+  zwężoną ścieżką), **tryb spiralny** (wazon: jedna helisa bez szwu),
+* **wypełnienie**: linie, zygzak (połączone), siatka, trójkąty, sześcienne
+  (przesuwane z Z), gyroid (przybliżenie falami), plaster miodu, koncentryczne;
+  zakładka na obrys, łączenie wypełnienia co N warstw (N× wydatek), małe
+  obszary jako pełne; linie zakotwiczone w układzie świata, więc warstwy się
+  nakładają,
+* **góra / dół**: liczba warstw pełnych, wykrywanie z pokrycia przez sąsiednie
+  warstwy, wzory linie / zygzak / monotoniczny / koncentryczne,
+* **mosty**: obszar nad pustką zakotwiczony z obu stron dostaje proste linie w
+  kierunku kotwic, własną prędkość i wydatek,
+* **nawisy**: każdy odcinek obrysu i skinu ma stopień „nad pustką” z odległości
+  od warstwy niżej (plus podpory); prędkość interpolowana do prędkości nawisów;
+  wskaźnik powierzchni wymagającej podpór,
+* **podpory**: kolumny pod nawisami propagowane do stołu lub modelu, przerwa Z
+  (warstwy) i XY (mm), warstwy łącznikowe o większej gęstości, wzór linie /
+  siatka o stałym kierunku, minimalny obszar wysepki,
+* **przyczepność**: skirt, brim, **raft** (podstawa rzadka, warstwy pośrednie,
+  górna pełna, model przesunięty w górę),
+* **ekstruzja**: E objętościowe / filament / bez E, mnożnik, wydatek pierwszej
+  warstwy, **limit objętościowy** mm³/s (obcina posuw), gęstość materiału →
+  szacunek masy; **retrakcja** z prędkością, dodatkowym podaniem, minimalnym
+  przejazdem, przy zmianie warstwy, **z-hop**, **wipe** (cofanie po ścieżce
+  przy retrakcji), **coasting** (koniec obrysu bez ekstruzji),
+* **prędkości** per funkcja (obrys zewn./wewn., wypełnienie, góra/dół, mosty,
+  nawisy, szczeliny, podpory, małe obrysy, pierwsza warstwa, przejazdy),
+  **minimalny czas warstwy** z dolną granicą prędkości,
+* **kolejność**: skirt/brim → raft → wyspa po wyspie (obrysy → gap → mosty →
+  skin → wypełnienie) → podpory, najbliższy sąsiad w każdym bloku,
+* **G-code** z `;LAYER_COUNT`, `;LAYER`, `;Z`, `;HEIGHT`, `;TYPE` (WALL-OUTER,
+  WALL-INNER, GAP, SKIN, BRIDGE, FILL, SUPPORT, SUPPORT-INTERFACE, RAFT, SKIRT,
+  BRIM), zmiany F wewnątrz ścieżki, G0 na przejazdach, E bezwzględne, G-code
+  startowy / końcowy; statystyki: długości i czasy per typ, materiał (cm³, g),
+  mosty, długość nawisów, objętość podpór, spowolnione warstwy.
+
+Czego nie ma: Arachne (zmienna szerokość ścian wyliczana z osi medialnej —
+cienkie ściany są obsługiwane przez gap fill o stałej szerokości), podpór
+drzewiastych, omijania obrysów przy przejazdach, prasowania (ironing),
+wygładzania wydatku (pressure advance jest po stronie sterownika ekstrudera).
+Podpory, raft, spirala i warstwy adaptacyjne działają tylko dla warstw
+płaskich; tryby stożkowe i konforemne mają nawisy, gap fill, mosty i wszystkie
+pozostałe funkcje liczone w przestrzeni warstw.
 
 ### Druk 6-osiowy: tryby warstw i orientacja narzędzia
 
@@ -528,11 +569,14 @@ gcode2krl/
   collision.py      kapsuły, przeszkody, dokładne odległości, sprawdzanie ciągłe, raport kolizji
   robots/           definicje robotów (JSON ze źródłami), siatki STL, LICENSE i NOTICE (Apache-2.0)
   cli.py            interfejs wiersza poleceń (gcode2krl)
-  slicer/           slicer MIT: mesh_slice (kontury), toolpath (obrysy, wypełnienie), gcode_writer, cli (gcode2krl-slice)
+  slicer/           slicer MIT: mesh_slice (kontury), adaptive (warstwy adaptacyjne), toolpath (ściany, gap fill, skin,
+                    wypełnienie, raft, kolejność), infill (wzory), features (nawisy, mosty), support (podpory),
+                    deform (tryby stożkowe/konforemne), decompose (segmenty), gcode_writer, cli (gcode2krl-slice)
   stepio.py         tesselacja STEP/IGES (OpenCASCADE przez OCP lub gmsh)
   meshstore.py      magazyn wgranych modeli (STL/OBJ/STEP)
   server.py         lokalny serwer HTTP + API JSON (gcode2krl-gui)
-  web/              GUI: index.html, app.js, viewer.js (WebGL), robot.js (model robota), style.css
+  web/              GUI: index.html, app.js, slicer_form.js (formularz slicera ze schematu), help.js (pomoc „?”),
+                    viewer.js (WebGL), robot.js (model robota), style.css, brand.css
 examples/           fillet_rect.nc, circle_g1.nc, mixed.nc
 tests/              pytest (rdzeń, parser, writer, CLI, serwer)
 .github/workflows/  CI: pytest na Ubuntu i Windows, Python 3.10 i 3.12

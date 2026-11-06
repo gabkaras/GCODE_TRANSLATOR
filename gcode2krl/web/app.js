@@ -540,24 +540,7 @@
     try { const g = await (await fetch('/api/mesh/' + id + '?units=' + units)).json(); if (!g.error) { robotView.setToolMesh(g); toolMeshLoaded = key; } } catch (e) {}
   }
   // ---- slicer ------------------------------------------------------------
-  const SL_FIELDS = ['layer_height','first_layer_height','bead_width','perimeters','bottom_layers','top_layers','infill_pattern','infill_angle',
-    'speed_outer','speed_perimeter','speed_infill','speed_first_layer','speed_travel','extrusion_mode','retract_length','z_hop','seam','skirt_loops','brim_width',
-    'layer_mode','cone_angle','cone_outward','cone_cx','cone_cy','hf_cell','max_slope','overhang_max'];
-  function sliceParams() {
-    const o = {};
-    for (const k of SL_FIELDS) { const el = $('#sl_' + k); if (el) o[k] = el.value; }
-    o.infill_density = (Number($('#sl_infill').value) || 0) / 100;
-    o.tool_axis = $('#sl_tool_axis').checked;
-    return o;
-  }
-  function updateLayerModeUI() {
-    const m = $('#sl_layer_mode').value;
-    $$('.mode-conical').forEach(el => el.classList.toggle('hidden', m !== 'conical'));
-    $$('.mode-hf').forEach(el => el.classList.toggle('hidden', m !== 'bottom' && m !== 'top'));
-    $$('.mode-multi').forEach(el => el.classList.toggle('hidden', m !== 'multi'));
-  }
-  $('#sl_layer_mode').addEventListener('change', updateLayerModeUI);
-  updateLayerModeUI();
+  function sliceParams() { return window.SLICER_FORM ? window.SLICER_FORM.params() : {}; }
   function refreshSliceMeshes() {
     const sel = $('#slice-mesh'); if (!sel) return;
     const cur = sel.value;
@@ -597,15 +580,25 @@
     try {
       const params = sliceParams();
       const body = { mesh: ref, units: $('#slice-units').value, params };
-      if (params.layer_mode === 'multi') { body.segments = $('#sl_segments').value; params.layer_mode = 'planar'; if (!body.segments.trim()) throw new Error('tryb wielokierunkowy wymaga definicji segmentów'); }
+      if (params.layer_mode === 'multi') { body.segments = window.SLICER_FORM.extras().segments; params.layer_mode = 'planar'; if (!body.segments.trim()) throw new Error('tryb wielokierunkowy wymaga definicji segmentów'); }
       const res = await fetch('/api/slice', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       const d = await res.json();
       if (!res.ok || d.error) throw new Error(d.error || res.statusText);
       const st = d.stats;
       const modeTxt = { planar: 'płaskie', conical: 'stożkowe', bottom: 'konforemne (dół)', top: 'konforemne (góra)', multi: 'wielokierunkowe' }[st.layer_mode] || st.layer_mode;
-      $('#slice-info').textContent = `${st.layers} warstw (${modeTxt}) · ${st.paths} ścieżek · ekstruzja ${(st.extrusion_length / 1000).toFixed(1)} m · przejazdy ${(st.travel_length / 1000).toFixed(1)} m · ok. ${(st.time_s / 60).toFixed(0)} min`
+      const hTxt = st.min_layer_height && st.max_layer_height && Math.abs(st.max_layer_height - st.min_layer_height) > 1e-6 ? ` (${st.min_layer_height.toFixed(2)}–${st.max_layer_height.toFixed(2)} mm)` : '';
+      const bt = st.by_type || {};
+      const feat = [];
+      if (bt['GAP']) feat.push(`gap fill ${(bt['GAP'] / 1000).toFixed(1)} m`);
+      if (st.bridges) feat.push(`${st.bridges} mostów`);
+      if (st.overhang_length > 1) feat.push(`nawisy spowolnione ${(st.overhang_length / 1000).toFixed(1)} m`);
+      if (st.support_volume > 0) feat.push(`podpory ${(st.support_volume / 1000).toFixed(0)} cm³`);
+      if (bt['RAFT']) feat.push('raft');
+      if (st.slowed_layers) feat.push(`${st.slowed_layers} warstw spowolnionych (min. czas)`);
+      $('#slice-info').textContent = `${st.layers} warstw${hTxt} (${modeTxt}) · ${st.paths} ścieżek · ekstruzja ${(st.extrusion_length / 1000).toFixed(1)} m · przejazdy ${(st.travel_length / 1000).toFixed(1)} m · ok. ${(st.time_s / 60).toFixed(0)} min · materiał ${(st.volume_mm3 / 1000).toFixed(0)} cm³ ≈ ${st.mass_g.toFixed(0)} g`
+        + (feat.length ? ' · ' + feat.join(' · ') : '')
         + (st.max_tilt > 0.01 ? ` · maks. pochylenie narzędzia ${st.max_tilt.toFixed(1)}°` : '')
-        + (st.support_layers ? ` · PODPORY: ${st.support_layers} warstw, ${(st.support_area / 100).toFixed(0)} cm²` : ' · bez podpór')
+        + (st.support_layers && !(st.support_volume > 0) ? ` · NAWISY: ${st.support_layers} warstw, ${(st.support_area / 100).toFixed(0)} cm² wymaga podpór` : (st.support_volume > 0 ? '' : ' · bez nawisów'))
         + (st.dropped_chains ? ` · ${st.dropped_chains} otwartych konturów pominięto` : '');
       $('#opt_extruder').checked = true; saveOptions();
       setGcode(d.gcode, (d.name || 'model').replace(/\.[^.]+$/, '') + '.gcode');

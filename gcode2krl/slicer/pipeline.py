@@ -6,6 +6,7 @@ import numpy as np
 from ..meshio import load_mesh
 from .deform import make_deformation
 from .gcode_writer import SliceStats, write_gcode
+from .adaptive import adaptive_heights
 from .mesh_slice import layer_heights, slice_layers
 from .params import SliceParams
 from .toolpath import build_layers, support_report
@@ -43,6 +44,8 @@ def slice_triangles(tris: np.ndarray, params: SliceParams | None = None, source:
     deform = make_deformation(params.layer_mode, tris, angle=params.cone_angle, outward=params.cone_outward,
                               cx=params.cone_cx, cy=params.cone_cy, cell=params.hf_cell, max_slope=params.max_slope)
     if not deform.is_planar:
+        # features that only make sense with flat layers
+        params = SliceParams.from_dict({**params.to_dict(), "spiral_vase": False, "raft_layers": 0, "support": "none", "adaptive_layers": False})
         from ..robot_import import subdivide
         tris = subdivide(tris, max(2.0 * params.bead_width, 4.0))
         v = tris.reshape(-1, 3)
@@ -53,15 +56,21 @@ def slice_triangles(tris: np.ndarray, params: SliceParams | None = None, source:
         tris_s = tris
         z_shift = 0.0
     z_max = float(tris_s[:, :, 2].max())
-    zs = layer_heights(0.0, z_max, params.layer_height, params.first_layer_height)
+    heights = None
+    if params.adaptive_layers and deform.is_planar:
+        h_min = max(0.05, min(params.layer_height_min, params.layer_height_max))
+        h_max = max(h_min, params.layer_height_max)
+        zs, heights = adaptive_heights(tris_s, min(params.first_layer_height, h_max), h_min, h_max, max(0.01, params.adaptive_quality))
+    else:
+        zs = layer_heights(0.0, z_max, params.layer_height, params.first_layer_height)
     if not zs:
         raise ValueError("model is thinner than the first layer")
     loops, dropped = slice_layers(tris_s, zs, tol=max(1e-3, params.bead_width * 0.02))
-    layers = build_layers(loops, zs, params)
+    layers = build_layers(loops, zs, params, heights)
     if not deform.is_planar:
         for L in layers:
             for path in L.paths:
-                p3 = np.column_stack([path.points, np.full(len(path.points), L.z + z_shift)])
+                p3 = np.column_stack([path.points, np.full(len(path.points), L.z + z_shift)]) if path.xyz is None else path.xyz + np.array([0.0, 0.0, z_shift])
                 xyz = deform.inverse(p3)
                 path.xyz = xyz
                 path.axes = deform.normal(xyz)
