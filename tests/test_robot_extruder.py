@@ -51,7 +51,7 @@ def test_translator_events_and_trigger_krl():
     kp = [i for i, l in enumerate(lines) if l == "WAIT SEC 0.14"]
     assert kp and lines[kp[0] - 1] == "$OUT[7] = TRUE"
     assert "$OUT[9] = TRUE" in lines and lines.index("$OUT[9] = FALSE") > max(i for i, l in enumerate(lines) if l.startswith("ENDSPLINE"))
-    assert src.index("; user start") < src.index("PTP $POS_ACT")
+    assert src.index("; user start") < src.index("PTP XHOME")
     # no plain switching: only the prime turns the output on directly, every off is a trigger
     assert src.count("$OUT[7] = TRUE") == 1 and src.count("$OUT[7] = FALSE") == 0
 

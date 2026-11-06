@@ -26,7 +26,7 @@ STEP/STL ──slicer──> ścieżka (G-code + I J K) ──parser──> ruch
 pip install -e .          # wymaga Python >= 3.10 i numpy
 pip install -e .[test]    # dodatkowo pytest
 pip install -e .[step]    # import STEP/IGES (OpenCASCADE)
-pytest                    # 135 testów
+pytest                    # 139 testów
 ```
 
 ## GUI
@@ -42,12 +42,19 @@ gcode2krl-gui --port 9000 --no-browser
 Lokalna aplikacja webowa bez żadnych zależności poza biblioteką standardową
 Pythona i numpy (działa offline, np. na komputerze przy robocie):
 
-* krok 1 (domyślny): upuść model STEP/STL/OBJ na pole w sekcji *Slicer*
-  (albo „Wgraj model…”), ustaw parametry i tryb warstw, „Pokrój i tłumacz na
-  KRL”; każdy parametr ma przycisk „?” z wyjaśnieniem; krok 2: zakładka *Gotowy G-code* przyjmuje
-  plik z innego slicera / CAM (przeciągnij do okna albo wybierz przykład);
-  wynik liczy się automatycznie po każdej zmianie opcji (suwak tolerancji,
-  tryb, orientacja…),
+* **krok 1 – Stanowisko** (pierwsze uruchomienie zaczyna tutaj): model
+  robota, pozycja HOME, narzędzie (TCP X Y Z, montaż dyszy A B C, model
+  STEP), podstawa do druku (położenie `$BASE` w układzie robota, także z 3
+  punktów; wymiary podstawy, grubość materiału), modele stołu i uchwytów;
+  ustawienia zostają w przeglądarce,
+* **krok 2 – Model → ścieżka**: upuść model STEP/STL/OBJ na pole w sekcji
+  *Slicer* (albo „Wgraj model…”), ustaw parametry i tryb warstw, „Pokrój i
+  tłumacz na KRL”; każdy parametr ma przycisk „?” z wyjaśnieniem; zakładka zakładka *Gotowy G-code* przyjmuje
+  *Gotowy G-code* przyjmuje plik z innego slicera / CAM (przeciągnij do okna
+  albo wybierz przykład),
+* **krok 3 – Program KRL**: łuki, program, orientacja i kolizje, prędkości,
+  ekstruder; wynik liczy się automatycznie po każdej zmianie opcji (suwak
+  tolerancji, tryb, orientacja…),
 * kafelki: ruchy wejściowe / KRL, kompresja, maksymalna odchyłka (zielona,
   gdy mieści się w tolerancji), czasy parsera / dopasowania / generowania,
 * **podgląd 3D** na własnym rendererze WebGL: warstwy G-code wejściowy, G0,
@@ -184,6 +191,19 @@ i ekstrudera przemysłowego, a sterowanie materiałem jest natywne dla KRL:
 * G-code pozostaje tylko formatem przekazania i eksportu ścieżki (F w mm/min,
   E objętościowe, I J K osi narzędzia); import G-code z CAM zachowuje obsługę
   wrzeciona, chłodziwa i M-kodów w osobnej, zwiniętej sekcji.
+
+### HOME na początku i końcu
+
+Program zaczyna się od `PTP XHOME` (zmienna HOME z `$CONFIG.DAT`; opcjonalnie
+literalna pozycja osi `PTP {A1 …, A6 …}`) z `BAS (#VEL_PTP, n)` — ten ruch jest
+zarazem dojazdem BCO — i kończy się `PTP XHOME` po wyłączeniu ekstrudera, przed
+własnymi liniami KRL. Oba ruchy PTP są sprawdzane pod kątem kolizji z
+interpolacją w osiach (dokładny midpoint = średnia kątów), wynik jest w pasku
+robota („HOME→start OK / koniec→HOME OK”) i w ostrzeżeniach. Opcje w kroku 1
+GUI i w CLI: `--no-home-start`, `--no-home-end`, `--home-mode axes
+--home-axes "0 -90 90 0 0 0"`, `--home-vel 50`.
+
+![krok 1: stanowisko](docs/gui_step1.png)
 
 ### Orientacja narzędzia: dysza poza osią A6, obrót wokół dyszy, pochylenie
 

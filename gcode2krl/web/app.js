@@ -47,6 +47,7 @@
   // ----------------------------------------------------------------- options
   const OPTION_IDS = ['extruder','extruder_out','extruder_analog','extruder_anout','extruder_flow_full','extruder_delay',
     'extruder_trigger','extruder_on_delay','extruder_off_delay','extruder_reverse_out','krl_start','krl_end',
+    'home_start','home_end','home_mode','home_axes','home_vel',
     'orient_solve','spin_step','singular_deg','max_tilt','spin_mode','spin_fixed','spin_offset','robot','base_frame','tool_frame','base_literal','tool_literal','robot_samples','path_step','margin',
     'tbl_sx','tbl_sy','tbl_cx','tbl_cy','mat_t','mat_pad','tool_mesh','tool_mesh_units',
     'tool_radius','cutter_len','cutter_radius','obstacles','tol','max_radius','min_radius','min_arc_points','refine_shift','spl_max_segment','corner_angle',
@@ -109,17 +110,40 @@
     state.fitted = false;
     translate();
   }
-  // source of the path: the slicer (step 1) or a ready-made G-code file (step 2)
+  // ---- steps: 1 cell setup (robot, TCP, print bed, HOME) -> 2 model / path -> 3 KRL program
+  let curStep = 1;
+  let curSource = 'slicer';
+  const show = (sel, on) => $$(sel).forEach(el => el.classList.toggle('hidden', !on));
+  function setStep(n, save) {
+    curStep = Math.max(1, Math.min(3, n));
+    $$('.step').forEach(b => b.classList.toggle('active', Number(b.dataset.step) === curStep));
+    show('#cell-setup', curStep === 1);
+    show('.src-tabs', curStep === 2);
+    $('#slicer').classList.toggle('hidden', !(curStep === 2 && curSource === 'slicer'));
+    $('#drop').classList.toggle('hidden', !(curStep === 2 && curSource === 'gcode'));
+    show('#sec-arcs, #sec-krl, #sec-robot, #sec-speeds, #sec-extruder, #sec-cam', curStep === 3);
+    show('.actions', curStep >= 2);
+    $('#btn-step-prev').classList.toggle('hidden', curStep === 1);
+    $('#btn-step-next').classList.toggle('hidden', curStep === 3);
+    $('#btn-step-next').textContent = curStep === 1 ? 'Dalej: model → ścieżka →' : 'Dalej: program KRL →';
+    if (save) { try { localStorage.setItem('gcode2krl.step', String(curStep)); } catch (e) {} }
+  }
+  // source of the path inside step 2: the slicer or a ready-made G-code file
   function setSource(src, save) {
+    curSource = src;
     $$('.src-tab').forEach(b => b.classList.toggle('active', b.dataset.src === src));
-    $('#slicer').classList.toggle('hidden', src !== 'slicer');
-    $('#drop').classList.toggle('hidden', src !== 'gcode');
     if (save) { try { localStorage.setItem('gcode2krl.source', src); } catch (e) {} }
+    setStep(2, save);
   }
   $$('.src-tab').forEach(b => b.addEventListener('click', () => setSource(b.dataset.src, true)));
-  let savedSource = 'slicer';
-  try { savedSource = localStorage.getItem('gcode2krl.source') || 'slicer'; } catch (e) {}
-  setSource(savedSource, false);
+  $$('.step').forEach(b => b.addEventListener('click', () => setStep(Number(b.dataset.step), true)));
+  $('#btn-step-next').addEventListener('click', () => setStep(curStep + 1, true));
+  $('#btn-step-prev').addEventListener('click', () => setStep(curStep - 1, true));
+  try { curSource = localStorage.getItem('gcode2krl.source') || 'slicer'; } catch (e) {}
+  let savedStep = 1;
+  try { savedStep = Number(localStorage.getItem('gcode2krl.step') || '1') || 1; } catch (e) {}
+  setStep(savedStep, false);
+  $$('.src-tab').forEach(b => b.classList.toggle('active', b.dataset.src === curSource));
   function readFile(file) {
     setSource('gcode', true);
     const r = new FileReader();
@@ -702,6 +726,7 @@
     lim.textContent = rep.n_limit ? `${rep.n_limit} próbek poza limitami osi` : 'limity osi OK';
     lim.className = 'rb-item ' + (rep.n_limit ? 'bad' : 'ok');
     $('#robot-axes').innerHTML = rep.joint_min.map((lo, i) => lo === null ? '' : `<span class="${rep.axis_violations[i] ? 'viol' : ''}">A${i+1} <b>${lo.toFixed(0)}…${rep.joint_max[i].toFixed(0)}°</b></span>`).join('')
+      + (rep.home_moves ? ['start', 'end'].map(k => { const h = rep.home_moves[k]; if (!h) return ''; const bad = h.n_collision ? 'viol' : ''; const txt = h.n_collision ? `KOLIZJA ${h.worst ? h.worst.a + '/' + h.worst.b : ''}` : (h.n_margin ? `prześwit ${h.min_clearance.toFixed(0)} mm` : 'OK'); return `<span class="${bad}" title="ruch PTP ${k === 'start' ? 'HOME → start' : 'koniec → HOME'} (interpolacja osi)">${k === 'start' ? 'HOME→start' : 'koniec→HOME'} <b>${txt}</b></span>`; }).join('') : '')
       + (rep.orientation ? `<span title="rozwiązywanie obrotu wokół osi narzędzia">orient. <b>${rep.orientation.points}</b> pkt · ${{ free: 'solver', fixed: 'stały kąt', tangent: 'wzdłuż ścieżki' }[rep.orientation.spin_mode] || 'solver'} · ${rep.orientation.resampled} przestawień${rep.orientation.singular ? ` · <span class="viol">${rep.orientation.singular} osobl.</span>` : ''}${rep.orientation.unreachable ? ` · <span class="viol">${rep.orientation.unreachable} nieosiąg.</span>` : ''}</span>` : (rep.oriented ? '<span>orientacja z G-code</span>' : ''));
     showCollisions(rep.collision, rep);
     // animation data

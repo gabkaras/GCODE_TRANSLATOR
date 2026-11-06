@@ -38,7 +38,12 @@ class KrlOptions:
     coolant_out: int = 0
     spindle_anout: int = 0  # analog output for spindle speed, 0 = none
     spindle_max_rpm: float = 24000.0
-    bco_ptp: bool = True  # emit "PTP $POS_ACT" before the first motion
+    bco_ptp: bool = True  # emit "PTP $POS_ACT" before the first motion (when no HOME move starts the program)
+    home_start: bool = True  # PTP to HOME as the first motion of the program
+    home_end: bool = True  # PTP to HOME after the last motion
+    home_mode: str = "xhome"  # xhome (PTP XHOME from $CONFIG.DAT) | axes (literal E6AXIS from home_axes)
+    home_axes: tuple[float, ...] = (0.0, -90.0, 90.0, 0.0, 0.0, 0.0)  # A1..A6 deg for home_mode "axes"
+    home_vel: float = 100.0  # PTP velocity in % (BAS #VEL_PTP)
     advance: int = 3
     source_name: str = ""
     halt_on_tool_change: bool = True
@@ -121,10 +126,20 @@ class KrlWriter:
             self.emit([f"$VEL.CP = {fvel(v)}"])
             self.global_vel = v
 
+    def home_lines(self, label: str) -> list[str]:
+        if self.o.home_mode == "axes":
+            a = self.o.home_axes
+            target = "{" + ", ".join(f"A{i + 1} {fnum(float(a[i]))}" for i in range(6)) + "}"
+        else:
+            target = "XHOME"
+        return [f"; HOME ({label})", f"BAS (#VEL_PTP, {fnum(self.o.home_vel, 0)})", f"PTP {target}"]
+
     def ensure_bco(self) -> None:
         if not self.first_motion_done:
             self.first_motion_done = True
-            if self.o.bco_ptp:
+            if self.o.home_start:
+                self.emit(self.home_lines("start"), 1)
+            elif self.o.bco_ptp:
                 self.emit(["PTP $POS_ACT  ; BCO run"])
 
     # ------------------------------------------------------------ spline
@@ -340,9 +355,11 @@ class KrlWriter:
             if self.o.extruder_out > 0 and self.out_on:
                 lines.append(f"$OUT[{self.o.extruder_out}] = FALSE")
                 self.out_on = False
+            if self.o.home_end:
+                lines += self.home_lines("end")
             if self.o.krl_end.strip():
                 lines += ["; user end"] + [l.rstrip() for l in self.o.krl_end.splitlines()]
-            self.emit(lines + ["; program end"])
+            self.emit(lines + ["; program end"], 1 if self.o.home_end else 0)
         else:
             self.emit([f"; unknown event {k}"])
 

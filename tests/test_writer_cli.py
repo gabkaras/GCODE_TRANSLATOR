@@ -39,7 +39,7 @@ def test_spline_block_syntax():
     assert "DEF CIRC_T( )" in src and src.rstrip().endswith("END")
     assert "BAS (#INITMOV,0 )" in src
     assert "$TOOL = TOOL_DATA[1]" in src and "$BASE = BASE_DATA[1]" in src
-    assert "PTP $POS_ACT" in src
+    assert "PTP XHOME" in src  # HOME move is the BCO run by default
     # plunge (own block, corner) + the two half circles in one block
     assert src.count("SPLINE WITH $VEL.CP = 0.0083, $ACC.CP = 2.00") == 2
     assert src.count("ENDSPLINE C_SPL") == 2

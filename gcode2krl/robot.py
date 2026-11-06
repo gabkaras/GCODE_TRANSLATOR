@@ -615,6 +615,22 @@ def solve_spins(robot: RobotModel, points: np.ndarray, axes: np.ndarray, base: n
     return abc_out, info
 
 
+def check_joint_move(robot: RobotModel, q_from, q_to, caps: list, obstacles: list, margin: float = 10.0,
+                     n: int = 16, max_refine: int = 6):
+    """Collision report of a PTP (joint-interpolated) move, e.g. HOME -> first path
+    point. The continuous check is exact here: the midpoint of a joint interval is
+    the mean of its ends."""
+    from .collision import check_collisions
+
+    qa = np.asarray(q_from, dtype=float)
+    qb = np.asarray(q_to, dtype=float)
+    t = np.linspace(0.0, 1.0, max(2, n))[:, None]
+    q = qa[None, :] * (1.0 - t) + qb[None, :] * t
+    ok = np.ones(len(q), dtype=bool)
+    return check_collisions(robot, q, ok, caps, obstacles, margin,
+                            refine_fn=lambda i0, i1, a, b: (np.asarray(a) + np.asarray(b)) / 2.0, max_refine=max_refine)
+
+
 def check_path_collisions(robot: RobotModel, points: np.ndarray, abc, base: np.ndarray, tool: np.ndarray,
                           reach: "ReachReport", obstacles: list, margin: float = 10.0, tool_radius: float = 25.0,
                           cutter_len: float = 20.0, cutter_radius: float = 6.0, max_refine: int = 6,

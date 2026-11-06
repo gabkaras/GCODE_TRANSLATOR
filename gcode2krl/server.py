@@ -133,6 +133,11 @@ def build_options(options: dict, filename: str) -> tuple[TranslateOptions, KrlOp
         extruder_on_delay=_opt(options, "extruder_on_delay", 0.0, float),
         extruder_off_delay=_opt(options, "extruder_off_delay", 0.0, float),
         extruder_reverse_out=_opt(options, "extruder_reverse_out", 0, int),
+        home_start=_opt(options, "home_start", True, bool),
+        home_end=_opt(options, "home_end", True, bool),
+        home_mode=str(options.get("home_mode") or "xhome"),
+        home_axes=_home_axes(options),
+        home_vel=_opt(options, "home_vel", 100.0, float),
         krl_start=str(options.get("krl_start") or ""),
         krl_end=str(options.get("krl_end") or ""),
         bco_ptp=_opt(options, "bco", True, bool),
@@ -228,6 +233,18 @@ def robot_mesh_payload(robot) -> dict:
     return payload
 
 
+def _home_axes(options: dict) -> tuple[float, ...]:
+    """HOME joint angles: the option (6 numbers) or the robot model's home."""
+    txt = str(options.get("home_axes") or "").strip()
+    if txt:
+        vals = [float(v) for v in txt.replace(",", " ").split()]
+        if len(vals) == 6:
+            return tuple(vals)
+    key = str(options.get("robot", DEFAULT_ROBOT) or "none").upper()
+    r = ROBOTS.get(key)
+    return tuple(r.home) if r is not None else (0.0, -90.0, 90.0, 0.0, 0.0, 0.0)
+
+
 def robot_report(items, options: dict, abc) -> dict | None:
     """IK along the output path: reach / axis-limit report, collisions and joint trace for animation."""
     key = str(options.get("robot", DEFAULT_ROBOT) or "none").upper()
@@ -291,6 +308,24 @@ def robot_report(items, options: dict, abc) -> dict | None:
                                       cutter_radius=_opt(options, "cutter_radius", 6.0, float),
                                       max_refine=_opt(options, "max_refine", 6, int),
                                       tool_mesh=tool_mesh, tool_mesh_key=tool_mesh_key)
+    # ---- PTP moves HOME -> first point and last point -> HOME (joint interpolation)
+    from .robot import check_joint_move
+    home_q = np.asarray(_home_axes(options), dtype=float)
+    hm = {"home": home_q.tolist(), "start": None, "end": None}
+    if rep.joints is not None and rep.ok_mask is not None and rep.ok_mask.any():
+        idx = np.flatnonzero(rep.ok_mask)
+        for label, on, qi in (("start", _opt(options, "home_start", True, bool), rep.joints[idx[0]]),
+                              ("end", _opt(options, "home_end", True, bool), rep.joints[idx[-1]])):
+            if not on:
+                continue
+            r2 = check_joint_move(robot, home_q, qi, caps, obstacles, margin=margin, max_refine=_opt(options, "max_refine", 6, int)) \
+                if label == "start" else check_joint_move(robot, qi, home_q, caps, obstacles, margin=margin, max_refine=_opt(options, "max_refine", 6, int))
+            worst = None
+            if r2.pairs:
+                wp = min(r2.pairs, key=lambda pr: pr.min_clearance)
+                worst = {"a": wp.a, "b": wp.b, "min_clearance": wp.min_clearance}
+            hm[label] = {"n_collision": r2.n_collision, "n_margin": r2.n_margin, "min_clearance": r2.min_clearance, "worst": worst}
+    d["home_moves"] = hm
     cd = col.to_dict()
     cd["clearance"] = _f32(np.nan_to_num(col.clearance, nan=1e9).ravel())
     cd["worst_pair"] = col.worst_pair
@@ -352,6 +387,12 @@ def run_translation(gcode: str, filename: str, options: dict) -> dict:
                                   f"{worst['min_clearance']:.1f} mm)")
         elif c["n_margin"]:
             stats.warnings.append(f"collision margin {c['margin']:g} mm violated at {c['n_margin']} samples (min clearance {c['min_clearance']:.1f} mm)")
+        for label, name in (("start", "PTP HOME -> start"), ("end", "PTP end -> HOME")):
+            h = (robot.get("home_moves") or {}).get(label)
+            if h and h["n_collision"]:
+                stats.warnings.append(f"{name}: collision ({h['worst']['a']} / {h['worst']['b']}, {h['min_clearance']:.1f} mm)")
+            elif h and h["n_margin"]:
+                stats.warnings.append(f"{name}: below the collision margin (min clearance {h['min_clearance']:.1f} mm)")
         for note in c["notes"]:
             stats.warnings.append(f"robot: {note}")
     ic = stats.input_counts

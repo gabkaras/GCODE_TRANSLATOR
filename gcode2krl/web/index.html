@@ -23,6 +23,12 @@
     </div>
   </header>
 
+  <nav class="steps" role="tablist" aria-label="kroki">
+    <button type="button" class="step active" data-step="1" role="tab"><b>1 · Stanowisko</b><small>robot, TCP, podstawa, HOME</small></button>
+    <button type="button" class="step" data-step="2" role="tab"><b>2 · Model → ścieżka</b><small>slicer lub gotowy G-code</small></button>
+    <button type="button" class="step" data-step="3" role="tab"><b>3 · Program KRL</b><small>łuki, prędkości, ekstruder</small></button>
+  </nav>
+
   <nav class="src-tabs" role="tablist" aria-label="źródło ścieżki">
     <button type="button" class="src-tab active" data-src="slicer" role="tab"><b>1 · Slicer</b><small>model STEP/STL/OBJ → ścieżka</small></button>
     <button type="button" class="src-tab" data-src="gcode" role="tab"><b>2 · Gotowy G-code</b><small>z innego slicera lub CAM</small></button>
@@ -65,9 +71,10 @@
     <button id="btn-reset" class="ghost" title="Przywróć domyślne opcje">domyślne</button>
   </div>
   <div id="status" class="status"></div>
+  <div class="step-nav"><button type="button" id="btn-step-prev" class="ghost mini">← wstecz</button><span class="grow"></span><button type="button" id="btn-step-next" class="primary mini">Dalej →</button></div>
 
   <form id="options" onsubmit="return false">
-    <details open>
+    <details id="sec-arcs" open>
       <summary>Dopasowanie łuków</summary>
       <label class="row"><span>Tolerancja [mm]</span>
         <span class="pair"><input type="range" id="opt_tol_range" min="0.005" max="0.5" step="0.005" value="0.05">
@@ -82,7 +89,7 @@
       <label class="row check"><input type="checkbox" id="opt_use_spl" data-default="true" checked><span>Mikrosegmenty jako SPL</span></label>
     </details>
 
-    <details open>
+    <details id="sec-krl" open>
       <summary>Program KRL</summary>
       <label class="row"><span>Tryb</span>
         <select id="opt_mode" data-default="spline"><option value="spline">SPLINE (SLIN/SCIRC/SPL)</option><option value="lin">LIN / CIRC + C_DIS</option></select></label>
@@ -96,8 +103,36 @@
       <label class="col"><span>Własne linie KRL na końcu <small>(przed END)</small></span><textarea id="opt_krl_end" data-default="" rows="2" spellcheck="false" placeholder="; np. $OUT[10] = FALSE"></textarea></label>
     </details>
 
+    <details id="sec-robot" open>
+      <summary>Robot: orientacja, zasięg, kolizje</summary>
+      <label class="row check"><input type="checkbox" id="opt_base_literal" data-default="false"><span>Zapisz $BASE literalnie w KRL</span></label>
+      <label class="row check"><input type="checkbox" id="opt_tool_literal" data-default="false"><span>Zapisz $TOOL literalnie w KRL</span></label>
+      <label class="row"><span>Krok próbkowania [mm]</span><input type="number" id="opt_path_step" data-default="5" value="5" min="0.5" step="1"></label>
+      <label class="row check"><input type="checkbox" id="opt_orient_solve" data-default="true" checked><span>Orientacja z osi I J K: dobieraj obrót wokół osi narzędzia (osobliwości, ciągłość)</span></label>
+      <label class="row"><span>Obrót wokół osi dyszy</span><select id="opt_spin_mode" data-default="free"><option value="free">solver (dowolny)</option><option value="fixed">stały kąt</option><option value="tangent">X narzędzia wzdłuż ścieżki</option></select></label>
+      <label class="row"><span>Stały kąt [°] / przesunięcie wzdłuż ścieżki [°]</span><span class="pair2"><input type="number" id="opt_spin_fixed" data-default="0" value="0" step="15"><input type="number" id="opt_spin_offset" data-default="0" value="0" step="15"></span></label>
+      <label class="row"><span>Krok obrotu [°] / min |A5| [°] / dod. pochylenie [°]</span><span class="pair3"><input type="number" id="opt_spin_step" data-default="15" value="15" min="1" max="90" step="5"><input type="number" id="opt_singular_deg" data-default="8" value="8" min="0" max="45" step="1"><input type="number" id="opt_max_tilt" data-default="0" value="0" min="0" max="45" step="5"></span></label>
+      <label class="row"><span>Próbki IK (maks.)</span><input type="number" id="opt_robot_samples" data-default="20000" value="20000" min="10" step="1000"></label>
+      <label class="row"><span>Wymagany prześwit [mm]</span><input type="number" id="opt_margin" data-default="10" value="10" min="0" step="1"></label>
+      <label class="row"><span>Promień uchwytu [mm]</span><input type="number" id="opt_tool_radius" data-default="25" value="25" min="1" step="1"></label>
+      <label class="row"><span>Ostrze: długość / promień</span><span class="pair2"><input type="number" id="opt_cutter_len" data-default="20" value="20" min="0" step="1"><input type="number" id="opt_cutter_radius" data-default="6" value="6" min="0.5" step="0.5"></span></label>
+      <label class="col"><span>Przeszkody <small>(jedna na linię, <code>#</code> komentarz)</small></span>
+        <textarea id="opt_obstacles" rows="7" spellcheck="false" data-default=""></textarea></label>
+      <div id="robot-sources" class="row-note muted sources"></div>
+      <div class="row-note muted">Geometria i siatki z URDF/CAD, dane osi z kart katalogowych (pole „źródła” powyżej). Kapsuły kolizyjne obejmują wszystkie wierzchołki siatek. Ostrze może wchodzić w przeszkody oznaczone <code>workpiece</code>, uchwyt nie.</div>
+    </details>
+
     <details open id="cell-setup">
-      <summary>Stanowisko: TCP, baza, stół</summary>
+      <summary>Stanowisko: robot, narzędzie (TCP), podstawa do druku</summary>
+      <div class="frame-block">
+        <div class="fb-head"><span>Robot i pozycja HOME</span></div>
+      <label class="row"><span>Model</span><select id="opt_robot" data-default="KR90R2700PRO"><option value="none">brak</option></select></label>
+      <label class="row check"><input type="checkbox" id="opt_home_start" data-default="true" checked><span>PTP HOME na początku (pierwszy ruch, zarazem BCO)</span></label>
+      <label class="row check"><input type="checkbox" id="opt_home_end" data-default="true" checked><span>PTP HOME na końcu (po wyłączeniu ekstrudera)</span></label>
+      <label class="row"><span>HOME jako</span><select id="opt_home_mode" data-default="xhome"><option value="xhome">XHOME z $CONFIG.DAT</option><option value="axes">pozycja osi A1…A6</option></select></label>
+      <label class="row"><span>Osie HOME A1…A6 [°] <small>(puste = z modelu robota)</small></span><input type="text" id="opt_home_axes" data-default="" value="" placeholder="0 -90 90 0 0 0"></label>
+      <label class="row"><span>Prędkość PTP HOME [%]</span><input type="number" id="opt_home_vel" data-default="100" value="100" min="1" max="100" step="5"></label>
+      </div>
       <div class="frame-block">
         <div class="fb-head"><span>TCP · $TOOL w układzie kołnierza</span>
           <select id="tool-presets" title="zapisane narzędzia"><option value="">narzędzia…</option></select>
@@ -122,7 +157,7 @@
         <div class="row-note muted">Z = długość narzędzia od kołnierza wzdłuż jego osi; A B C obracają układ TCP (ZYX jak w KSS). Model narzędzia podaj w układzie kołnierza; część w zasięgu „długości ostrza” od TCP jest traktowana jako ostrze.</div>
       </div>
       <div class="frame-block">
-        <div class="fb-head"><span>Baza · $BASE w układzie robota</span>
+        <div class="fb-head"><span>Podstawa do druku · $BASE w układzie robota</span>
           <button type="button" id="base-3p-toggle" class="mini">3 punkty</button>
         </div>
         <div class="frame-grid" data-prefix="bf">
@@ -142,11 +177,11 @@
         <div class="fb-row"><button type="button" id="base-center" class="mini" title="przesuń bazę tak, aby środek ścieżki był w podanej odległości przed robotem">detal przed robotem</button><input type="number" id="base-dist" value="1400" step="50" title="odległość środka detalu od osi A1 [mm]"><span class="muted">mm od osi A1</span></div>
       </div>
       <div class="frame-block">
-        <div class="fb-head"><span>Stół roboczy i materiał</span>
+        <div class="fb-head"><span>Wymiary podstawy i materiał</span>
           <label class="auto"><input type="checkbox" id="auto-table" data-default="true" checked> automatycznie</label>
         </div>
-        <div class="row"><span>Blat (dł. × szer.) [mm]</span><span class="pair2"><input type="number" id="tbl_sx" data-default="800" value="800" step="50"><input type="number" id="tbl_sy" data-default="800" value="800" step="50"></span></div>
-        <div class="row"><span>Środek blatu w bazie X, Y<br><small>puste = środek ścieżki</small></span><span class="pair2"><input type="number" id="tbl_cx" data-default="" value="" step="10" placeholder="auto"><input type="number" id="tbl_cy" data-default="" value="" step="10" placeholder="auto"></span></div>
+        <div class="row"><span>Podstawa (dł. × szer.) [mm]</span><span class="pair2"><input type="number" id="tbl_sx" data-default="800" value="800" step="50"><input type="number" id="tbl_sy" data-default="800" value="800" step="50"></span></div>
+        <div class="row"><span>Środek podstawy w bazie X, Y<br><small>puste = środek ścieżki</small></span><span class="pair2"><input type="number" id="tbl_cx" data-default="" value="" step="10" placeholder="auto"><input type="number" id="tbl_cy" data-default="" value="" step="10" placeholder="auto"></span></div>
         <div class="row"><span>Materiał: grubość, zapas [mm]</span><span class="pair2"><input type="number" id="mat_t" data-default="20" value="20" step="1"><input type="number" id="mat_pad" data-default="20" value="20" step="5"></span></div>
         <div class="fb-head" style="margin-top:8px"><span>Modele stołu i uchwytów</span>
           <label class="file-btn mini">wgraj STEP/STL/OBJ<input type="file" id="obstacle-mesh-file" accept=".stl,.obj,.step,.stp,.iges,.igs" multiple hidden></label>
@@ -160,27 +195,8 @@
       </div>
     </details>
 
-    <details open>
-      <summary>Robot</summary>
-      <label class="row"><span>Model</span><select id="opt_robot" data-default="KR90R2700PRO"><option value="none">brak</option></select></label>
-      <label class="row check"><input type="checkbox" id="opt_base_literal" data-default="false"><span>Zapisz $BASE literalnie w KRL</span></label>
-      <label class="row check"><input type="checkbox" id="opt_tool_literal" data-default="false"><span>Zapisz $TOOL literalnie w KRL</span></label>
-      <label class="row"><span>Krok próbkowania [mm]</span><input type="number" id="opt_path_step" data-default="5" value="5" min="0.5" step="1"></label>
-      <label class="row check"><input type="checkbox" id="opt_orient_solve" data-default="true" checked><span>Orientacja z osi I J K: dobieraj obrót wokół osi narzędzia (osobliwości, ciągłość)</span></label>
-      <label class="row"><span>Obrót wokół osi dyszy</span><select id="opt_spin_mode" data-default="free"><option value="free">solver (dowolny)</option><option value="fixed">stały kąt</option><option value="tangent">X narzędzia wzdłuż ścieżki</option></select></label>
-      <label class="row"><span>Stały kąt [°] / przesunięcie wzdłuż ścieżki [°]</span><span class="pair2"><input type="number" id="opt_spin_fixed" data-default="0" value="0" step="15"><input type="number" id="opt_spin_offset" data-default="0" value="0" step="15"></span></label>
-      <label class="row"><span>Krok obrotu [°] / min |A5| [°] / dod. pochylenie [°]</span><span class="pair3"><input type="number" id="opt_spin_step" data-default="15" value="15" min="1" max="90" step="5"><input type="number" id="opt_singular_deg" data-default="8" value="8" min="0" max="45" step="1"><input type="number" id="opt_max_tilt" data-default="0" value="0" min="0" max="45" step="5"></span></label>
-      <label class="row"><span>Próbki IK (maks.)</span><input type="number" id="opt_robot_samples" data-default="20000" value="20000" min="10" step="1000"></label>
-      <label class="row"><span>Wymagany prześwit [mm]</span><input type="number" id="opt_margin" data-default="10" value="10" min="0" step="1"></label>
-      <label class="row"><span>Promień uchwytu [mm]</span><input type="number" id="opt_tool_radius" data-default="25" value="25" min="1" step="1"></label>
-      <label class="row"><span>Ostrze: długość / promień</span><span class="pair2"><input type="number" id="opt_cutter_len" data-default="20" value="20" min="0" step="1"><input type="number" id="opt_cutter_radius" data-default="6" value="6" min="0.5" step="0.5"></span></label>
-      <label class="col"><span>Przeszkody <small>(jedna na linię, <code>#</code> komentarz)</small></span>
-        <textarea id="opt_obstacles" rows="7" spellcheck="false" data-default=""></textarea></label>
-      <div id="robot-sources" class="row-note muted sources"></div>
-      <div class="row-note muted">Geometria i siatki z URDF/CAD, dane osi z kart katalogowych (pole „źródła” powyżej). Kapsuły kolizyjne obejmują wszystkie wierzchołki siatek. Ostrze może wchodzić w przeszkody oznaczone <code>workpiece</code>, uchwyt nie.</div>
-    </details>
 
-    <details>
+    <details id="sec-speeds">
       <summary>Prędkości i wygładzanie</summary>
       <label class="row"><span>Posuw domyślny [mm/s]</span><input type="number" id="opt_default_feed" data-default="20" value="20" min="0.1" step="5"></label>
       <label class="row"><span>G0: $VEL.CP [m/s]</span><input type="number" id="opt_rapid_vel" data-default="0.5" value="0.5" min="0.01" max="3" step="0.05"></label>
@@ -195,7 +211,7 @@
       <label class="row check"><input type="checkbox" id="opt_bco" data-default="true" checked><span>PTP $POS_ACT na starcie (BCO)</span></label>
     </details>
 
-    <details open>
+    <details id="sec-extruder" open>
       <summary>Ekstruder: wyjścia robota</summary>
       <label class="row check"><input type="checkbox" id="opt_extruder" data-default="false"><span>Steruj ekstruderem z KRL (ruchy z materiałem)</span></label>
       <label class="row"><span>Ekstruder $OUT[n] (0 = komentarz)</span><input type="number" id="opt_extruder_out" data-default="0" value="0" min="0" max="4096" step="1"></label>
@@ -207,7 +223,7 @@
       <div class="row-note muted">Włączenie: <code>TRIGGER WHEN DISTANCE=0</code> na starcie bloku SPLINE, wyłączenie: <code>TRIGGER WHEN PATH=0</code> na jego końcu — robot nie zatrzymuje się na przełączeniu. Cofnięcie ze slicera = impuls na wyjściu rewersu (czas z „mm³/s przy 1.0”), dopuszczenie = <code>WAIT SEC</code> z włączonym ekstruderem.</div>
     </details>
 
-    <details>
+    <details id="sec-cam">
       <summary>Import G-code z CAM: wrzeciono, chłodziwo, M-kody</summary>
       <label class="row"><span>Wrzeciono $OUT[n] (0 = brak)</span><input type="number" id="opt_spindle_out" data-default="0" value="0" min="0" max="4096" step="1"></label>
       <label class="row"><span>Obroty $ANOUT[n] (0 = brak)</span><input type="number" id="opt_spindle_anout" data-default="0" value="0" min="0" max="32" step="1"></label>
@@ -222,9 +238,9 @@
 <main id="main">
   <div id="empty" class="empty">
     <div class="empty-card">
-      <h2>Model → ścieżka → program robota</h2>
-      <p><b>Krok 1:</b> wczytaj model STEP/STL/OBJ i pokrój go pod ekstruder na robocie (ścieżki w mm/s i mm³, warstwy płaskie, stożkowe, konforemne albo wielokierunkowe). <b>Krok 2:</b> ścieżka staje się programem KRL: <b>SLIN</b>/<b>SCIRC</b>/<b>SPL</b> z orientacją narzędzia, ekstruder sterowany wyjściami robota przez <b>TRIGGER</b> i <b>ANOUT</b>, kontrola zasięgu, limitów osi i kolizji, pliki <b>.src/.dat</b> dla KUKA KRC4.</p>
-      <p class="muted">Masz gotowy G-code z innego slicera lub CAM? Wybierz „Gotowy G-code” po lewej, upuść plik gdziekolwiek w oknie albo wybierz przykład.</p>
+      <h2>Stanowisko → model → program robota</h2>
+      <p><b>Krok 1:</b> skonfiguruj stanowisko: model robota, narzędzie (TCP i montaż dyszy), położenie i wymiary podstawy do druku, HOME. <b>Krok 2:</b> wczytaj model STEP/STL/OBJ i pokrój go pod ekstruder na robocie, albo wgraj gotowy G-code. <b>Krok 3:</b> program KRL: <b>SLIN</b>/<b>SCIRC</b>/<b>SPL</b> z orientacją narzędzia, ekstruder przez <b>TRIGGER</b> i <b>ANOUT</b>, kontrola zasięgu i kolizji, pliki <b>.src/.dat</b> dla KUKA KRC4.</p>
+      <p class="muted">Ustawienia stanowiska zapisują się w przeglądarce — następnym razem zaczniesz od kroku 2.</p>
       <ul class="keys"><li><kbd>F</kbd> dopasuj widok</li><li><kbd>T</kbd> z góry</li><li><kbd>I</kbd> izometria</li><li><kbd>Ctrl+⏎</kbd> tłumacz</li></ul>
     </div>
   </div>

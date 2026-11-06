@@ -8,6 +8,7 @@ import sys
 from . import __version__
 from .gcode_parser import parse_gcode
 from .krl_writer import KrlOptions, write_krl
+from .robot import ROBOTS
 from .translator import TranslateOptions, translate
 
 
@@ -61,6 +62,11 @@ def build_parser() -> argparse.ArgumentParser:
     k.add_argument("--extruder-off-delay", type=float, default=0.0, help="delay of the extruder OFF trigger in s")
     k.add_argument("--extruder-reverse-out", type=int, default=0, help="digital output running the extruder backwards for retraction (0 = none)")
     k.add_argument("--no-extruder-trigger", action="store_true", help="switch the extruder output with plain $OUT instead of TRIGGER (advance-run stop)")
+    k.add_argument("--no-home-start", action="store_true", help="do not start the program with PTP HOME")
+    k.add_argument("--no-home-end", action="store_true", help="do not end the program with PTP HOME")
+    k.add_argument("--home-mode", choices=("xhome", "axes"), default="xhome", help="HOME as PTP XHOME ($CONFIG.DAT) or a literal axis position (--home-axes)")
+    k.add_argument("--home-axes", default="", help="A1..A6 in deg for --home-mode axes (default: the robot model's home)")
+    k.add_argument("--home-vel", type=float, default=100.0, help="PTP velocity for the HOME moves in %% (default 100)")
     k.add_argument("--krl-start", default="", help="file with user KRL lines inserted after the settings")
     k.add_argument("--krl-end", default="", help="file with user KRL lines inserted before END")
     k.add_argument("--no-orient-solve", action="store_true", help="keep zero spin for I J K tool axes instead of the singularity-aware solver (needs --robot)")
@@ -109,7 +115,6 @@ def derive_name(path: str) -> str:
 def run(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.robot.lower() == "list":
-        from .robot import ROBOTS
         for r in ROBOTS.values():
             print(f"{r.key:18s} {r.name}  reach {r.reach:g} mm, payload {r.payload:g} kg")
         return 0
@@ -140,6 +145,10 @@ def run(argv: list[str] | None = None) -> int:
                        extruder_anout=args.extruder_anout, extruder_flow_full=args.extruder_flow_full, extruder_delay=args.extruder_delay,
                        extruder_trigger=not args.no_extruder_trigger, extruder_on_delay=args.extruder_on_delay, extruder_off_delay=args.extruder_off_delay,
                        extruder_reverse_out=args.extruder_reverse_out,
+                       home_start=not args.no_home_start, home_end=not args.no_home_end, home_mode=args.home_mode,
+                       home_axes=tuple(float(v) for v in args.home_axes.replace(",", " ").split()) if args.home_axes.strip() else
+                       (tuple(ROBOTS[args.robot.upper()].home) if args.robot and args.robot.upper() in ROBOTS else (0.0, -90.0, 90.0, 0.0, 0.0, 0.0)),
+                       home_vel=args.home_vel,
                        krl_start=open(args.krl_start, encoding="utf-8").read() if args.krl_start else "",
                        krl_end=open(args.krl_end, encoding="utf-8").read() if args.krl_end else "",
                        spindle_max_rpm=args.spindle_max_rpm, bco_ptp=not args.no_bco, advance=args.advance,
@@ -150,7 +159,7 @@ def run(argv: list[str] | None = None) -> int:
     robot_rep = None
     orient_info = None
     if args.robot.lower() != "none":
-        from .robot import ROBOTS, check_path, frame
+        from .robot import check_path, frame
         from .translator import sample_items
         robot = ROBOTS.get(args.robot.upper())
         if robot is None:
