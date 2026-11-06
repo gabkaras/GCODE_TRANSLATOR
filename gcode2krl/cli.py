@@ -67,6 +67,10 @@ def build_parser() -> argparse.ArgumentParser:
     k.add_argument("--spin-step", type=float, default=15.0, help="orientation solver: spin sampling step, deg (default 15)")
     k.add_argument("--singular-deg", type=float, default=8.0, help="orientation solver: keep |A5| above this, deg (default 8)")
     k.add_argument("--max-tilt", type=float, default=0.0, help="orientation solver: allowed extra tilt of the tool axis, deg (default 0)")
+    k.add_argument("--spin-mode", choices=("free", "fixed", "tangent"), default="free",
+                   help="rotation about the nozzle axis: free (solver), fixed (--spin-fixed), tangent (tool X along the path + --spin-offset)")
+    k.add_argument("--spin-fixed", type=float, default=0.0, help="spin in deg for --spin-mode fixed")
+    k.add_argument("--spin-offset", type=float, default=0.0, help="spin offset in deg for --spin-mode tangent")
     k.add_argument("--no-halt-tool-change", action="store_true", help="do not HALT at M6")
     k.add_argument("--dwell-ms", action="store_true", help="interpret G4 P as milliseconds instead of seconds")
     k.add_argument("--start", type=float, nargs=3, default=(0.0, 0.0, 0.0), metavar=("X", "Y", "Z"),
@@ -156,6 +160,7 @@ def run(argv: list[str] | None = None) -> int:
         tool_t = frame(args.tool_frame or (0,) * 6)
         if has_orientation(items) and not args.no_orient_solve:
             orient_info = resolve_orientations(items, robot, base_t, tool_t, ref=kopts.abc, spin_step=args.spin_step,
+                                               spin_mode=args.spin_mode, spin_fixed=args.spin_fixed, spin_offset=args.spin_offset,
                                                singular_deg=args.singular_deg, max_tilt_deg=args.max_tilt)
         if has_orientation(items):
             pts, abc_used = sample_items(items, max_samples=args.robot_samples, step=args.path_step if args.path_step > 0 else None,

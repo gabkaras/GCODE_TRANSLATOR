@@ -26,7 +26,7 @@ STEP/STL ──slicer──> ścieżka (G-code + I J K) ──parser──> ruch
 pip install -e .          # wymaga Python >= 3.10 i numpy
 pip install -e .[test]    # dodatkowo pytest
 pip install -e .[step]    # import STEP/IGES (OpenCASCADE)
-pytest                    # 129 testów
+pytest                    # 135 testów
 ```
 
 ## GUI
@@ -184,6 +184,31 @@ i ekstrudera przemysłowego, a sterowanie materiałem jest natywne dla KRL:
 * G-code pozostaje tylko formatem przekazania i eksportu ścieżki (F w mm/min,
   E objętościowe, I J K osi narzędzia); import G-code z CAM zachowuje obsługę
   wrzeciona, chłodziwa i M-kodów w osobnej, zwiniętej sekcji.
+
+### Orientacja narzędzia: dysza poza osią A6, obrót wokół dyszy, pochylenie
+
+![montaż dyszy pod kątem](docs/gui_tool_mount.png)
+
+* **Montaż dyszy pod kątem.** Ramka `$TOOL` ma pełne A B C: oś dyszy (Z
+  narzędzia) nie musi leżeć w osi A6. Presety w sekcji *Stanowisko* („w osi
+  A6”, 45°, 90°, 90° X) ustawiają orientację, X Y Z końcówki wpisuje się
+  obok. Kinematyka odwrotna, zasięg, limity i solver obrotu liczą z pełnej
+  ramki; kapsuły kolizyjne: uchwyt od kołnierza do początku dyszy, dysza
+  (ostrze) wzdłuż własnej osi; podgląd 3D rysuje uchwyt i dyszę pod kątem.
+* **Obrót wokół osi dyszy** (`--spin-mode`, GUI *Robot*): `free` — solver
+  dobiera obrót pod osobliwości i ciągłość osi; `fixed` — stały kąt względem
+  orientacji odniesienia (przewody zawsze z tyłu), solver odstępuje tylko
+  przy braku zasięgu lub osobliwości; `tangent` — oś X narzędzia podąża za
+  kierunkiem ścieżki plus przesunięcie (asymetryczne dysze, podajnik drutu,
+  głowica z kablem; 180° = element ciągnięty). Pasek robota pokazuje tryb.
+* **Pochylenie dyszy w slicerze** (`tilt_lead`, `tilt_side`): oś dyszy
+  pochylona w kierunku ruchu (+ do przodu, − ciągnięta jak palnik WAAM) i w
+  bok; także dla warstw płaskich zapisywana jako I J K, a translator
+  rozwiązuje obrót. W trybach stożkowych i konforemnych pochylenie dodaje się
+  do normalnej warstwy.
+* Uwaga: solver obrotu nie zna kolizji — krótkie narzędzie pod kątem 45°
+  potrafi zbliżyć nadgarstek do stołu; raport kolizji to pokaże, wtedy
+  wydłuż narzędzie, zmień przesunięcie obrotu albo tryb na `free`.
 
 ### Druk 6-osiowy: tryby warstw i orientacja narzędzia
 

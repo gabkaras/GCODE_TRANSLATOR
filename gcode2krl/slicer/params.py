@@ -121,7 +121,9 @@ class SliceParams:
     cone_cy: float | None = None
     hf_cell: float = 5.0  # bottom/top: height-field cell (mm)
     max_slope: float = 45.0  # bottom/top: max layer tilt (deg)
-    tool_axis: bool = True  # non-planar modes: write I J K (tool axis) with every point
+    tool_axis: bool = True  # write I J K (tool axis) with every point when the orientation varies / is tilted
+    tilt_lead: float = 0.0  # deg, nozzle axis tilted towards (+) / against (-) the direction of travel
+    tilt_side: float = 0.0  # deg, nozzle axis tilted to the left (+) / right (-) of the direction of travel
 
     # ---- derived --------------------------------------------------------
     def width(self, feature: str) -> float:

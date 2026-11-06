@@ -473,9 +473,53 @@ def _slerp_rot(ra: np.ndarray, rb: np.ndarray, t: float) -> np.ndarray:
     return ra @ r_t
 
 
+def spin_for_tangent(axis, tangent, ref=(0.0, 180.0, 0.0), offset_deg: float = 0.0) -> float:
+    """Spin (deg) about the tool axis that points the tool X axis along the path
+    tangent (projected onto the plane perpendicular to the axis), plus ``offset_deg``.
+    Used for asymmetric nozzles, wire feeders, cable-fed or bent extruders that must
+    trail / lead the motion."""
+    a = np.asarray(axis, float)
+    n = float(np.linalg.norm(a))
+    if n < 1e-12:
+        return offset_deg
+    a = a / n
+    t = np.asarray(tangent, float)
+    t = t - (t @ a) * a
+    if np.linalg.norm(t) < 1e-9:
+        return offset_deg
+    t /= np.linalg.norm(t)
+    x0 = abc_to_rot(*abc_from_axis(a, 0.0, ref))[:, 0]
+    x0 = x0 - (x0 @ a) * a
+    if np.linalg.norm(x0) < 1e-9:
+        return offset_deg
+    x0 /= np.linalg.norm(x0)
+    kz = -a  # the spin rotates about the tool Z axis (into the part)
+    ang = math.degrees(math.atan2(float(np.cross(x0, t) @ kz), float(x0 @ t)))
+    return (ang + offset_deg) % 360.0
+
+
+def path_tangents(points: np.ndarray) -> np.ndarray:
+    """Unit tangents along a polyline (central differences, one-sided at the ends)."""
+    P = np.asarray(points, float)
+    n = len(P)
+    t = np.zeros((n, 3))
+    if n == 1:
+        t[0] = [1.0, 0, 0]
+        return t
+    t[1:-1] = P[2:] - P[:-2]
+    t[0] = P[1] - P[0]
+    t[-1] = P[-1] - P[-2]
+    ln = np.linalg.norm(t, axis=1)
+    bad = ln < 1e-9
+    t[bad] = [1.0, 0, 0]
+    ln[bad] = 1.0
+    return t / ln[:, None]
+
+
 def solve_spins(robot: RobotModel, points: np.ndarray, axes: np.ndarray, base: np.ndarray, tool: np.ndarray,
                 ref=(0.0, 180.0, 0.0), spin_step: float = 15.0, singular_deg: float = 8.0,
-                max_tilt_deg: float = 0.0, start=None) -> tuple[np.ndarray, dict]:
+                max_tilt_deg: float = 0.0, start=None, spin_mode: str = "free", spin_fixed: float = 0.0,
+                spin_offset: float = 0.0) -> tuple[np.ndarray, dict]:
     """Choose the free rotation about the tool axis (and optionally a small tilt) per
     point so that the robot stays reachable, far from the wrist singularity (|A5| >
     ``singular_deg``) and moves its joints as little as possible between points.
@@ -484,8 +528,22 @@ def solve_spins(robot: RobotModel, points: np.ndarray, axes: np.ndarray, base: n
     IEEE RA-L 2021): per point the previous spin is kept while it is feasible and
     non-singular; otherwise spins (and tilts within ``max_tilt_deg``) are sampled
     and the cheapest feasible one is taken. Returns (abc (N,3), info).
+
+    ``spin_mode``: "free" (solver picks, favouring small changes), "fixed" (keep
+    ``spin_fixed`` degrees, the solver only deviates when the robot cannot reach or
+    is singular) or "tangent" (tool X along the path direction plus ``spin_offset``,
+    for asymmetric / bent / wire-fed tools; same fallback).
     """
     from itertools import product
+
+    tangents = path_tangents(points) if spin_mode == "tangent" else None
+
+    def desired(i: int) -> float | None:
+        if spin_mode == "fixed":
+            return float(spin_fixed) % 360.0
+        if spin_mode == "tangent":
+            return spin_for_tangent(axes[i], tangents[i], ref, spin_offset)
+        return None
 
     n = len(points)
     abc_out = np.zeros((n, 3))
@@ -520,13 +578,17 @@ def solve_spins(robot: RobotModel, points: np.ndarray, axes: np.ndarray, base: n
         if q is None or viol:
             return None, a
         cost = sum(abs(q[k] - prev_q[k]) * (1.0 if k < 3 else 0.5) for k in range(6))
-        dsp = abs((sp - spin + 180.0) % 360.0 - 180.0)
-        cost += 0.3 * dsp + 2.0 * (abs(ta) + abs(tb))  # prefer small spin changes and no extra tilt
+        want = desired(i)
+        dsp = abs((sp - (spin if want is None else want) + 180.0) % 360.0 - 180.0)
+        cost += (0.3 if want is None else 3.0) * dsp + 2.0 * (abs(ta) + abs(tb))  # prefer the wanted spin and no extra tilt
         if abs(q[4]) < singular_deg:
             cost += 1000.0 + (singular_deg - abs(q[4])) * 50.0
         return (cost, q), a
 
     for i in range(n):
+        want = desired(i)
+        if want is not None:
+            spin = want
         res, a = evaluate(i, spin, tilt_a, tilt_b)
         if res is not None and res[0] < 1000.0:
             prev_q = res[1]

@@ -122,17 +122,27 @@
       const tcp = apply(toolMat, [0, 0, 0]);
       const len = Math.hypot(...tcp);
       const wr = (this.model.visual && this.model.visual.wrist) || 150;
-      // tool: thin box from flange to TCP, along the tool vector (built in the flange frame)
+      // tool: holder cylinder from the flange to the nozzle start + a thinner nozzle along the
+      // tool Z axis (the nozzle may be angled to the flange: bent / 45 deg / 90 deg extruders)
+      const zt = [toolMat[8], toolMat[9], toolMat[10]];
+      const nozzle = Math.min(60, Math.max(20, len * 0.3));
+      const segAlong = (a, b, r) => {
+        const d = [b[0]-a[0], b[1]-a[1], b[2]-a[2]]; const L = Math.hypot(...d); if (L < 1e-6) return null;
+        const z = d.map(x => x / L), x0 = Math.abs(z[2]) < 0.9 ? [0,0,1] : [1,0,0];
+        const y = norm(cross(z, x0)), x = cross(y, z);
+        const m = new Float32Array([x[0],x[1],x[2],0, y[0],y[1],y[2],0, z[0],z[1],z[2],0, a[0],a[1],a[2],1]);
+        const g0 = cylinder(r, 2, 0, L, 0, 0, 0, 16);
+        const P = new Float32Array(g0.positions.length), N = new Float32Array(g0.normals.length);
+        for (let i = 0; i < P.length; i += 3) { const p = apply(m, [g0.positions[i], g0.positions[i+1], g0.positions[i+2]]); P[i]=p[0];P[i+1]=p[1];P[i+2]=p[2]; const n = [g0.normals[i], g0.normals[i+1], g0.normals[i+2]]; const nn = [m[0]*n[0]+m[4]*n[1]+m[8]*n[2], m[1]*n[0]+m[5]*n[1]+m[9]*n[2], m[2]*n[0]+m[6]*n[1]+m[10]*n[2]]; N[i]=nn[0];N[i+1]=nn[1];N[i+2]=nn[2]; }
+        return { positions: P, normals: N };
+      };
       let geom;
       if (len > 1) {
-        const d = tcp.map(x => x / len);
-        // rotation taking +Z to d
-        const z = d, x0 = Math.abs(z[2]) < 0.9 ? [0,0,1] : [1,0,0];
-        const y = norm(cross(z, x0)), x = cross(y, z);
-        const m = new Float32Array([x[0],x[1],x[2],0, y[0],y[1],y[2],0, z[0],z[1],z[2],0, 0,0,0,1]);
-        const g0 = cylinder(wr*0.18, 2, 0, len, 0, 0, 0, 16);
-        const P = new Float32Array(g0.positions.length), N = new Float32Array(g0.normals.length);
-        for (let i = 0; i < P.length; i += 3) { const p = apply(m, [g0.positions[i], g0.positions[i+1], g0.positions[i+2]]); P[i]=p[0];P[i+1]=p[1];P[i+2]=p[2]; const n = apply(m, [g0.normals[i], g0.normals[i+1], g0.normals[i+2]]); N[i]=n[0];N[i+1]=n[1];N[i+2]=n[2]; }
+        const start = [tcp[0] - zt[0]*nozzle, tcp[1] - zt[1]*nozzle, tcp[2] - zt[2]*nozzle];
+        const parts = [segAlong([0,0,0], start, wr*0.18), segAlong(start, tcp, wr*0.07)].filter(Boolean);
+        const n = parts.reduce((a, g) => a + g.positions.length, 0);
+        const P = new Float32Array(n), N = new Float32Array(n); let o = 0;
+        for (const g of parts) { P.set(g.positions, o); N.set(g.normals, o); o += g.positions.length; }
         geom = { positions: P, normals: N };
       } else geom = cylinder(wr*0.2, 2, 0, 20, 0, 0, 0, 12);
       this.viewer.setMesh('rb_tool', geom, TOOL, I4(), { group: 'robot' });

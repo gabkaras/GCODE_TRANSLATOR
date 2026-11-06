@@ -492,16 +492,19 @@ def sample_items(items: list, arc_points: int = 8, max_samples: int = 3000, step
 
 
 def resolve_orientations(items: list, robot, base: np.ndarray, tool: np.ndarray, ref=(0.0, 180.0, 0.0),
-                         spin_step: float = 15.0, singular_deg: float = 8.0, max_tilt_deg: float = 0.0) -> dict:
-    """Replace zero-spin orientations of axis-defined SPL runs by singularity-aware ones."""
+                         spin_step: float = 15.0, singular_deg: float = 8.0, max_tilt_deg: float = 0.0,
+                         spin_mode: str = "free", spin_fixed: float = 0.0, spin_offset: float = 0.0) -> dict:
+    """Replace zero-spin orientations of axis-defined SPL runs by singularity-aware ones
+    (spin strategy: free / fixed / tangent, see robot.solve_spins)."""
     from .robot import solve_spins
 
-    info = {"resampled": 0, "unreachable": 0, "singular": 0, "points": 0}
+    info = {"resampled": 0, "unreachable": 0, "singular": 0, "points": 0, "spin_mode": spin_mode}
     start = None
     for it in items:
         if isinstance(it, SplItem) and it.axes is not None:
             abcs, inf = solve_spins(robot, it.points, it.axes, base, tool, ref=ref, spin_step=spin_step,
-                                    singular_deg=singular_deg, max_tilt_deg=max_tilt_deg, start=start)
+                                    singular_deg=singular_deg, max_tilt_deg=max_tilt_deg, start=start,
+                                    spin_mode=spin_mode, spin_fixed=spin_fixed, spin_offset=spin_offset)
             it.abcs = abcs
             for k in ("resampled", "unreachable", "singular"):
                 info[k] += inf[k]

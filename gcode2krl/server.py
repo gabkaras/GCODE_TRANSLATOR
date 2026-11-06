@@ -246,7 +246,10 @@ def robot_report(items, options: dict, abc) -> dict | None:
         orient_info = resolve_orientations(items, robot, base, tool, ref=tuple(abc),
                                            spin_step=_opt(options, "spin_step", 15.0, float),
                                            singular_deg=_opt(options, "singular_deg", 8.0, float),
-                                           max_tilt_deg=_opt(options, "max_tilt", 0.0, float))
+                                           max_tilt_deg=_opt(options, "max_tilt", 0.0, float),
+                                           spin_mode=str(options.get("spin_mode") or "free"),
+                                           spin_fixed=_opt(options, "spin_fixed", 0.0, float),
+                                           spin_offset=_opt(options, "spin_offset", 0.0, float))
     if has_orientation(items):
         pts, abcs = sample_items(items, max_samples=max_samples, step=step if step > 0 else None, default_abc=abc, with_abc=True)
         abc_used = abcs

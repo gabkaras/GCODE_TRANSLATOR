@@ -272,11 +272,11 @@ def tool_mesh_capsules(tris: np.ndarray, tool: np.ndarray, cutter_len: float, ke
     ``cutter_len`` of the TCP along the tool axis are the cutter and are left out (the parametric
     cutter capsule covers that part and is exempt from workpiece collisions)."""
     tcp = tool[:3, 3]
+    zt = tool[:3, 2]  # nozzle / cutter axis (tool Z, into the part), may be angled to the flange
     length = float(np.linalg.norm(tcp))
     if length > 1e-6 and cutter_len > 0:
-        axis = tcp / length
-        along = tris @ axis  # (N,3) axial coordinate of each vertex
-        keep = (along < length - cutter_len).any(axis=1)
+        depth = (tris - tcp) @ (-zt)  # (N,3) distance back from the tip along the nozzle axis
+        keep = (depth > cutter_len).any(axis=1)
         body = tris[keep]
     else:
         body = tris
@@ -307,19 +307,20 @@ def robot_capsules(robot: RobotModel, tool: np.ndarray, tool_radius: float = 25.
     else:
         caps = procedural_capsules(robot)
     tcp = tool[:3, 3]
+    zt = tool[:3, 2]  # nozzle axis = tool Z (into the part); for a bent / angled tool it differs from flange -> TCP
     length = float(np.linalg.norm(tcp))
+    cut = min(cutter_len, max(length, cutter_len))
+    cutter_start = tcp - zt * cut  # where the nozzle / cutter begins (on its own axis)
     if tool_mesh is not None and len(tool_mesh):
         caps.extend(tool_mesh_capsules(tool_mesh, tool, cutter_len, key=tool_mesh_key))
-        if length > 1e-6:
-            d = tcp / length
-            cut = min(cutter_len, length)
-            caps.append(Capsule("ostrze", FLANGE_LINK, d * (length - cut), tcp, cutter_radius, "cutter"))
+        if length > 1e-6 and cut > 0:
+            caps.append(Capsule("ostrze", FLANGE_LINK, cutter_start, tcp, cutter_radius, "cutter"))
         return caps
     if length > 1e-6:
-        d = tcp / length
-        cut = min(cutter_len, length)
-        cutter_start = d * (length - cut)
-        shank_end = d * max(0.0, length - cut - tool_radius)
+        # holder: from the flange to the nozzle start, shortened by its radius so it does not poke past the nozzle
+        hold = cutter_start
+        hl = float(np.linalg.norm(hold))
+        shank_end = hold * max(0.0, hl - tool_radius) / hl if hl > 1e-9 else np.zeros(3)
         caps.append(Capsule("narzedzie", FLANGE_LINK, np.zeros(3), shank_end, tool_radius, "tool"))
         caps.append(Capsule("ostrze", FLANGE_LINK, cutter_start, tcp, cutter_radius, "cutter"))
     else:

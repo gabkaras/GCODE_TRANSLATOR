@@ -75,6 +75,12 @@ def slice_triangles(tris: np.ndarray, params: SliceParams | None = None, source:
                 path.xyz = xyz
                 path.axes = deform.normal(xyz)
                 path.tf = deform.thickness_factor(xyz)
+    if abs(params.tilt_lead) > 1e-9 or abs(params.tilt_side) > 1e-9:
+        from .orientation import tilt_axes
+        for L in layers:
+            for path in L.paths:
+                p3 = path.xyz if path.xyz is not None else np.column_stack([path.points, np.full(len(path.points), L.z)])
+                path.axes = tilt_axes(p3, path.axes, path.closed and path.xyz is None, params.tilt_lead, params.tilt_side)
     gcode, stats = write_gcode(layers, params, source)
     stats.dropped_chains = dropped
     sup = support_report(layers, params.bead_width, params.overhang_max)

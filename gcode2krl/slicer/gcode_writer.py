@@ -128,7 +128,7 @@ def write_gcode(layers: list[Layer], params: SliceParams, source: str = "") -> t
             P3 = path.xyz if not planar else np.column_stack([pts, np.full(len(pts), z)])
             if not planar:
                 P3 = P3 + np.array([0.0, 0.0, p.z_offset])
-            axes = path.axes if (not planar and p.tool_axis and path.axes is not None) else None
+            axes = path.axes if (p.tool_axis and path.axes is not None and len(path.axes) == len(P3)) else None
             tf = path.tf if path.tf is not None else np.ones(len(P3))
             e_per_mm = p.extrusion_per_mm(path.width, L.height) * path.flow * flow_layer
             vol_per_mm = bead_area(path.width, L.height) * path.flow * flow_layer

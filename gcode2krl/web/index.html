@@ -106,6 +106,12 @@
           <label>X<input type="number" id="tf_x" step="1"></label><label>Y<input type="number" id="tf_y" step="1"></label><label>Z<input type="number" id="tf_z" step="1"></label>
           <label>A<input type="number" id="tf_a" step="1"></label><label>B<input type="number" id="tf_b" step="1"></label><label>C<input type="number" id="tf_c" step="1"></label>
         </div>
+        <div class="fb-row"><span class="muted">Montaż dyszy:</span>
+          <button type="button" class="mini mount" data-mount="0 0 0" title="dysza w osi kołnierza (A6)">w osi A6</button>
+          <button type="button" class="mini mount" data-mount="0 45 0" title="dysza pochylona 45° wokół Y kołnierza">45°</button>
+          <button type="button" class="mini mount" data-mount="0 90 0" title="dysza prostopadle do kołnierza (90° wokół Y)">90°</button>
+          <button type="button" class="mini mount" data-mount="0 0 90" title="dysza prostopadle do kołnierza (90° wokół X)">90° X</button></div>
+        <div class="row-note muted">A B C to orientacja osi dyszy (Z narzędzia) względem kołnierza — końcówka nie musi leżeć w osi A6. Kinematyka, kolizje i solver orientacji liczą z pełnej ramki $TOOL; wpisz też X Y Z końcówki.</div>
         <div class="fb-row"><input type="text" id="tool-name" placeholder="nazwa narzędzia" maxlength="32"><button type="button" id="tool-save" class="mini">zapisz</button><button type="button" id="tool-del" class="mini">usuń</button></div>
         <input type="hidden" id="opt_tool_frame" data-default="0 0 150 0 0 0" value="0 0 150 0 0 0">
         <div class="fb-row"><label class="file-btn mini">wgraj model narzędzia (STEP/STL/OBJ)<input type="file" id="tool-mesh-file" accept=".stl,.obj,.step,.stp,.iges,.igs" hidden></label>
@@ -161,6 +167,8 @@
       <label class="row check"><input type="checkbox" id="opt_tool_literal" data-default="false"><span>Zapisz $TOOL literalnie w KRL</span></label>
       <label class="row"><span>Krok próbkowania [mm]</span><input type="number" id="opt_path_step" data-default="5" value="5" min="0.5" step="1"></label>
       <label class="row check"><input type="checkbox" id="opt_orient_solve" data-default="true" checked><span>Orientacja z osi I J K: dobieraj obrót wokół osi narzędzia (osobliwości, ciągłość)</span></label>
+      <label class="row"><span>Obrót wokół osi dyszy</span><select id="opt_spin_mode" data-default="free"><option value="free">solver (dowolny)</option><option value="fixed">stały kąt</option><option value="tangent">X narzędzia wzdłuż ścieżki</option></select></label>
+      <label class="row"><span>Stały kąt [°] / przesunięcie wzdłuż ścieżki [°]</span><span class="pair2"><input type="number" id="opt_spin_fixed" data-default="0" value="0" step="15"><input type="number" id="opt_spin_offset" data-default="0" value="0" step="15"></span></label>
       <label class="row"><span>Krok obrotu [°] / min |A5| [°] / dod. pochylenie [°]</span><span class="pair3"><input type="number" id="opt_spin_step" data-default="15" value="15" min="1" max="90" step="5"><input type="number" id="opt_singular_deg" data-default="8" value="8" min="0" max="45" step="1"><input type="number" id="opt_max_tilt" data-default="0" value="0" min="0" max="45" step="5"></span></label>
       <label class="row"><span>Próbki IK (maks.)</span><input type="number" id="opt_robot_samples" data-default="20000" value="20000" min="10" step="1000"></label>
       <label class="row"><span>Wymagany prześwit [mm]</span><input type="number" id="opt_margin" data-default="10" value="10" min="0" step="1"></label>

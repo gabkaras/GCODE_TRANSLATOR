@@ -47,7 +47,7 @@
   // ----------------------------------------------------------------- options
   const OPTION_IDS = ['extruder','extruder_out','extruder_analog','extruder_anout','extruder_flow_full','extruder_delay',
     'extruder_trigger','extruder_on_delay','extruder_off_delay','extruder_reverse_out','krl_start','krl_end',
-    'orient_solve','spin_step','singular_deg','max_tilt','robot','base_frame','tool_frame','base_literal','tool_literal','robot_samples','path_step','margin',
+    'orient_solve','spin_step','singular_deg','max_tilt','spin_mode','spin_fixed','spin_offset','robot','base_frame','tool_frame','base_literal','tool_literal','robot_samples','path_step','margin',
     'tbl_sx','tbl_sy','tbl_cx','tbl_cy','mat_t','mat_pad','tool_mesh','tool_mesh_units',
     'tool_radius','cutter_len','cutter_radius','obstacles','tol','max_radius','min_radius','min_arc_points','refine_shift','spl_max_segment','corner_angle',
     'default_feed','offset','fit_arcs','use_spl','name','mode','tool','base','abc','rapid_vel','max_vel','acc','cdis',
@@ -337,6 +337,13 @@
     $('#bf_' + ax).addEventListener('input', () => onFrameEdit('bf', 'opt_base_frame'));
   });
   function syncFramesFromOptions() { hiddenToFields('tf', 'opt_tool_frame'); hiddenToFields('bf', 'opt_base_frame'); }
+  // nozzle mount presets: keep the TCP position, set the orientation of the nozzle axis (tool Z) to the flange
+  $$('.mount').forEach(b => b.addEventListener('click', () => {
+    const abc = b.dataset.mount.split(' ').map(Number);
+    const cur = $('#opt_tool_frame').value.split(/\s+/).map(Number);
+    setFrameFields('tf', 'opt_tool_frame', [cur[0] || 0, cur[1] || 0, cur[2] || 0, ...abc]);
+    onFrameEdit('tf', 'opt_tool_frame');
+  }));
 
   // tool presets (browser storage)
   const BUILTIN_TOOLS = [
@@ -695,7 +702,7 @@
     lim.textContent = rep.n_limit ? `${rep.n_limit} próbek poza limitami osi` : 'limity osi OK';
     lim.className = 'rb-item ' + (rep.n_limit ? 'bad' : 'ok');
     $('#robot-axes').innerHTML = rep.joint_min.map((lo, i) => lo === null ? '' : `<span class="${rep.axis_violations[i] ? 'viol' : ''}">A${i+1} <b>${lo.toFixed(0)}…${rep.joint_max[i].toFixed(0)}°</b></span>`).join('')
-      + (rep.orientation ? `<span title="rozwiązywanie obrotu wokół osi narzędzia">orient. <b>${rep.orientation.points}</b> pkt · ${rep.orientation.resampled} przestawień${rep.orientation.singular ? ` · <span class="viol">${rep.orientation.singular} osobl.</span>` : ''}${rep.orientation.unreachable ? ` · <span class="viol">${rep.orientation.unreachable} nieosiąg.</span>` : ''}</span>` : (rep.oriented ? '<span>orientacja z G-code</span>' : ''));
+      + (rep.orientation ? `<span title="rozwiązywanie obrotu wokół osi narzędzia">orient. <b>${rep.orientation.points}</b> pkt · ${{ free: 'solver', fixed: 'stały kąt', tangent: 'wzdłuż ścieżki' }[rep.orientation.spin_mode] || 'solver'} · ${rep.orientation.resampled} przestawień${rep.orientation.singular ? ` · <span class="viol">${rep.orientation.singular} osobl.</span>` : ''}${rep.orientation.unreachable ? ` · <span class="viol">${rep.orientation.unreachable} nieosiąg.</span>` : ''}</span>` : (rep.oriented ? '<span>orientacja z G-code</span>' : ''));
     showCollisions(rep.collision, rep);
     // animation data
     anim.joints = decode(rep.joints); anim.ok = Uint8Array.from(atob(rep.ok), c => c.charCodeAt(0)); anim.n = anim.joints.length / 6; anim.pos = 0;
