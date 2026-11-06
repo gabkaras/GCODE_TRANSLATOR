@@ -157,7 +157,7 @@
       this.reachArc = arc;
     }
 
-    setBasePlacement(robotInBase) { this.robotInBase = robotInBase; if (this.joints) this.setPose(this.joints); if (this.obstacles) this.setObstacles(this.obstacles); }
+    setBasePlacement(robotInBase) { this.robotInBase = robotInBase; if (this.joints) this.setPose(this.joints); if (this.obstacles) this.setObstacles(this.obstacles); if (this.zones) this.setZones(this.zones); }
 
     setPose(q) {
       if (!this.model) return;
@@ -205,6 +205,25 @@
     setReachVisible(vis) { this.reachVisible = vis; this.viewer.setVisible('rb_reach', vis && this.visible); this.viewer.setVisible('rb_reach_arc', vis && this.visible); }
   }
   /** obstacles: list from the server (robot frame); drawn in BASE coords via robotInBase */
+  /** safety zones: translucent oriented boxes with edges, green = allowed, red = forbidden (robot frame) */
+  RobotView.prototype.setZones = function (zones) {
+    const v = this.viewer;
+    v.removeGroup('zones');
+    this.zones = zones || [];
+    (zones || []).forEach((z, i) => {
+      const R = z.rot;
+      const base = new Float32Array([R[0],R[3],R[6],0, R[1],R[4],R[7],0, R[2],R[5],R[8],0, z.center[0],z.center[1],z.center[2],1]);
+      const M = mul(this.robotInBase, base);
+      const color = z.mode === 'allowed' ? 'var(--ok)' : 'var(--bad)';
+      v.setMesh('zn_' + i, box(z.half[0]*2, z.half[1]*2, z.half[2]*2, 0, 0, 0), color, M, { group: 'zones', alpha: 0.08 });
+      const h = z.half, E = [];
+      const c = [[-1,-1,-1],[1,-1,-1],[1,1,-1],[-1,1,-1],[-1,-1,1],[1,-1,1],[1,1,1],[-1,1,1]].map(s => [s[0]*h[0], s[1]*h[1], s[2]*h[2]]);
+      const edges = [[0,1],[1,2],[2,3],[3,0],[4,5],[5,6],[6,7],[7,4],[0,4],[1,5],[2,6],[3,7]];
+      for (const [a, b] of edges) E.push(...apply(M, c[a]), ...apply(M, c[b]));
+      v.setLayer('zn_edge' + i, new Float32Array(E), color, { order: 13, group: 'zones' });
+    });
+  };
+
   RobotView.prototype.setObstacles = function (obs, meshLoader) {
     const v = this.viewer;
     v.removeGroup('obstacles');

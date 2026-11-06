@@ -177,6 +177,15 @@
         <div class="fb-row"><button type="button" id="base-center" class="mini" title="przesuń bazę tak, aby środek ścieżki był w podanej odległości przed robotem">detal przed robotem</button><input type="number" id="base-dist" value="1400" step="50" title="odległość środka detalu od osi A1 [mm]"><span class="muted">mm od osi A1</span></div>
       </div>
       <div class="frame-block">
+        <div class="fb-head"><span>Strefy bezpieczeństwa</span>
+          <label class="auto"><input type="checkbox" id="opt_zones_krl" data-default="true" checked> $WORKSPACE w KRL</label>
+        </div>
+        <label class="col"><span>Strefy <small>(jedna na linię, # komentarz)</small></span>
+          <textarea id="opt_zones" data-default="" rows="4" spellcheck="false" placeholder="zone druk allowed robot base 0 0 600 1400 1400 1400&#10;zone operator forbidden robot robot 0 1600 900 1200 800 1800"></textarea></label>
+        <div class="fb-row"><button type="button" id="zone-add-allowed" class="mini">+ dozwolona nad podstawą</button><button type="button" id="zone-add-forbidden" class="mini">+ zabroniona</button><button type="button" id="zone-clear" class="mini ghost">wyczyść</button></div>
+        <div class="row-note muted"><code>zone NAZWA allowed|forbidden tcp|robot robot|base cx cy cz sx sy sz [a b c]</code> — <b>allowed</b>: TCP (albo każdy człon robota) musi zostać w pudełku, <b>forbidden</b>: nie wolno do niego wejść. Sprawdzane na całej ścieżce i na ruchach HOME; w KRL jako <code>$WORKSPACE[n]</code> (#OUTSIDE_STOP / #INSIDE_STOP, sterownik pilnuje TCP).</div>
+      </div>
+      <div class="frame-block">
         <div class="fb-head"><span>Wymiary podstawy i materiał</span>
           <label class="auto"><input type="checkbox" id="auto-table" data-default="true" checked> automatycznie</label>
         </div>

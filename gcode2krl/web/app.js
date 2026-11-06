@@ -15,6 +15,7 @@
     { key: 'bad_points', label: 'poza zasięgiem / limitem osi', color: 'var(--c-bad)', order: 11, on: true, mode: 'points', size: 9 },
     { key: 'collision_points', label: 'kolizja', color: 'var(--c-collision)', order: 12, on: true, mode: 'points', size: 11 },
     { key: 'margin_points', label: 'poniżej prześwitu', color: 'var(--c-margin)', order: 11, on: true, mode: 'points', size: 8 },
+    { key: 'zone_points', label: 'naruszenie strefy bezpieczeństwa', color: 'var(--c-zone)', order: 12, on: true, mode: 'points', size: 11 },
   ];
   // ---------------------------------------------------------------- theme
   function setTheme(mode, save) {
@@ -47,7 +48,7 @@
   // ----------------------------------------------------------------- options
   const OPTION_IDS = ['extruder','extruder_out','extruder_analog','extruder_anout','extruder_flow_full','extruder_delay',
     'extruder_trigger','extruder_on_delay','extruder_off_delay','extruder_reverse_out','krl_start','krl_end',
-    'home_start','home_end','home_mode','home_axes','home_vel',
+    'home_start','home_end','home_mode','home_axes','home_vel','zones','zones_krl',
     'orient_solve','spin_step','singular_deg','max_tilt','spin_mode','spin_fixed','spin_offset','robot','base_frame','tool_frame','base_literal','tool_literal','robot_samples','path_step','margin',
     'tbl_sx','tbl_sy','tbl_cx','tbl_cy','mat_t','mat_pad','tool_mesh','tool_mesh_units',
     'tool_radius','cutter_len','cutter_radius','obstacles','tol','max_radius','min_radius','min_arc_points','refine_shift','spl_max_segment','corner_angle',
@@ -276,7 +277,8 @@
         const col = data.robot && data.robot.collision;
         const src = L.key === 'bad_points' ? (data.robot ? data.robot.bad_points : '')
           : L.key === 'collision_points' ? (col ? col.collision_points : '')
-          : L.key === 'margin_points' ? (col ? col.margin_points : '') : p[L.key];
+          : L.key === 'margin_points' ? (col ? col.margin_points : '')
+          : L.key === 'zone_points' ? (data.robot ? data.robot.zone_points : '') : p[L.key];
         const arr = decode(src);
         viewer.setLayer(L.key, arr, L.color, { alpha: L.alpha, order: L.order, mode: L.mode, size: L.size, visible: $('#layer-' + L.key).checked });
       }
@@ -361,6 +363,23 @@
     $('#bf_' + ax).addEventListener('input', () => onFrameEdit('bf', 'opt_base_frame'));
   });
   function syncFramesFromOptions() { hiddenToFields('tf', 'opt_tool_frame'); hiddenToFields('bf', 'opt_base_frame'); }
+  // safety zone helpers
+  function addZoneLine(line) {
+    const ta = $('#opt_zones');
+    ta.value = (ta.value.trim() ? ta.value.replace(/\s+$/, '') + '\n' : '') + line;
+    saveOptions(); scheduleAuto();
+  }
+  $('#zone-add-allowed').addEventListener('click', () => {
+    const sx = Number($('#tbl_sx').value) || 800, sy = Number($('#tbl_sy').value) || 800, h = 1500;
+    const cx = Number($('#tbl_cx').value) || 0, cy = Number($('#tbl_cy').value) || 0;
+    const names = ($('#opt_zones').value.match(/^\s*zone\s+druk\d*/gm) || []).length;
+    addZoneLine(`zone druk${names ? names + 1 : ''} allowed tcp base ${cx} ${cy} ${(h / 2 - 100).toFixed(0)} ${sx + 400} ${sy + 400} ${h}`);
+  });
+  $('#zone-add-forbidden').addEventListener('click', () => {
+    const n = ($('#opt_zones').value.match(/forbidden/g) || []).length;
+    addZoneLine(`zone strefa${n + 1} forbidden robot robot 0 1600 900 1200 800 1800`);
+  });
+  $('#zone-clear').addEventListener('click', () => { $('#opt_zones').value = ''; saveOptions(); scheduleAuto(); });
   // nozzle mount presets: keep the TCP position, set the orientation of the nozzle axis (tool Z) to the flange
   $$('.mount').forEach(b => b.addEventListener('click', () => {
     const abc = b.dataset.mount.split(' ').map(Number);
@@ -726,6 +745,7 @@
     lim.textContent = rep.n_limit ? `${rep.n_limit} próbek poza limitami osi` : 'limity osi OK';
     lim.className = 'rb-item ' + (rep.n_limit ? 'bad' : 'ok');
     $('#robot-axes').innerHTML = rep.joint_min.map((lo, i) => lo === null ? '' : `<span class="${rep.axis_violations[i] ? 'viol' : ''}">A${i+1} <b>${lo.toFixed(0)}…${rep.joint_max[i].toFixed(0)}°</b></span>`).join('')
+      + (rep.zones && rep.zones.zones && rep.zones.zones.length ? (() => { const bad = rep.zones.results.filter(z => z.n_path || z.n_home); return `<span class="${bad.length ? 'viol' : ''}" title="strefy bezpieczeństwa: ścieżka i ruchy HOME">strefy <b>${bad.length ? bad.map(z => `${z.name} ${z.n_path + z.n_home}`).join(', ') : 'OK'}</b></span>`; })() : '')
       + (rep.home_moves ? ['start', 'end'].map(k => { const h = rep.home_moves[k]; if (!h) return ''; const bad = h.n_collision ? 'viol' : ''; const txt = h.n_collision ? `KOLIZJA ${h.worst ? h.worst.a + '/' + h.worst.b : ''}` : (h.n_margin ? `prześwit ${h.min_clearance.toFixed(0)} mm` : 'OK'); return `<span class="${bad}" title="ruch PTP ${k === 'start' ? 'HOME → start' : 'koniec → HOME'} (interpolacja osi)">${k === 'start' ? 'HOME→start' : 'koniec→HOME'} <b>${txt}</b></span>`; }).join('') : '')
       + (rep.orientation ? `<span title="rozwiązywanie obrotu wokół osi narzędzia">orient. <b>${rep.orientation.points}</b> pkt · ${{ free: 'solver', fixed: 'stały kąt', tangent: 'wzdłuż ścieżki' }[rep.orientation.spin_mode] || 'solver'} · ${rep.orientation.resampled} przestawień${rep.orientation.singular ? ` · <span class="viol">${rep.orientation.singular} osobl.</span>` : ''}${rep.orientation.unreachable ? ` · <span class="viol">${rep.orientation.unreachable} nieosiąg.</span>` : ''}</span>` : (rep.oriented ? '<span>orientacja z G-code</span>' : ''));
     showCollisions(rep.collision, rep);
@@ -764,6 +784,7 @@
     notes.innerHTML = '';
     for (const n of col.notes) { const li = document.createElement('li'); li.textContent = n; notes.appendChild(li); }
     robotView.setObstacles(col.obstacles, (id, units) => fetch('/api/mesh/' + encodeURIComponent(id) + '?units=' + encodeURIComponent(units || 'mm')).then(r => r.json()));
+    robotView.setZones(rep && rep.zones ? rep.zones.zones : []);
     robotView.setCapsules(col.capsules);
     updateToolMeshInfo();
     drawClearanceChart();

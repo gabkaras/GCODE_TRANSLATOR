@@ -172,6 +172,118 @@ def obstacle_from_dict(d: dict, base: np.ndarray) -> Obstacle:
     raise ValueError(f"obstacle {name}: unknown kind {kind}")
 
 
+@dataclass
+class Zone:
+    """Safety zone (KSS workspace monitoring): an oriented box the TCP (or the whole
+    robot) must stay inside (``allowed``) or must never enter (``forbidden``)."""
+    name: str
+    mode: str  # allowed | forbidden
+    scope: str  # tcp | robot
+    center: np.ndarray  # robot frame
+    rot: np.ndarray  # 3x3 robot frame
+    half: np.ndarray
+    frame: str = "robot"
+    raw: str = ""
+
+    def local(self, p: np.ndarray) -> np.ndarray:
+        return (np.asarray(p, dtype=float) - self.center) @ self.rot
+
+    def inside(self, p: np.ndarray, shrink: float = 0.0) -> np.ndarray:
+        """True where points (N,3) lie inside the box shrunk (shrink > 0) or grown (shrink < 0)."""
+        q = np.abs(self.local(p))
+        return np.all(q <= (self.half - shrink)[None, :], axis=1)
+
+    def krl_mode(self) -> str:
+        return "#OUTSIDE_STOP" if self.mode == "allowed" else "#INSIDE_STOP"
+
+    def to_dict(self) -> dict:
+        return {"name": self.name, "mode": self.mode, "scope": self.scope, "center": self.center.tolist(),
+                "rot": self.rot.ravel().tolist(), "half": self.half.tolist(), "frame": self.frame, "raw": self.raw}
+
+
+ZONE_HELP = """# one safety zone per line:
+# zone NAME allowed|forbidden tcp|robot robot|base  cx cy cz  sx sy sz  [a b c]
+#   allowed   = the TCP (or every link of the robot) has to stay inside the box
+#   forbidden = the TCP (or any link of the robot) must never enter the box
+#   tcp|robot = what is monitored; robot|base = frame of the centre / rotation
+zone druk allowed robot base 0 0 600 1400 1400 1400
+zone operator forbidden robot robot 0 1600 900 1200 800 1800"""
+
+
+def parse_zones(text: str) -> list[dict]:
+    out: list[dict] = []
+    for ln, raw in enumerate(text.splitlines(), start=1):
+        line = raw.split("#", 1)[0].strip()
+        if not line:
+            continue
+        parts = re.split(r"[\s,]+", line)
+        if parts[0].lower() == "zone":
+            parts = parts[1:]
+        try:
+            name, mode, scope, fr = parts[0], parts[1].lower(), parts[2].lower(), parts[3].lower()
+            nums = [float(v) for v in parts[4:]]
+            if mode not in ("allowed", "forbidden"):
+                raise ValueError("mode must be allowed or forbidden")
+            if scope not in ("tcp", "robot"):
+                raise ValueError("scope must be tcp or robot")
+            if fr not in ("robot", "base"):
+                raise ValueError("frame must be robot or base")
+            if len(nums) not in (6, 9):
+                raise ValueError("needs cx cy cz sx sy sz [a b c]")
+            if any(v <= 0 for v in nums[3:6]):
+                raise ValueError("size must be three positive numbers")
+            out.append({"name": name, "mode": mode, "scope": scope, "frame": fr, "center": nums[0:3], "size": nums[3:6],
+                        "abc": nums[6:9] if len(nums) == 9 else (0, 0, 0), "raw": raw.strip()})
+        except (IndexError, ValueError) as exc:
+            raise ValueError(f"zones line {ln}: {raw.strip()!r}: {exc}") from None
+    return out
+
+
+def zone_from_dict(d: dict, base: np.ndarray) -> Zone:
+    fr = str(d.get("frame", "robot")).lower()
+    rot = abc_to_rot(*[float(v) for v in d.get("abc", (0, 0, 0))])
+    c, r = _to_robot(fr, base, np.array(d.get("center", (0, 0, 0)), dtype=float), rot)
+    size = np.array(d.get("size", (100, 100, 100)), dtype=float)
+    return Zone(str(d.get("name") or "zone"), str(d.get("mode", "allowed")), str(d.get("scope", "tcp")), c, r, size / 2.0,
+                fr, str(d.get("raw", "")))
+
+
+def check_zones(zones: list, tcp: np.ndarray, robot=None, q: np.ndarray | None = None, ok: np.ndarray | None = None,
+                caps: list | None = None) -> list[dict]:
+    """Per zone: indices of samples that violate it. ``tcp`` (N,3) in the robot frame;
+    for robot-scope zones the capsules of the pose ``q`` (N,6) are tested (segments
+    sampled, radius taken into account)."""
+    tcp = np.asarray(tcp, dtype=float).reshape(-1, 3)
+    n = len(tcp)
+    results = []
+    ends = radii = None
+    if any(z.scope == "robot" for z in zones) and robot is not None and q is not None and caps:
+        valid = ok if ok is not None else np.ones(n, dtype=bool)
+        frames = batch_fk(robot, np.nan_to_num(np.asarray(q, dtype=float), nan=0.0))
+        ends = capsule_endpoints(frames, caps)  # (N, K, 2, 3)
+        radii = np.array([c.radius for c in caps])
+    for z in zones:
+        if z.scope == "tcp" or ends is None:
+            inside = z.inside(tcp)
+            viol = ~inside if z.mode == "allowed" else inside
+        else:
+            viol = np.zeros(n, dtype=bool)
+            ts = np.linspace(0.0, 1.0, 5)
+            for k in range(ends.shape[1]):
+                a, b = ends[:, k, 0, :], ends[:, k, 1, :]
+                for t in ts:
+                    pts = a + (b - a) * t
+                    if z.mode == "allowed":
+                        viol |= ~z.inside(pts, shrink=radii[k])
+                    else:
+                        viol |= z.inside(pts, shrink=-radii[k])
+            if ok is not None:
+                viol &= ok
+        idx = np.flatnonzero(viol)
+        results.append({"name": z.name, "mode": z.mode, "scope": z.scope, "n_violations": int(len(idx)), "indices": idx.tolist()})
+    return results
+
+
 OBSTACLE_HELP = """# one obstacle per line:  kind name frame params... [workpiece]
 # box NAME robot|base  cx cy cz  sx sy sz  [a b c]      (centre, full size, rotation)
 # cylinder NAME robot|base cx cy cz radius height       (vertical, centre = middle)

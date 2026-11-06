@@ -55,6 +55,7 @@ class KrlOptions:
     extruder_on_delay: float = 0.0  # s, delay of the ON trigger at the start of extrusion (negative = earlier)
     extruder_off_delay: float = 0.0  # s, delay of the OFF trigger at the end of extrusion
     extruder_reverse_out: int = 0  # digital output that runs the extruder backwards (retraction); 0 = none
+    workspaces: list = field(default_factory=list)  # safety zones -> $WORKSPACE[n]: dicts {name, mode, abc, center, half}
     krl_start: str = ""  # user KRL lines inserted after the settings
     krl_end: str = ""  # user KRL lines inserted before END
     ori_var: bool = False  # orientation varies along the path ($ORI_TYPE = #VAR)
@@ -400,6 +401,23 @@ class KrlWriter:
         x, y, z, a, b, c = f
         return f"{{X {fnum(x)}, Y {fnum(y)}, Z {fnum(z)}, A {fnum(a)}, B {fnum(b)}, C {fnum(c)}}}"
 
+    def workspace_lines(self) -> list[str]:
+        """KSS Cartesian workspace monitoring ($WORKSPACE[1..8]): the box of each zone in
+        its own BASE frame (centre + rotation), mode #OUTSIDE_STOP for allowed zones
+        (stop when the TCP leaves), #INSIDE_STOP for forbidden ones."""
+        out: list[str] = []
+        for k, w in enumerate(self.o.workspaces[:8], start=1):
+            c = w["center"]
+            a, b, cc = w["abc"]
+            h = w["half"]
+            out.append(f"; strefa {w['name']}: {'dozwolona' if w['mode'] == 'allowed' else 'zabroniona'} ({w.get('scope', 'tcp')})")
+            out.append(f"$WORKSPACE[{k}] = {{BASE {{X {fnum(c[0])}, Y {fnum(c[1])}, Z {fnum(c[2])}, A {fnum(a)}, B {fnum(b)}, C {fnum(cc)}}}, "
+                       f"X1 {fnum(-h[0])}, Y1 {fnum(-h[1])}, Z1 {fnum(-h[2])}, X2 {fnum(h[0])}, Y2 {fnum(h[1])}, Z2 {fnum(h[2])}, "
+                       f"MODE {'#OUTSIDE_STOP' if w['mode'] == 'allowed' else '#INSIDE_STOP'}, STATE FALSE}}")
+        if len(self.o.workspaces) > 8:
+            out.append(f"; UWAGA: KSS obsluguje 8 stref $WORKSPACE, pominieto {len(self.o.workspaces) - 8}")
+        return out
+
     def settings_lines(self) -> list[str]:
         tool = self.frame_literal(self.o.tool_frame) if self.o.tool_frame else f"TOOL_DATA[{self.o.tool}]"
         base = self.frame_literal(self.o.base_frame) if self.o.base_frame else f"BASE_DATA[{self.o.base}]"
@@ -412,6 +430,7 @@ class KrlWriter:
             f"$ADVANCE = {self.o.advance}",
         ] + (["$ORI_TYPE = #VAR  ; orientation varies along the path"] if self.o.ori_var else []) + (
             ["$VEL_FLT_OFF = TRUE  ; unfiltered $VEL_ACT for ANOUT"] if self.o.extruder_anout > 0 else []) + (
+            [""] + self.workspace_lines() if self.o.workspaces else []) + (
             ["", "; user start"] + [l.rstrip() for l in self.o.krl_start.splitlines()] if self.o.krl_start.strip() else [])
 
     def assemble(self, stats: Stats | None) -> KrlProgram:

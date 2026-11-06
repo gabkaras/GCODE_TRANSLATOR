@@ -34,7 +34,7 @@ from . import __version__
 from .gcode_parser import parse_gcode
 from .krl_writer import KrlOptions, write_krl
 from . import meshstore
-from .collision import OBSTACLE_HELP, mesh_obstacles, obstacle_from_dict, parse_obstacles
+from .collision import OBSTACLE_HELP, mesh_obstacles, obstacle_from_dict, parse_obstacles, parse_zones, zone_from_dict, check_zones, ZONE_HELP
 from .robot import DEFAULT_ROBOT, ROBOTS, check_path, check_path_collisions, forward, frame
 from .translator import ArcItem, EventItem, LineItem, RapidItem, SplItem, TranslateOptions, sample_items, translate
 
@@ -138,6 +138,7 @@ def build_options(options: dict, filename: str) -> tuple[TranslateOptions, KrlOp
         home_mode=str(options.get("home_mode") or "xhome"),
         home_axes=_home_axes(options),
         home_vel=_opt(options, "home_vel", 100.0, float),
+        workspaces=_workspaces(options),
         krl_start=str(options.get("krl_start") or ""),
         krl_end=str(options.get("krl_end") or ""),
         bco_ptp=_opt(options, "bco", True, bool),
@@ -233,6 +234,29 @@ def robot_mesh_payload(robot) -> dict:
     return payload
 
 
+def _zone_dicts(options: dict) -> list[dict]:
+    src = options.get("zones", None)
+    if src is None or src == "":
+        return []
+    if isinstance(src, str):
+        return parse_zones(src)
+    return list(src)
+
+
+def _workspaces(options: dict) -> list[dict]:
+    """$WORKSPACE entries (robot frame) for the KRL program."""
+    if not _opt(options, "zones_krl", True, bool):
+        return []
+    from .robot import rot_to_abc
+    base = frame(_ntuple(options, "base_frame", (0, 0, 0, 0, 0, 0), 6))
+    out = []
+    for d in _zone_dicts(options):
+        z = zone_from_dict(d, base)
+        out.append({"name": z.name, "mode": z.mode, "scope": z.scope, "center": z.center.tolist(), "half": z.half.tolist(),
+                    "abc": [float(v) for v in rot_to_abc(z.rot)]})
+    return out
+
+
 def _home_axes(options: dict) -> tuple[float, ...]:
     """HOME joint angles: the option (6 numbers) or the robot model's home."""
     txt = str(options.get("home_axes") or "").strip()
@@ -326,6 +350,39 @@ def robot_report(items, options: dict, abc) -> dict | None:
                 worst = {"a": wp.a, "b": wp.b, "min_clearance": wp.min_clearance}
             hm[label] = {"n_collision": r2.n_collision, "n_margin": r2.n_margin, "min_clearance": r2.min_clearance, "worst": worst}
     d["home_moves"] = hm
+    # ---- safety zones: TCP (or the whole robot) on the path and on the HOME moves
+    zones = [zone_from_dict(zd, base) for zd in _zone_dicts(options)]
+    zd_out = {"zones": [z.to_dict() for z in zones], "results": [], "n_violations": 0}
+    zone_pts = []
+    if zones:
+        tcp_robot = (np.c_[pts, np.ones(len(pts))] @ base.T)[:, :3]
+        res = check_zones(zones, tcp_robot, robot, rep.joints, rep.ok_mask, caps)
+        for r0 in res:
+            r0["n_path"] = r0.pop("n_violations")
+            idx = r0.pop("indices")
+            r0["n_home"] = 0
+            if idx:
+                zone_pts.append(pts[np.array(idx, dtype=int)])
+        # HOME moves (joint interpolation): TCP from the forward kinematics
+        from .collision import batch_fk
+        if rep.joints is not None and rep.ok_mask is not None and rep.ok_mask.any():
+            idx_ok = np.flatnonzero(rep.ok_mask)
+            for label, on, qi in (("start", _opt(options, "home_start", True, bool), rep.joints[idx_ok[0]]),
+                                  ("end", _opt(options, "home_end", True, bool), rep.joints[idx_ok[-1]])):
+                if not on:
+                    continue
+                t = np.linspace(0.0, 1.0, 16)[:, None]
+                qq = home_q[None, :] * (1 - t) + np.asarray(qi)[None, :] * t if label == "start" else np.asarray(qi)[None, :] * (1 - t) + home_q[None, :] * t
+                fr = batch_fk(robot, qq)
+                r_fl, p_fl = fr[-1]
+                tcp_h = p_fl + np.einsum("nij,j->ni", r_fl, tool[:3, 3])
+                res_h = check_zones(zones, tcp_h, robot, qq, np.ones(len(qq), dtype=bool), caps)
+                for r0, rh in zip(res, res_h):
+                    r0["n_home"] += rh["n_violations"]
+        zd_out["results"] = res
+        zd_out["n_violations"] = int(sum(r0["n_path"] + r0["n_home"] for r0 in res))
+    d["zones"] = zd_out
+    d["zone_points"] = _f32(np.concatenate(zone_pts).ravel()) if zone_pts else ""
     cd = col.to_dict()
     cd["clearance"] = _f32(np.nan_to_num(col.clearance, nan=1e9).ravel())
     cd["worst_pair"] = col.worst_pair
@@ -387,6 +444,11 @@ def run_translation(gcode: str, filename: str, options: dict) -> dict:
                                   f"{worst['min_clearance']:.1f} mm)")
         elif c["n_margin"]:
             stats.warnings.append(f"collision margin {c['margin']:g} mm violated at {c['n_margin']} samples (min clearance {c['min_clearance']:.1f} mm)")
+        for zr in (robot.get("zones") or {}).get("results", []):
+            if zr["n_path"] or zr["n_home"]:
+                what = "outside the allowed zone" if zr["mode"] == "allowed" else "inside the forbidden zone"
+                stats.warnings.append(f"safety zone {zr['name']} ({zr['scope']}): {what} at {zr['n_path']} path samples"
+                                      + (f" and {zr['n_home']} HOME-move samples" if zr["n_home"] else ""))
         for label, name in (("start", "PTP HOME -> start"), ("end", "PTP end -> HOME")):
             h = (robot.get("home_moves") or {}).get(label)
             if h and h["n_collision"]:
@@ -516,7 +578,7 @@ class Handler(SimpleHTTPRequestHandler):
                 self.send_json({"error": str(exc)}, 404)
             return
         if path == "/api/robots":
-            self.send_json({"default": DEFAULT_ROBOT, "robots": [r.to_dict() for r in ROBOTS.values()],
+            self.send_json({"default": DEFAULT_ROBOT, "robots": [r.to_dict() for r in ROBOTS.values()], "zone_help": ZONE_HELP,
                             "obstacle_help": OBSTACLE_HELP})
             return
         if path.startswith("/api/robot_mesh/"):

@@ -26,7 +26,7 @@ STEP/STL ──slicer──> ścieżka (G-code + I J K) ──parser──> ruch
 pip install -e .          # wymaga Python >= 3.10 i numpy
 pip install -e .[test]    # dodatkowo pytest
 pip install -e .[step]    # import STEP/IGES (OpenCASCADE)
-pytest                    # 139 testów
+pytest                    # 144 testy
 ```
 
 ## GUI
@@ -191,6 +191,33 @@ i ekstrudera przemysłowego, a sterowanie materiałem jest natywne dla KRL:
 * G-code pozostaje tylko formatem przekazania i eksportu ścieżki (F w mm/min,
   E objętościowe, I J K osi narzędzia); import G-code z CAM zachowuje obsługę
   wrzeciona, chłodziwa i M-kodów w osobnej, zwiniętej sekcji.
+
+### Strefy bezpieczeństwa
+
+![strefy bezpieczeństwa](docs/gui_zones.png)
+
+W kroku 1 GUI (pole *Strefy bezpieczeństwa*, CLI `--zones plik`) definiuje
+się pudełka, jedna linia na strefę:
+
+```
+zone NAZWA allowed|forbidden tcp|robot robot|base  cx cy cz  sx sy sz  [a b c]
+zone druk allowed tcp base 0 0 650 1200 1200 1500      # TCP ma zostać nad podstawą
+zone operator forbidden robot robot 0 1600 900 1200 800 1800   # żaden człon nie wchodzi
+```
+
+* **allowed** — punkt roboczy (`tcp`) albo wszystkie człony robota (`robot`,
+  kapsuły z promieniem) muszą zostać w pudełku; **forbidden** — nie wolno do
+  niego wejść. Środek, wymiary i obrót A B C w układzie robota lub bazy.
+* Sprawdzane na każdej próbce ścieżki oraz na ruchach PTP HOME (interpolacja
+  w osiach); naruszenia są liczone per strefa, zaznaczane w podglądzie 3D
+  (fiolet), wypisane w pasku robota i w ostrzeżeniach, a CLI zwraca kod 3.
+  Przyciski „+ dozwolona nad podstawą” i „+ zabroniona” wstawiają szablony z
+  wymiarów podstawy.
+* **KRL**: strefy trafiają do programu jako przestrzenie robocze KSS
+  `$WORKSPACE[1..8] = {BASE {…}, X1…Z2, MODE #OUTSIDE_STOP|#INSIDE_STOP,
+  STATE FALSE}` — sterownik zatrzymuje robota, gdy TCP wyjdzie ze strefy
+  dozwolonej albo wejdzie do zabronionej (KSS pilnuje tylko TCP; zakres
+  `robot` zapewnia raport aplikacji). Opcja „$WORKSPACE w KRL” / `--no-zones-krl`.
 
 ### HOME na początku i końcu
 

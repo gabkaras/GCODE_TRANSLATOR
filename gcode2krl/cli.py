@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import argparse
+
+import numpy as np
 import os
 import sys
 
@@ -62,6 +64,8 @@ def build_parser() -> argparse.ArgumentParser:
     k.add_argument("--extruder-off-delay", type=float, default=0.0, help="delay of the extruder OFF trigger in s")
     k.add_argument("--extruder-reverse-out", type=int, default=0, help="digital output running the extruder backwards for retraction (0 = none)")
     k.add_argument("--no-extruder-trigger", action="store_true", help="switch the extruder output with plain $OUT instead of TRIGGER (advance-run stop)")
+    k.add_argument("--zones", default=None, help="file with safety zones (zone NAME allowed|forbidden tcp|robot robot|base cx cy cz sx sy sz [a b c])")
+    k.add_argument("--no-zones-krl", action="store_true", help="do not write the zones as $WORKSPACE[n] into the program")
     k.add_argument("--no-home-start", action="store_true", help="do not start the program with PTP HOME")
     k.add_argument("--no-home-end", action="store_true", help="do not end the program with PTP HOME")
     k.add_argument("--home-mode", choices=("xhome", "axes"), default="xhome", help="HOME as PTP XHOME ($CONFIG.DAT) or a literal axis position (--home-axes)")
@@ -179,7 +183,28 @@ def run(argv: list[str] | None = None) -> int:
             abc_used = kopts.abc
         robot_rep = check_path(robot, pts, abc_used, base_t, tool_t)
     kopts.ori_var = has_orientation(items)
+    zone_dicts = []
+    if args.zones:
+        from .collision import parse_zones
+        zone_dicts = parse_zones(open(args.zones, encoding="utf-8").read())
+        if not args.no_zones_krl:
+            from .collision import zone_from_dict
+            from .robot import rot_to_abc
+            for zd in zone_dicts:
+                z = zone_from_dict(zd, base_t)
+                kopts.workspaces.append({"name": z.name, "mode": z.mode, "scope": z.scope, "center": z.center.tolist(),
+                                         "half": z.half.tolist(), "abc": [float(v) for v in rot_to_abc(z.rot)]})
     prog = write_krl(items, kopts, stats)
+    zone_res = []
+    if zone_dicts and args.robot.lower() != "none" and robot_rep is not None:
+        from .collision import check_zones, robot_capsules, zone_from_dict
+        zones = [zone_from_dict(zd, base_t) for zd in zone_dicts]
+        caps = robot_capsules(robot, tool_t, args.tool_radius, args.cutter_len, args.cutter_radius)
+        tcp_robot = (np.c_[pts, np.ones(len(pts))] @ base_t.T)[:, :3]
+        zone_res = check_zones(zones, tcp_robot, robot, robot_rep.joints, robot_rep.ok_mask, caps)
+        for zr in zone_res:
+            if zr["n_violations"]:
+                stats.warnings.append(f"safety zone {zr['name']} ({zr['scope']}): {'outside' if zr['mode'] == 'allowed' else 'inside'} at {zr['n_violations']} samples")
     if args.robot.lower() != "none":
         col_rep = None
         if not args.no_collisions:
@@ -209,6 +234,8 @@ def run(argv: list[str] | None = None) -> int:
         ratio = (n_in / stats.motions_out) if stats.motions_out else 0.0
         print(f"compression {ratio:.1f}x, max deviation {stats.max_dev:.4f} mm (tolerance {args.tol:g})")
         print("files : " + ", ".join(os.path.join(args.out_dir, f) for f in prog.files))
+        for zr in zone_res:
+            print(f"zone  : {zr['name']} ({zr['mode']}, {zr['scope']}) - {zr['n_violations']} violating samples")
         if robot_rep is not None:
             print(f"robot : {args.robot.upper()} - {robot_rep.n_samples} samples, {robot_rep.n_unreachable} out of reach, "
                   f"{robot_rep.n_limit} beyond axis limits")
@@ -231,7 +258,8 @@ def run(argv: list[str] | None = None) -> int:
             print("warning: " + w, file=sys.stderr)
     bad_robot = robot_rep is not None and (robot_rep.n_unreachable or robot_rep.n_limit)
     bad_col = args.robot.lower() != "none" and not args.no_collisions and col_rep is not None and (col_rep.n_collision or col_rep.unresolved)
-    return 3 if (bad_robot or bad_col) else 0
+    bad_zone = any(zr["n_violations"] for zr in zone_res)
+    return 3 if (bad_robot or bad_col or bad_zone) else 0
 
 
 def main() -> None:
