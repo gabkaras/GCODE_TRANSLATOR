@@ -70,8 +70,8 @@ kbd { font: 11px var(--mono); background: var(--field); border: 1px solid var(--
 .drop select { background: var(--field); color: var(--muted); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 4px 6px; max-width: 110px; font-size: 12px; }
 .actions { display: flex; gap: 8px; align-items: center; }
 .actions .auto { color: var(--muted); font-size: 12px; display: flex; gap: 4px; align-items: center; }
-button, .button { background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 7px 12px; cursor: pointer; font: inherit; text-decoration: none; display: inline-flex; align-items: center; gap: 6px; }
-button:hover, .button:hover { border-color: var(--line2); background: var(--hover); }
+button, .button, .file-btn { background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 7px 12px; cursor: pointer; font: inherit; text-decoration: none; display: inline-flex; align-items: center; gap: 6px; }
+button:hover, .button:hover, .file-btn:hover { border-color: var(--line2); background: var(--hover); }
 button.active { border-color: var(--accent); color: var(--accent); }
 button:disabled { opacity: .5; cursor: wait; }
 button.primary, .button.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 600; }
@@ -191,11 +191,11 @@ button.ghost { background: transparent; }
 .fb-row { display: flex; gap: 6px; align-items: center; margin-top: 6px; font-size: 11.5px; }
 .fb-row input[type=text], .fb-row input[type=number] { flex: 1; min-width: 0; background: var(--field); color: var(--text); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 4px 7px; font: 12px var(--mono); }
 .fb-row input[type=number] { flex: 0 0 80px; }
-button.mini { padding: 4px 9px; font-size: 11px; }
+button.mini, .file-btn.mini { padding: 4px 9px; font-size: 11px; }
 .p3-grid { display: grid; grid-template-columns: 90px 1fr 1fr 1fr; gap: 4px; align-items: center; font-size: 11.5px; color: var(--muted); margin: 4px 0; }
 .p3-grid input { width: 100%; min-width: 0; background: var(--field); color: var(--text); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 4px 6px; font: 12px var(--mono); }
 
-.file-btn { display: inline-flex; align-items: center; cursor: pointer; }
+.file-btn { display: inline-flex; align-items: center; cursor: pointer; white-space: nowrap; }
 .mesh-list { display: flex; flex-direction: column; gap: 6px; padding: 4px 12px; }
 .mesh-item { border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 6px 8px; font-size: 11.5px; display: grid; grid-template-columns: 1fr auto; gap: 4px 8px; align-items: center; }
 .mesh-item .mi-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -222,3 +222,13 @@ button.mini { padding: 4px 9px; font-size: 11px; }
 #slicer .frame-block { border-top: 0; }
 #slicer .row { grid-template-columns: 1fr 164px; }
 #slicer .row .pair3 input[type=number] { padding: 5px 4px; }
+.model-drop { margin: 4px 0 8px; padding: 12px; }
+.model-drop.has-file { border-style: solid; }
+#model-name { font-size: 12.5px; }
+
+/* parameter help */
+.help { display: inline-flex; align-items: center; justify-content: center; width: 15px; height: 15px; margin-left: 6px; padding: 0; border-radius: 50%; border: 1px solid var(--line2); background: transparent; color: var(--muted); font: 600 10px/1 var(--mono); letter-spacing: 0; text-transform: none; cursor: help; vertical-align: middle; flex: none; }
+.help:hover, .help:focus-visible { border-color: var(--accent); color: var(--accent); background: transparent; box-shadow: none; outline: none; }
+.fb-head .help { margin-left: 0; }
+.help-pop { position: fixed; z-index: 60; padding: 10px 12px; background: var(--panel); border: 1px solid var(--accent); border-radius: var(--radius); box-shadow: 0 10px 28px rgba(0, 0, 0, .4); font-size: 12px; line-height: 1.45; color: var(--text); }
+.help-pop b { display: block; color: var(--accent); font-family: var(--mono); font-size: 11px; letter-spacing: .1em; text-transform: uppercase; margin-bottom: 5px; }

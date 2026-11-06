@@ -31,10 +31,16 @@
   <section id="slicer" class="src-panel">
     <div class="src-head">Slicer: model → ścieżka</div>
     <div class="frame-block">
-      <div class="fb-head"><span>Model do pokrojenia</span>
-        <label class="file-btn mini">wczytaj STEP/STL/OBJ<input type="file" id="slice-file" accept=".stl,.obj,.step,.stp,.iges,.igs" hidden></label>
+      <div id="model-drop" class="drop model-drop" title="Kliknij lub upuść model STEP/STL/OBJ">
+        <input type="file" id="slice-file" accept=".stl,.obj,.step,.stp,.iges,.igs" hidden>
+        <div class="drop-icon">⬇</div>
+        <div class="drop-text">
+          <div id="model-name">Upuść model STEP/STL/OBJ lub kliknij</div>
+          <div id="model-meta" class="muted">.step .stp .stl .obj .iges</div>
+        </div>
       </div>
-      <div class="fb-row"><select id="slice-mesh" title="wgrane modele"><option value="">wybierz model…</option></select>
+      <div class="fb-row"><button type="button" id="btn-model-upload" class="mini primary">Wgraj model…</button>
+        <select id="slice-mesh" title="wgrane modele"><option value="">wgrane modele…</option></select>
         <select id="slice-units" title="jednostki STL/OBJ"><option value="mm">mm</option><option value="cm">cm</option><option value="m">m</option><option value="in">cale</option></select></div>
       <div class="row"><span>Wysokość warstwy / pierwsza [mm]</span><span class="pair2"><input type="number" id="sl_layer_height" value="1" min="0.05" step="0.1"><input type="number" id="sl_first_layer_height" value="1" min="0.05" step="0.1"></span></div>
       <div class="row"><span>Szerokość ścieżki [mm]</span><input type="number" id="sl_bead_width" value="2" min="0.1" step="0.1"></div>
@@ -122,7 +128,7 @@
         </div>
         <div class="fb-row"><input type="text" id="tool-name" placeholder="nazwa narzędzia" maxlength="32"><button type="button" id="tool-save" class="mini">zapisz</button><button type="button" id="tool-del" class="mini">usuń</button></div>
         <input type="hidden" id="opt_tool_frame" data-default="0 0 150 0 0 0" value="0 0 150 0 0 0">
-        <div class="fb-row"><label class="file-btn mini">model narzędzia (STEP/STL/OBJ)<input type="file" id="tool-mesh-file" accept=".stl,.obj,.step,.stp,.iges,.igs" hidden></label>
+        <div class="fb-row"><label class="file-btn mini">wgraj model narzędzia (STEP/STL/OBJ)<input type="file" id="tool-mesh-file" accept=".stl,.obj,.step,.stp,.iges,.igs" hidden></label>
           <select id="opt_tool_mesh_units" data-default="mm"><option value="mm">mm</option><option value="cm">cm</option><option value="m">m</option><option value="in">cale</option></select>
           <button type="button" id="tool-mesh-clear" class="mini" title="usuń model narzędzia">×</button></div>
         <div id="tool-mesh-info" class="row-note muted">Brak modelu: uchwyt jest kapsułą o promieniu z pola „promień uchwytu”.</div>
@@ -157,7 +163,7 @@
         <div class="row"><span>Środek blatu w bazie X, Y<br><small>puste = środek ścieżki</small></span><span class="pair2"><input type="number" id="tbl_cx" data-default="" value="" step="10" placeholder="auto"><input type="number" id="tbl_cy" data-default="" value="" step="10" placeholder="auto"></span></div>
         <div class="row"><span>Materiał: grubość, zapas [mm]</span><span class="pair2"><input type="number" id="mat_t" data-default="20" value="20" step="1"><input type="number" id="mat_pad" data-default="20" value="20" step="5"></span></div>
         <div class="fb-head" style="margin-top:8px"><span>Modele stołu i uchwytów</span>
-          <label class="file-btn mini">dodaj STEP/STL/OBJ<input type="file" id="obstacle-mesh-file" accept=".stl,.obj,.step,.stp,.iges,.igs" multiple hidden></label>
+          <label class="file-btn mini">wgraj STEP/STL/OBJ<input type="file" id="obstacle-mesh-file" accept=".stl,.obj,.step,.stp,.iges,.igs" multiple hidden></label>
           <select id="obstacle-mesh-units" title="jednostki pliku STL/OBJ (STEP ma własne)"><option value="mm">mm</option><option value="cm">cm</option><option value="m">m</option><option value="in">cale</option></select>
         </div>
         <div class="row"><span>STEP: tolerancja tesselacji [mm]</span><input type="number" id="step-deflection" value="0.2" min="0.01" step="0.1" title="maksymalna odległość siatki od powierzchni CAD"></div>
@@ -319,5 +325,6 @@
 <script src="/viewer.js"></script>
 <script src="/robot.js"></script>
 <script src="/app.js"></script>
+<script src="/help.js"></script>
 </body>
 </html>

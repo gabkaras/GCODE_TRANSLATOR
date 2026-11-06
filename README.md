@@ -18,6 +18,8 @@ STEP/STL ──slicer──> ścieżka (G-code + I J K) ──parser──> ruch
 
 ![GUI gcode2krl](docs/gui.png)
 
+![pomoc do parametrów](docs/gui_help.png)
+
 ## Instalacja
 
 ```bash
@@ -40,8 +42,9 @@ gcode2krl-gui --port 9000 --no-browser
 Lokalna aplikacja webowa bez żadnych zależności poza biblioteką standardową
 Pythona i numpy (działa offline, np. na komputerze przy robocie):
 
-* krok 1 (domyślny): wczytaj model w sekcji *Slicer*, ustaw parametry i tryb
-  warstw, „Pokrój i tłumacz na KRL”; krok 2: zakładka *Gotowy G-code* przyjmuje
+* krok 1 (domyślny): upuść model STEP/STL/OBJ na pole w sekcji *Slicer*
+  (albo „Wgraj model…”), ustaw parametry i tryb warstw, „Pokrój i tłumacz na
+  KRL”; każdy parametr ma przycisk „?” z wyjaśnieniem; krok 2: zakładka *Gotowy G-code* przyjmuje
   plik z innego slicera / CAM (przeciągnij do okna albo wybierz przykład);
   wynik liczy się automatycznie po każdej zmianie opcji (suwak tolerancji,
   tryb, orientacja…),

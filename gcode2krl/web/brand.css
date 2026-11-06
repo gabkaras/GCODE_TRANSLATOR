@@ -83,8 +83,8 @@ body { font-weight: 400; -webkit-font-smoothing: antialiased; background: var(--
 .theme-switch button.active { background: rgba(0, 163, 224, .14); color: var(--accent); }
 
 /* ---- buttons (site .btn: uppercase, outline, blue glow on hover) ---------- */
-button, .button { font-family: var(--font); text-transform: uppercase; letter-spacing: .08em; font-size: 12px; font-weight: 700; border-radius: var(--radius-sm); border: 1px solid var(--line2); background: transparent; color: var(--text); padding: 8px 14px; transition: background .25s, border-color .25s, box-shadow .25s, color .25s; }
-button:hover, .button:hover { background: var(--accent); border-color: var(--accent); color: var(--on-accent); box-shadow: var(--glow); }
+button, .button, .file-btn { font-family: var(--font); text-transform: uppercase; letter-spacing: .08em; font-size: 12px; font-weight: 700; border-radius: var(--radius-sm); border: 1px solid var(--line2); background: transparent; color: var(--text); padding: 8px 14px; transition: background .25s, border-color .25s, box-shadow .25s, color .25s; }
+button:hover, .button:hover, .file-btn:hover { background: var(--accent); border-color: var(--accent); color: var(--on-accent); box-shadow: var(--glow); }
 button.active { border-color: var(--accent); color: var(--accent); background: rgba(0, 163, 224, .14); }
 button.primary, .button.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
 button.primary:hover, .button.primary:hover { background: var(--accent2); border-color: var(--accent2); box-shadow: var(--glow); }

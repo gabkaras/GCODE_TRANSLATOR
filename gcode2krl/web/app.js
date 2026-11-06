@@ -124,7 +124,12 @@
   $('#file-input').addEventListener('change', e => { const f = e.target.files[0]; if (f) readFile(f); e.target.value = ''; });
   drop.addEventListener('click', e => { if (e.target.tagName !== 'SELECT' && e.target.tagName !== 'OPTION') $('#file-input').click(); });
   document.addEventListener('dragover', e => e.preventDefault());
-  document.addEventListener('drop', e => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) readFile(f); });
+  const MODEL_EXT = /\.(stl|obj|step|stp|iges|igs)$/i;
+  // a file dropped anywhere: models go to the slicer, everything else is G-code
+  document.addEventListener('drop', e => {
+    e.preventDefault(); const f = e.dataTransfer.files[0]; if (!f) return;
+    if (MODEL_EXT.test(f.name)) uploadSliceModel(f); else readFile(f);
+  });
 
   fetch('/api/examples').then(r => r.json()).then(d => {
     const sel = $('#examples');
@@ -559,15 +564,33 @@
     sel.innerHTML = '<option value="">wybierz model…</option>';
     for (const m of Object.values(meshMeta)) { const o = document.createElement('option'); o.value = m.id; o.textContent = `${m.name} (${m.tris} tr.)`; sel.appendChild(o); }
     if (cur && meshMeta[cur]) sel.value = cur;
+    if (!sel.value && !cur) { const first = Object.values(meshMeta)[0]; if (first) sel.value = first.id; }
+    showModel(meshMeta[sel.value] || null);
   }
-  $('#slice-file').addEventListener('change', async ev => {
-    const f = ev.target.files[0]; ev.target.value = ''; if (!f) return;
+  function showModel(meta) {
+    const md = $('#model-drop');
+    if (!meta) { $('#model-name').textContent = 'Upuść model STEP/STL/OBJ lub kliknij'; $('#model-meta').textContent = '.step .stp .stl .obj .iges'; md.classList.remove('has-file'); return; }
+    $('#model-name').textContent = meta.name;
+    $('#model-meta').textContent = `${meta.tris.toLocaleString('pl-PL')} trójkątów · ${meta.min.map((v, i) => (meta.max[i] - v).toFixed(0)).join(' × ')} ${$('#slice-units').value}`;
+    md.classList.add('has-file');
+  }
+  async function uploadSliceModel(f) {
+    setSource('slicer', true);
     try {
       setStatus(`Wgrywanie ${f.name}…`, 'busy');
-      const meta = await uploadMesh(f); meshMeta[meta.id] = meta; refreshSliceMeshes(); $('#slice-mesh').value = meta.id;
-      setStatus(`Model ${meta.name}: ${meta.tris} trójkątów, ${meta.min.map((v, i) => (meta.max[i] - v).toFixed(0)).join('×')} ${$('#slice-units').value}`, 'ok');
+      const meta = await uploadMesh(f); meshMeta[meta.id] = meta; refreshSliceMeshes(); $('#slice-mesh').value = meta.id; showModel(meta);
+      setStatus(`Model ${meta.name}: ${meta.tris} trójkątów, ${meta.min.map((v, i) => (meta.max[i] - v).toFixed(0)).join('×')} ${$('#slice-units').value} — ustaw parametry i pokrój`, 'ok');
     } catch (err) { setStatus('Błąd wgrywania: ' + err.message, 'err'); }
-  });
+  }
+  $('#slice-file').addEventListener('change', ev => { const f = ev.target.files[0]; ev.target.value = ''; if (f) uploadSliceModel(f); });
+  $('#btn-model-upload').addEventListener('click', () => $('#slice-file').click());
+  const modelDrop = $('#model-drop');
+  modelDrop.addEventListener('click', () => $('#slice-file').click());
+  modelDrop.addEventListener('dragover', e => { e.preventDefault(); e.stopPropagation(); modelDrop.classList.add('over'); });
+  modelDrop.addEventListener('dragleave', () => modelDrop.classList.remove('over'));
+  modelDrop.addEventListener('drop', e => { e.preventDefault(); e.stopPropagation(); modelDrop.classList.remove('over'); const f = e.dataTransfer.files[0]; if (f) uploadSliceModel(f); });
+  $('#slice-mesh').addEventListener('change', e => showModel(meshMeta[e.target.value] || null));
+  $('#slice-units').addEventListener('change', () => { const m = meshMeta[$('#slice-mesh').value]; if (m) showModel(m); });
   $('#btn-slice').addEventListener('click', async () => {
     const ref = $('#slice-mesh').value; if (!ref) { setStatus('Wybierz model do pokrojenia', 'err'); return; }
     setStatus('Krojenie…', 'busy'); $('#btn-slice').disabled = true;
