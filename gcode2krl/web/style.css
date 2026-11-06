@@ -93,7 +93,7 @@ button.ghost { background: transparent; }
 .row.check { grid-template-columns: auto 1fr; }
 .row.check span { color: var(--text); }
 .row .pair { display: grid; grid-template-columns: 1fr 64px; gap: 6px; align-items: center; }
-#options input[type=number], #options input[type=text], #options select { width: 100%; background: var(--field); color: var(--text); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 5px 7px; font: 12.5px var(--mono); }
+#options input[type=number], #options input[type=text], #options select, #slicer input[type=number], #slicer input[type=text], #slicer select { width: 100%; background: var(--field); color: var(--text); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 5px 7px; font: 12.5px var(--mono); }
 #options input[type=range] { width: 100%; accent-color: var(--accent); }
 #options details:last-child { margin-bottom: 0; }
 
@@ -157,7 +157,7 @@ button.ghost { background: transparent; }
 .row .pair2 { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
 .col { display: flex; flex-direction: column; gap: 4px; padding: 4px 12px; font-size: 12.5px; }
 .col > span { color: var(--muted); } .col small { font-size: 10.5px; } .col code, .row-note code { font-family: var(--mono); color: var(--text); }
-#options textarea { width: 100%; background: var(--field); color: var(--text); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 6px 7px; font: 11.5px/1.4 var(--mono); resize: vertical; }
+#options textarea, #slicer textarea { width: 100%; background: var(--field); color: var(--text); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 6px 7px; font: 11.5px/1.4 var(--mono); resize: vertical; }
 .col-summary { padding: 10px 16px; display: flex; gap: 18px; flex-wrap: wrap; font-size: 13px; }
 .col-summary b { font-size: 16px; } .col-summary .ok { color: var(--ok); } .col-summary .bad { color: var(--bad); } .col-summary .warn { color: var(--warn); }
 .col-chart { width: calc(100% - 32px); margin: 0 16px 10px; height: 140px; background: var(--field); border: 1px solid var(--line); border-radius: var(--radius); }
@@ -208,3 +208,17 @@ button.mini { padding: 4px 9px; font-size: 11px; }
 
 .row .pair3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 4px; }
 .row .pair3 select { padding: 4px 3px; font-size: 11px; }
+
+/* source of the path: slicer first, ready G-code second */
+.src-tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.src-tab { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel2); color: var(--muted); cursor: pointer; text-align: left; font: inherit; transition: .15s; }
+.src-tab:hover { border-color: var(--line2); color: var(--text); }
+.src-tab b { font-family: var(--mono); font-size: 11px; letter-spacing: .12em; text-transform: uppercase; font-weight: 600; }
+.src-tab small { font-size: 11px; line-height: 1.25; }
+.src-tab.active { border-color: var(--accent); color: var(--text); box-shadow: inset 0 2px 0 var(--accent); }
+.src-tab.active b { color: var(--accent); }
+#slicer { border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel2); }
+#slicer .src-head { padding: 9px 12px 2px; font-family: var(--mono); font-size: 11.5px; letter-spacing: .14em; text-transform: uppercase; font-weight: 600; color: var(--accent); }
+#slicer .frame-block { border-top: 0; }
+#slicer .row { grid-template-columns: 1fr 164px; }
+#slicer .row .pair3 input[type=number] { padding: 5px 4px; }

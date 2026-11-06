@@ -1,13 +1,19 @@
-# gcode2krl – translator G-code → KUKA KRL z odtwarzaniem łuków
+# gcode2krl – slicer dla robota 6-osiowego i translator G-code → KUKA KRL
 
-Zamienia programy G-code (G0/G1/G2/G3) na programy KRL dla sterowników KUKA
-(KRC4, KSS 8.x). Główna funkcja: **ścieżki, które CAM wygenerował jako setki
-krótkich odcinków G1, są z powrotem rozpoznawane jako łuki** i zapisywane jako
-`SCIRC`/`CIRC`. Reszta trafia do `SLIN`/`LIN`, a fragmenty o zmiennej
-krzywiźnie do punktów `SPL` wewnątrz bloków `SPLINE`.
+Narzędzie prowadzi od modelu do programu robota w dwóch krokach:
+
+1. **Slicer** (własny, MIT): model STEP/STL/OBJ → ścieżka drukowania z
+   warstwami płaskimi, stożkowymi (RotBot), konforemnymi do powierzchni albo
+   wielokierunkowymi, z osią narzędzia I J K przy każdym punkcie.
+2. **Translator**: ścieżka (ze slicera albo gotowy G-code z innego slicera /
+   CAM) → program KRL dla KUKA KRC4 (KSS 8.x). Ciągi krótkich G1 są z powrotem
+   rozpoznawane jako łuki (`SCIRC`/`CIRC`), reszta trafia do `SLIN`/`LIN`,
+   fragmenty o zmiennej krzywiźnie i zmiennej orientacji do `SPL`; po drodze
+   sprawdzany jest zasięg, limity osi i kolizje robota.
 
 ```
-G-code (.nc) ──parser──> ruchy ──dopasowanie łuków──> SLIN / SCIRC / SPL ──writer──> PROG.src + PROG.dat
+STEP/STL ──slicer──> ścieżka (G-code + I J K) ──parser──> ruchy ──łuki / orientacja──> SLIN / SCIRC / SPL ──writer──> PROG.src + PROG.dat
+                       gotowy G-code (.nc) ───┘
 ```
 
 ![GUI gcode2krl](docs/gui.png)
@@ -18,7 +24,7 @@ G-code (.nc) ──parser──> ruchy ──dopasowanie łuków──> SLIN / S
 pip install -e .          # wymaga Python >= 3.10 i numpy
 pip install -e .[test]    # dodatkowo pytest
 pip install -e .[step]    # import STEP/IGES (OpenCASCADE)
-pytest                    # 69 testów
+pytest                    # 106 testów
 ```
 
 ## GUI
@@ -34,8 +40,11 @@ gcode2krl-gui --port 9000 --no-browser
 Lokalna aplikacja webowa bez żadnych zależności poza biblioteką standardową
 Pythona i numpy (działa offline, np. na komputerze przy robocie):
 
-* przeciągnij plik G-code do okna albo wybierz przykład; wynik liczy się
-  automatycznie po każdej zmianie opcji (suwak tolerancji, tryb, orientacja…),
+* krok 1 (domyślny): wczytaj model w sekcji *Slicer*, ustaw parametry i tryb
+  warstw, „Pokrój i tłumacz na KRL”; krok 2: zakładka *Gotowy G-code* przyjmuje
+  plik z innego slicera / CAM (przeciągnij do okna albo wybierz przykład);
+  wynik liczy się automatycznie po każdej zmianie opcji (suwak tolerancji,
+  tryb, orientacja…),
 * kafelki: ruchy wejściowe / KRL, kompresja, maksymalna odchyłka (zielona,
   gdy mieści się w tolerancji), czasy parsera / dopasowania / generowania,
 * **podgląd 3D** na własnym rendererze WebGL: warstwy G-code wejściowy, G0,

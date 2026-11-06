@@ -118,11 +118,12 @@ kbd { font-family: var(--mono); border-radius: 3px; }
 
 /* ---- panels and cards (site .card: panel bg, border, 2px blue top) -------- */
 #options details { border-radius: var(--radius); border-top: 2px solid var(--accent); background: var(--panel2); }
+#slicer { border-radius: var(--radius); border-top: 2px solid var(--accent); background: var(--panel2); }
 #options summary { font-family: var(--mono); font-size: 11.5px; letter-spacing: .14em; text-transform: uppercase; font-weight: 600; color: var(--accent); }
 #options summary::before { color: var(--accent); }
 .row > span:first-child { font-size: 12.5px; }
-#options input[type=number], #options input[type=text], #options select, #options textarea, .toolbar select, .drop select { border-radius: 6px; background: var(--field); border: 1px solid var(--line); transition: border-color .2s, box-shadow .2s; }
-#options input:focus, #options select:focus, #options textarea:focus, .toolbar select:focus { border-color: var(--accent); outline: none; box-shadow: 0 0 0 3px rgba(0, 163, 224, .2); }
+#options input[type=number], #options input[type=text], #options select, #options textarea, #slicer input[type=number], #slicer input[type=text], #slicer select, #slicer textarea, .toolbar select, .drop select { border-radius: 6px; background: var(--field); border: 1px solid var(--line); transition: border-color .2s, box-shadow .2s; }
+#options input:focus, #options select:focus, #options textarea:focus, #slicer input:focus, #slicer select:focus, #slicer textarea:focus, .toolbar select:focus { border-color: var(--accent); outline: none; box-shadow: 0 0 0 3px rgba(0, 163, 224, .2); }
 .drop { border-radius: var(--radius); border: 1px dashed var(--line2); }
 .drop:hover, .drop.over { border-color: var(--accent); box-shadow: var(--glow); }
 .viewport, .krl, .col-chart, .col-tablewrap { border-radius: var(--radius); }

@@ -14,7 +14,7 @@
     <div class="grow">
       <div class="logo" role="img" aria-label="Robco"></div>
       <h1>gcode2krl</h1>
-      <div class="sub">G-code → KUKA KRL · łuki z łamanych <span id="version"></span></div>
+      <div class="sub">model → ścieżka → KUKA KRL · slicer 6-osiowy <span id="version"></span></div>
     </div>
     <div class="theme-switch" role="group" aria-label="motyw">
       <button type="button" data-theme="auto" title="jak system">auto</button>
@@ -23,7 +23,49 @@
     </div>
   </header>
 
-  <section id="drop" class="drop" title="Kliknij lub upuść plik G-code">
+  <nav class="src-tabs" role="tablist" aria-label="źródło ścieżki">
+    <button type="button" class="src-tab active" data-src="slicer" role="tab"><b>1 · Slicer</b><small>model STEP/STL/OBJ → ścieżka</small></button>
+    <button type="button" class="src-tab" data-src="gcode" role="tab"><b>2 · Gotowy G-code</b><small>z innego slicera lub CAM</small></button>
+  </nav>
+
+  <section id="slicer" class="src-panel">
+    <div class="src-head">Slicer: model → ścieżka</div>
+    <div class="frame-block">
+      <div class="fb-head"><span>Model do pokrojenia</span>
+        <label class="file-btn mini">wczytaj STEP/STL/OBJ<input type="file" id="slice-file" accept=".stl,.obj,.step,.stp,.iges,.igs" hidden></label>
+      </div>
+      <div class="fb-row"><select id="slice-mesh" title="wgrane modele"><option value="">wybierz model…</option></select>
+        <select id="slice-units" title="jednostki STL/OBJ"><option value="mm">mm</option><option value="cm">cm</option><option value="m">m</option><option value="in">cale</option></select></div>
+      <div class="row"><span>Wysokość warstwy / pierwsza [mm]</span><span class="pair2"><input type="number" id="sl_layer_height" value="1" min="0.05" step="0.1"><input type="number" id="sl_first_layer_height" value="1" min="0.05" step="0.1"></span></div>
+      <div class="row"><span>Szerokość ścieżki [mm]</span><input type="number" id="sl_bead_width" value="2" min="0.1" step="0.1"></div>
+      <div class="row"><span>Obrysy / warstwy dół / góra</span><span class="pair3"><input type="number" id="sl_perimeters" value="2" min="0" step="1"><input type="number" id="sl_bottom_layers" value="3" min="0" step="1"><input type="number" id="sl_top_layers" value="3" min="0" step="1"></span></div>
+      <div class="row"><span>Wypełnienie [%] / wzór / kąt</span><span class="pair3"><input type="number" id="sl_infill" value="20" min="0" max="100" step="5"><select id="sl_infill_pattern"><option value="lines">linie</option><option value="grid">siatka</option><option value="concentric">koncentryczne</option><option value="none">brak</option></select><input type="number" id="sl_infill_angle" value="45" step="15"></select></span></div>
+      <div class="row"><span>Prędkości obrys zewn. / wewn. / wypełnienie [mm/min]</span><span class="pair3"><input type="number" id="sl_speed_outer" value="1200" step="100"><input type="number" id="sl_speed_perimeter" value="1800" step="100"><input type="number" id="sl_speed_infill" value="2400" step="100"></span></div>
+      <div class="row"><span>Pierwsza warstwa / przejazdy [mm/min]</span><span class="pair2"><input type="number" id="sl_speed_first_layer" value="900" step="100"><input type="number" id="sl_speed_travel" value="6000" step="500"></span></div>
+      <div class="row"><span>Ekstruzja E</span><select id="sl_extrusion_mode"><option value="volumetric">objętościowa (mm³)</option><option value="filament">filament 1,75</option><option value="none">bez E</option></select></div>
+      <div class="row"><span>Retrakcja [mm] / z-hop [mm]</span><span class="pair2"><input type="number" id="sl_retract_length" value="0" min="0" step="0.5"><input type="number" id="sl_z_hop" value="0" min="0" step="0.5"></span></div>
+      <div class="row"><span>Szew</span><select id="sl_seam"><option value="nearest">najbliższy</option><option value="aligned">wyrównany</option><option value="random">losowy</option></select></div>
+      <div class="row"><span>Skirt pętle / brim [mm]</span><span class="pair2"><input type="number" id="sl_skirt_loops" value="0" min="0" step="1"><input type="number" id="sl_brim_width" value="0" min="0" step="1"></span></div>
+      <div class="fb-head" style="margin-top:8px"><span>Tryb warstw (robot 6-osiowy)</span></div>
+      <div class="row"><span>Warstwy</span><select id="sl_layer_mode">
+        <option value="planar">płaskie</option>
+        <option value="conical">stożkowe (RotBot)</option>
+        <option value="bottom">konforemne do powierzchni dolnej</option>
+        <option value="top">konforemne do powierzchni górnej</option>
+        <option value="multi">wielokierunkowe (segmenty)</option></select></div>
+      <div class="row mode-conical"><span>Stożek: kąt [°] / kierunek</span><span class="pair2"><input type="number" id="sl_cone_angle" value="30" min="1" max="80" step="5"><select id="sl_cone_outward"><option value="true">na zewnątrz</option><option value="false">do środka</option></select></span></div>
+      <div class="row mode-conical"><span>Oś stożka X, Y <small>(puste = środek)</small></span><span class="pair2"><input type="number" id="sl_cone_cx" placeholder="auto" step="5"><input type="number" id="sl_cone_cy" placeholder="auto" step="5"></span></div>
+      <div class="row mode-hf"><span>Pole wysokości: komórka / maks. nachylenie [°]</span><span class="pair2"><input type="number" id="sl_hf_cell" value="5" min="0.5" step="1"><input type="number" id="sl_max_slope" value="45" min="1" max="85" step="5"></span></div>
+      <label class="col mode-multi"><span>Segmenty <small>(segment NAZWA dx dy dz; plane px py pz nx ny nz, strona wskazana przez normalną)</small></span>
+        <textarea id="sl_segments" rows="5" spellcheck="false" placeholder="segment korpus 0 0 1&#10;plane 0 0 40 0 0 -1&#10;segment ramie 1 0 0&#10;plane 0 0 40 0 0 1"></textarea></label>
+      <label class="row check"><input type="checkbox" id="sl_tool_axis" checked><span>Zapisuj oś narzędzia I J K przy każdym punkcie</span></label>
+      <div class="row"><span>Wskaźnik podpór: maks. nawis [°]</span><input type="number" id="sl_overhang_max" value="45" min="0" max="90" step="5"></div>
+      <div class="fb-row"><button type="button" id="btn-slice" class="primary">Pokrój i tłumacz na KRL</button><span id="slice-info" class="muted"></span></div>
+      <div class="row-note muted">Własny slicer (MIT): warstwy, obrysy, wypełnienie, przejazdy, E, oś narzędzia. Po pokrojeniu ścieżka od razu przechodzi przez translator (łuki, KRL, zasięg i kolizje robota); „Ekstruder” w sekcji M-kody włącza się automatycznie.</div>
+    </div>
+  </section>
+
+  <section id="drop" class="drop src-panel hidden" title="Kliknij lub upuść plik G-code">
     <input type="file" id="file-input" accept=".nc,.gcode,.tap,.ngc,.txt,.cnc,.mpf,.iso" hidden>
     <div class="drop-icon">⬇</div>
     <div class="drop-text">
@@ -66,43 +108,6 @@
       <label class="row"><span>Orientacja A B C [°]</span><input type="text" id="opt_abc" data-default="0 180 0" value="0 180 0"></label>
       <label class="row"><span>Przesunięcie X Y Z [mm]</span><input type="text" id="opt_offset" data-default="0 0 0" value="0 0 0"></label>
       <label class="row"><span>Pozycja startowa X Y Z</span><input type="text" id="opt_start" data-default="0 0 0" value="0 0 0"></label>
-    </details>
-
-    <details id="slicer">
-      <summary>Slicer: model → G-code</summary>
-      <div class="frame-block">
-        <div class="fb-head"><span>Model do pokrojenia</span>
-          <label class="file-btn mini">wczytaj STEP/STL/OBJ<input type="file" id="slice-file" accept=".stl,.obj,.step,.stp,.iges,.igs" hidden></label>
-        </div>
-        <div class="fb-row"><select id="slice-mesh" title="wgrane modele"><option value="">wybierz model…</option></select>
-          <select id="slice-units" title="jednostki STL/OBJ"><option value="mm">mm</option><option value="cm">cm</option><option value="m">m</option><option value="in">cale</option></select></div>
-        <div class="row"><span>Wysokość warstwy / pierwsza [mm]</span><span class="pair2"><input type="number" id="sl_layer_height" value="1" min="0.05" step="0.1"><input type="number" id="sl_first_layer_height" value="1" min="0.05" step="0.1"></span></div>
-        <div class="row"><span>Szerokość ścieżki [mm]</span><input type="number" id="sl_bead_width" value="2" min="0.1" step="0.1"></div>
-        <div class="row"><span>Obrysy / warstwy dół / góra</span><span class="pair3"><input type="number" id="sl_perimeters" value="2" min="0" step="1"><input type="number" id="sl_bottom_layers" value="3" min="0" step="1"><input type="number" id="sl_top_layers" value="3" min="0" step="1"></span></div>
-        <div class="row"><span>Wypełnienie [%] / wzór / kąt</span><span class="pair3"><input type="number" id="sl_infill" value="20" min="0" max="100" step="5"><select id="sl_infill_pattern"><option value="lines">linie</option><option value="grid">siatka</option><option value="concentric">koncentryczne</option><option value="none">brak</option></select><input type="number" id="sl_infill_angle" value="45" step="15"></select></span></div>
-        <div class="row"><span>Prędkości obrys zewn. / wewn. / wypełnienie [mm/min]</span><span class="pair3"><input type="number" id="sl_speed_outer" value="1200" step="100"><input type="number" id="sl_speed_perimeter" value="1800" step="100"><input type="number" id="sl_speed_infill" value="2400" step="100"></span></div>
-        <div class="row"><span>Pierwsza warstwa / przejazdy [mm/min]</span><span class="pair2"><input type="number" id="sl_speed_first_layer" value="900" step="100"><input type="number" id="sl_speed_travel" value="6000" step="500"></span></div>
-        <div class="row"><span>Ekstruzja E</span><select id="sl_extrusion_mode"><option value="volumetric">objętościowa (mm³)</option><option value="filament">filament 1,75</option><option value="none">bez E</option></select></div>
-        <div class="row"><span>Retrakcja [mm] / z-hop [mm]</span><span class="pair2"><input type="number" id="sl_retract_length" value="0" min="0" step="0.5"><input type="number" id="sl_z_hop" value="0" min="0" step="0.5"></span></div>
-        <div class="row"><span>Szew</span><select id="sl_seam"><option value="nearest">najbliższy</option><option value="aligned">wyrównany</option><option value="random">losowy</option></select></div>
-        <div class="row"><span>Skirt pętle / brim [mm]</span><span class="pair2"><input type="number" id="sl_skirt_loops" value="0" min="0" step="1"><input type="number" id="sl_brim_width" value="0" min="0" step="1"></span></div>
-        <div class="fb-head" style="margin-top:8px"><span>Tryb warstw (robot 6-osiowy)</span></div>
-        <div class="row"><span>Warstwy</span><select id="sl_layer_mode">
-          <option value="planar">płaskie</option>
-          <option value="conical">stożkowe (RotBot)</option>
-          <option value="bottom">konforemne do powierzchni dolnej</option>
-          <option value="top">konforemne do powierzchni górnej</option>
-          <option value="multi">wielokierunkowe (segmenty)</option></select></div>
-        <div class="row mode-conical"><span>Stożek: kąt [°] / kierunek</span><span class="pair2"><input type="number" id="sl_cone_angle" value="30" min="1" max="80" step="5"><select id="sl_cone_outward"><option value="true">na zewnątrz</option><option value="false">do środka</option></select></span></div>
-        <div class="row mode-conical"><span>Oś stożka X, Y <small>(puste = środek)</small></span><span class="pair2"><input type="number" id="sl_cone_cx" placeholder="auto" step="5"><input type="number" id="sl_cone_cy" placeholder="auto" step="5"></span></div>
-        <div class="row mode-hf"><span>Pole wysokości: komórka / maks. nachylenie [°]</span><span class="pair2"><input type="number" id="sl_hf_cell" value="5" min="0.5" step="1"><input type="number" id="sl_max_slope" value="45" min="1" max="85" step="5"></span></div>
-        <label class="col mode-multi"><span>Segmenty <small>(segment NAZWA dx dy dz; plane px py pz nx ny nz, strona wskazana przez normalną)</small></span>
-          <textarea id="sl_segments" rows="5" spellcheck="false" placeholder="segment korpus 0 0 1&#10;plane 0 0 40 0 0 -1&#10;segment ramie 1 0 0&#10;plane 0 0 40 0 0 1"></textarea></label>
-        <label class="row check"><input type="checkbox" id="sl_tool_axis" checked><span>Zapisuj oś narzędzia I J K przy każdym punkcie</span></label>
-        <div class="row"><span>Wskaźnik podpór: maks. nawis [°]</span><input type="number" id="sl_overhang_max" value="45" min="0" max="90" step="5"></div>
-        <div class="fb-row"><button type="button" id="btn-slice" class="primary">Pokrój i wczytaj G-code</button><span id="slice-info" class="muted"></span></div>
-        <div class="row-note muted">Własny slicer (MIT): warstwy, obrysy, wypełnienie, przejazdy, E. Wynik trafia do translatora jak wgrany plik; włącz „Ekstruder” w sekcji M-kody, żeby KRL przełączał wyjście ekstrudera na ruchach z E.</div>
-      </div>
     </details>
 
     <details open id="cell-setup">
@@ -215,9 +220,9 @@
 <main id="main">
   <div id="empty" class="empty">
     <div class="empty-card">
-      <h2>Wgraj G-code</h2>
-      <p>Translator rozpoznaje łuki zapisane jako ciągi G1, zamienia je na <b>SCIRC</b>, resztę na <b>SLIN</b> i <b>SPL</b>, i generuje pliki <b>.src/.dat</b> dla KUKA KRC4.</p>
-      <p class="muted">Upuść plik gdziekolwiek w oknie albo wybierz przykład po lewej.</p>
+      <h2>Model → ścieżka → KRL</h2>
+      <p><b>Krok 1:</b> wczytaj model STEP/STL/OBJ i pokrój go w slicerze (warstwy płaskie, stożkowe, konforemne albo wielokierunkowe). <b>Krok 2:</b> translator zamienia ścieżkę na <b>SLIN</b>/<b>SCIRC</b>/<b>SPL</b> z orientacją narzędzia, sprawdza zasięg i kolizje robota i generuje <b>.src/.dat</b> dla KUKA KRC4.</p>
+      <p class="muted">Masz gotowy G-code z innego slicera lub CAM? Wybierz „Gotowy G-code” po lewej, upuść plik gdziekolwiek w oknie albo wybierz przykład.</p>
       <ul class="keys"><li><kbd>F</kbd> dopasuj widok</li><li><kbd>T</kbd> z góry</li><li><kbd>I</kbd> izometria</li><li><kbd>Ctrl+⏎</kbd> tłumacz</li></ul>
     </div>
   </div>

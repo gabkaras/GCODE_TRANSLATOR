@@ -100,7 +100,19 @@
     state.fitted = false;
     translate();
   }
+  // source of the path: the slicer (step 1) or a ready-made G-code file (step 2)
+  function setSource(src, save) {
+    $$('.src-tab').forEach(b => b.classList.toggle('active', b.dataset.src === src));
+    $('#slicer').classList.toggle('hidden', src !== 'slicer');
+    $('#drop').classList.toggle('hidden', src !== 'gcode');
+    if (save) { try { localStorage.setItem('gcode2krl.source', src); } catch (e) {} }
+  }
+  $$('.src-tab').forEach(b => b.addEventListener('click', () => setSource(b.dataset.src, true)));
+  let savedSource = 'slicer';
+  try { savedSource = localStorage.getItem('gcode2krl.source') || 'slicer'; } catch (e) {}
+  setSource(savedSource, false);
   function readFile(file) {
+    setSource('gcode', true);
     const r = new FileReader();
     r.onload = () => setGcode(String(r.result), file.name);
     r.readAsText(file);
@@ -119,6 +131,7 @@
     for (const n of d.examples) { const o = document.createElement('option'); o.value = n; o.textContent = n; sel.appendChild(o); }
   }).catch(() => {});
   $('#examples').addEventListener('change', async e => {
+    if (e.target.value) setSource('gcode', true);
     const n = e.target.value; if (!n) return;
     const d = await (await fetch('/api/example/' + encodeURIComponent(n))).json();
     setGcode(d.gcode, d.name);
