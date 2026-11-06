@@ -14,7 +14,8 @@ def bead_area(width: float, height: float) -> float:
 
 @dataclass
 class SliceParams:
-    """Slicing parameters (mm, mm/min). Defaults suit a robot pellet/filament extruder.
+    """Slicing parameters for robot extrusion (mm, mm/s, mm^3). Defaults suit a 6-axis
+    robot with a pellet / paste extruder (4 mm bead, 2 mm layers).
 
     Feature set follows the big desktop slicers (PrusaSlicer / OrcaSlicer / Cura):
     per-feature widths and speeds, wall order, gap fill, thin walls, XY and
@@ -26,14 +27,14 @@ class SliceParams:
     """
 
     # ---- layers ---------------------------------------------------------
-    layer_height: float = 1.0
-    first_layer_height: float = 1.0
+    layer_height: float = 2.0
+    first_layer_height: float = 2.0
     adaptive_layers: bool = False  # variable layer height from the surface slope (planar only)
-    layer_height_min: float = 0.5
-    layer_height_max: float = 2.0
-    adaptive_quality: float = 0.3  # max stair-step cusp height (mm)
+    layer_height_min: float = 1.0
+    layer_height_max: float = 3.0
+    adaptive_quality: float = 0.5  # max stair-step cusp height (mm)
     # ---- walls ----------------------------------------------------------
-    bead_width: float = 2.0  # default extrusion width (used where a per-feature width is 0)
+    bead_width: float = 4.0  # default extrusion width (nozzle) (used where a per-feature width is 0)
     outer_wall_width: float = 0.0
     inner_wall_width: float = 0.0
     infill_width: float = 0.0
@@ -56,8 +57,8 @@ class SliceParams:
     infill_combine: int = 1  # print sparse infill every N layers with N x flow
     solid_threshold_area: float = 0.0  # sparse areas smaller than this (mm^2) become solid
     # ---- top / bottom ---------------------------------------------------
-    top_layers: int = 3
-    bottom_layers: int = 3
+    top_layers: int = 2
+    bottom_layers: int = 2
     top_pattern: str = "zigzag"  # lines | zigzag | monotonic | concentric
     bottom_pattern: str = "zigzag"
     bridges: bool = True  # detect bridges: straight lines across, anchored on both ends
@@ -75,34 +76,32 @@ class SliceParams:
     support_min_area: float = 4.0  # ignore overhang islands smaller than this (mm^2)
     support_angle: float = 0.0  # support line direction (deg)
     # ---- extrusion ------------------------------------------------------
-    extrusion_mode: str = "volumetric"  # volumetric | filament | none
-    filament_diameter: float = 1.75  # used when extrusion_mode == "filament"
+    extrusion_mode: str = "volumetric"  # volumetric (E in mm^3, drives the robot extruder outputs) | none
     extrusion_multiplier: float = 1.0
     first_layer_flow: float = 1.0
-    max_volumetric_speed: float = 0.0  # mm^3/s, 0 = unlimited (caps the feed of every path)
+    max_volumetric_speed: float = 0.0  # extruder capacity in mm^3/s, 0 = unlimited (caps the feed of every path)
     material_density: float = 1.24  # g/cm^3, for the mass estimate
-    retract_length: float = 0.0  # mm of E to retract on travel (0 = none)
-    retract_speed: float = 1800.0
-    retract_extra_prime: float = 0.0  # extra E after un-retract
+    retract_length: float = 0.0  # mm^3 run backwards before a travel (KRL: reverse output pulse), 0 = none
+    retract_extra_prime: float = 0.0  # extra mm^3 primed after the travel (KRL: WAIT with the extruder on)
     retract_layer_change: bool = False
     min_travel_for_retract: float = 5.0
     z_hop: float = 0.0
     wipe_distance: float = 0.0  # mm moved back along a closed loop while retracting
     coast_length: float = 0.0  # mm at the end of a closed loop printed without extrusion
-    # ---- speeds (mm/min) ------------------------------------------------
-    speed_perimeter: float = 1800.0
-    speed_outer: float = 1200.0
-    speed_infill: float = 2400.0
-    speed_top: float = 1200.0
-    speed_bridge: float = 900.0
-    speed_overhang: float = 600.0
-    speed_gap: float = 1200.0
-    speed_support: float = 2400.0
-    speed_first_layer: float = 900.0
-    speed_travel: float = 6000.0
-    small_perimeter_speed: float = 600.0
+    # ---- speeds (mm/s, TCP speed of the robot) --------------------------
+    speed_perimeter: float = 30.0
+    speed_outer: float = 20.0
+    speed_infill: float = 40.0
+    speed_top: float = 20.0
+    speed_bridge: float = 15.0
+    speed_overhang: float = 10.0
+    speed_gap: float = 20.0
+    speed_support: float = 40.0
+    speed_first_layer: float = 15.0
+    speed_travel: float = 150.0
+    small_perimeter_speed: float = 10.0
     min_layer_time: float = 0.0  # s; slow the whole layer down so it takes at least this long
-    min_speed: float = 300.0  # floor for the layer-time slow-down
+    min_speed: float = 5.0  # mm/s floor for the layer-time slow-down
     # ---- adhesion -------------------------------------------------------
     skirt_loops: int = 0
     skirt_distance: float = 5.0
@@ -113,8 +112,6 @@ class SliceParams:
     min_feature: float = 0.3  # polygons thinner than this are dropped
     origin_center: bool = True  # move the model so its XY bounding box centre is at (0, 0)
     z_offset: float = 0.0
-    start_gcode: str = ""
-    end_gcode: str = ""
     comments: bool = True
     # ---- multi-axis layer modes (deform -> slice -> undeform) -----------
     layer_mode: str = "planar"  # planar | conical | bottom | top
@@ -136,12 +133,9 @@ class SliceParams:
     def extrusion_per_mm(self, width: float, height: float) -> float:
         """E units per mm of path for a bead of width x height (rounded-rectangle cross section)."""
         area = bead_area(width, height) * self.extrusion_multiplier
-        if self.extrusion_mode == "volumetric":
-            return area  # mm^3 per mm
-        if self.extrusion_mode == "filament":
-            fil = PI * (self.filament_diameter / 2.0) ** 2
-            return area / fil
-        return 0.0
+        if self.extrusion_mode == "none":
+            return 0.0
+        return area  # mm^3 per mm
 
     @property
     def planar(self) -> bool:

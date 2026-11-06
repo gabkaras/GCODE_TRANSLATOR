@@ -110,9 +110,9 @@ def test_compensation_and_elephant_foot():
 
 def test_small_perimeter_speed_and_seam_rear():
     tris = np.concatenate([box((40, 40, 4), (0, 0, 2)), box((4, 4, 4), (30, 0, 2))])
-    _, _, layers = slice_triangles(tris, P(small_perimeter_length=30, small_perimeter_speed=333, seam="rear", infill_density=0), "sp")
+    _, _, layers = slice_triangles(tris, P(small_perimeter_length=30, small_perimeter_speed=3, seam="rear", infill_density=0), "sp")
     walls = [q for q in layers[1].paths if q.kind == "WALL-OUTER"]
-    assert any(q.speed == 333 for q in walls) and any(q.speed != 333 for q in walls)
+    assert any(q.speed == 3 for q in walls) and any(q.speed != 3 for q in walls)
     big = max(walls, key=lambda q: len(q.points))
     assert big.points[0][1] == pytest.approx(big.points[:, 1].max())  # rear seam starts at max Y
 
@@ -212,7 +212,7 @@ def test_flow_controls_and_volumetric_cap():
 def test_min_layer_time_slows_small_layers():
     tris = box((10, 10, 3), (0, 0, 1.5))
     _, st1, _ = slice_triangles(tris, P(), "a")
-    _, st2, _ = slice_triangles(tris, P(min_layer_time=30, min_speed=60), "b")
+    _, st2, _ = slice_triangles(tris, P(min_layer_time=30, min_speed=1), "b")
     assert st2.slowed_layers == 3 and st2.time_s > 2 * st1.time_s
 
 

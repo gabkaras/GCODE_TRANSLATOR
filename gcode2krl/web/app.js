@@ -46,6 +46,7 @@
 
   // ----------------------------------------------------------------- options
   const OPTION_IDS = ['extruder','extruder_out','extruder_analog','extruder_anout','extruder_flow_full','extruder_delay',
+    'extruder_trigger','extruder_on_delay','extruder_off_delay','extruder_reverse_out','krl_start','krl_end',
     'orient_solve','spin_step','singular_deg','max_tilt','robot','base_frame','tool_frame','base_literal','tool_literal','robot_samples','path_step','margin',
     'tbl_sx','tbl_sy','tbl_cx','tbl_cy','mat_t','mat_pad','tool_mesh','tool_mesh_units',
     'tool_radius','cutter_len','cutter_radius','obstacles','tol','max_radius','min_radius','min_arc_points','refine_shift','spl_max_segment','corner_angle',
@@ -64,6 +65,14 @@
     return o;
   }
   function saveOptions() { try { localStorage.setItem('gcode2krl.options', JSON.stringify(readOptions())); } catch (e) {} }
+  // the GUI speaks robot units (mm/s, ms); the API keeps the G-code conventions (mm/min, s)
+  function sendOptions() {
+    const o = readOptions();
+    if (o.default_feed !== undefined) o.default_feed = Number(o.default_feed) * 60;
+    if (o.extruder_on_delay !== undefined) o.extruder_on_delay = Number(o.extruder_on_delay) / 1000;
+    if (o.extruder_off_delay !== undefined) o.extruder_off_delay = Number(o.extruder_off_delay) / 1000;
+    return o;
+  }
   function loadOptions() {
     let saved = null;
     try { saved = JSON.parse(localStorage.getItem('gcode2krl.options') || 'null'); } catch (e) {}
@@ -177,7 +186,7 @@
     try {
       const res = await fetch('/api/translate', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ gcode: state.gcode, filename: state.filename, options: readOptions() }),
+        body: JSON.stringify({ gcode: state.gcode, filename: state.filename, options: sendOptions() }),
       });
       const data = await res.json();
       if (!res.ok || data.error) throw new Error(data.error || res.statusText);

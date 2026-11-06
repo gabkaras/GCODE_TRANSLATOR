@@ -1,4 +1,6 @@
-"""Write layer paths as G-code (Marlin/RepRap flavour, absolute XYZ, absolute E).
+"""Write layer paths as G-code (absolute XYZ, absolute volumetric E, F in mm/min
+converted from the mm/s speeds of the parameters). The G-code is the hand-over to the
+KRL translator and an export format; the extruder itself is driven from KRL.
 
 Handles per-segment speeds (overhang slow-down), per-path flow (bridges, combined
 infill), first-layer flow, a volumetric speed cap, minimum layer time, retraction
@@ -63,8 +65,6 @@ def write_gcode(layers: list[Layer], params: SliceParams, source: str = "") -> t
     out.append("G90 ; absolute")
     out.append("M82 ; absolute E")
     out.append("G92 E0")
-    if p.start_gcode.strip():
-        out.extend(p.start_gcode.splitlines())
     e = 0.0
     cur = None  # current XYZ
     retracted = False
@@ -94,7 +94,7 @@ def write_gcode(layers: list[Layer], params: SliceParams, source: str = "") -> t
             feed = path.speed
             if p.max_volumetric_speed > 0:
                 area = bead_area(path.width, L.height) * path.flow * flow_layer
-                cap = p.max_volumetric_speed / max(area, 1e-9) * 60.0  # mm/min
+                cap = p.max_volumetric_speed / max(area, 1e-9)  # mm/s
                 feed = min(feed, cap)
             feeds.append(feed)
         t_nom = 0.0
@@ -104,16 +104,16 @@ def write_gcode(layers: list[Layer], params: SliceParams, source: str = "") -> t
                 continue
             seg = np.linalg.norm(np.diff(P, axis=0), axis=1)
             sp = _seg_speeds(path, feed)[1:len(P)]
-            t_nom += float((seg / np.maximum(sp / 60.0, 1e-6)).sum())
+            t_nom += float((seg / np.maximum(sp, 1e-6)).sum())
             if path.closed:
-                t_nom += float(np.linalg.norm(P[0] - P[-1]) / max(sp[0] / 60.0, 1e-6))
+                t_nom += float(np.linalg.norm(P[0] - P[-1]) / max(sp[0], 1e-6))
         scale = 1.0
         if p.min_layer_time > 0 and 0 < t_nom < p.min_layer_time:
             scale = t_nom / p.min_layer_time
             st.slowed_layers += 1
         if retracted is False and p.retract_layer_change and p.retract_length > 0 and cur is not None:
             e -= p.retract_length
-            out.append(f"G1 E{e:.5f} F{p.retract_speed:.0f}")
+            out.append(f"G1 E{e:.5f}")
             retracted = True
         for path, feed in zip(L.paths, feeds):
             pts = path.points
@@ -141,26 +141,26 @@ def write_gcode(layers: list[Layer], params: SliceParams, source: str = "") -> t
             if cur is None or dist > 1e-3:
                 if p.retract_length > 0 and dist >= p.min_travel_for_retract and not retracted:
                     e -= p.retract_length
-                    out.append(f"G1 E{e:.5f} F{p.retract_speed:.0f}")
+                    out.append(f"G1 E{e:.5f}")
                     retracted = True
                 hop = p.z_hop if (p.z_hop > 0 and dist >= p.min_travel_for_retract) else 0.0
                 zt = float(start[2])
                 ax = f" I{axes[0][0]:.4f} J{axes[0][1]:.4f} K{axes[0][2]:.4f}" if axes is not None else ""
                 if hop > 0:
-                    out.append(f"G0 Z{f(max(zt, (cur[2] if cur is not None else zt)) + hop)} F{travel_feed():.0f}")
-                    out.append(f"G0 X{f(start[0])} Y{f(start[1])}{ax} F{travel_feed():.0f}")
-                    out.append(f"G0 Z{f(zt)} F{travel_feed():.0f}")
+                    out.append(f"G0 Z{f(max(zt, (cur[2] if cur is not None else zt)) + hop)} F{travel_feed() * 60:.0f}")
+                    out.append(f"G0 X{f(start[0])} Y{f(start[1])}{ax} F{travel_feed() * 60:.0f}")
+                    out.append(f"G0 Z{f(zt)} F{travel_feed() * 60:.0f}")
                 elif planar and cur is not None and abs(zt - cur[2]) > 1e-6 and abs(start[0] - cur[0]) < 1e-6 and abs(start[1] - cur[1]) < 1e-6:
-                    out.append(f"G0 Z{f(zt)} F{travel_feed():.0f}")
+                    out.append(f"G0 Z{f(zt)} F{travel_feed() * 60:.0f}")
                 else:
                     if planar and (cur is None or abs(zt - cur[2]) > 1e-6):
-                        out.append(f"G0 Z{f(zt)} F{travel_feed():.0f}")
-                    out.append(f"G0 X{f(start[0])} Y{f(start[1])}{'' if planar else ' Z' + f(zt)}{ax} F{travel_feed():.0f}")
+                        out.append(f"G0 Z{f(zt)} F{travel_feed() * 60:.0f}")
+                    out.append(f"G0 X{f(start[0])} Y{f(start[1])}{'' if planar else ' Z' + f(zt)}{ax} F{travel_feed() * 60:.0f}")
                 st.travel_length += dist
-                st.time_s += dist / (travel_feed() / 60.0)
+                st.time_s += dist / travel_feed()
                 if retracted:
                     e += p.retract_length + p.retract_extra_prime
-                    out.append(f"G1 E{e:.5f} F{p.retract_speed:.0f}")
+                    out.append(f"G1 E{e:.5f}")
                     retracted = False
             # ---- extrude along the path
             idx = list(range(1, len(P3))) + ([0] if path.closed else [])
@@ -176,8 +176,8 @@ def write_gcode(layers: list[Layer], params: SliceParams, source: str = "") -> t
                     prev_i = i
                     continue
                 feed_i = float(speeds[i] if i < len(speeds) else speeds[0])
-                if cur_feed is None or abs(feed_i - cur_feed) >= 1.0:
-                    out.append(f"G1 F{feed_i:.0f}")
+                if cur_feed is None or abs(feed_i - cur_feed) >= 0.05:
+                    out.append(f"G1 F{feed_i * 60:.0f}")
                     cur_feed = feed_i
                 ax = f" I{axes[i][0]:.4f} J{axes[i][1]:.4f} K{axes[i][2]:.4f}" if axes is not None else ""
                 zs = "" if planar else f" Z{f(q[2])}"
@@ -201,7 +201,7 @@ def write_gcode(layers: list[Layer], params: SliceParams, source: str = "") -> t
                 if path.speeds is not None and i < len(path.speeds) and float(path.speeds[i]) < path.speed - 1.0 and path.kind in ("WALL-OUTER", "WALL-INNER", "SKIN"):
                     st.overhang_length += d
                 st.extrusion_length += d
-                dt = d / (feed_i / 60.0)
+                dt = d / feed_i
                 st.time_s += dt
                 st.by_type[path.kind] = st.by_type.get(path.kind, 0.0) + d
                 st.by_type_time[path.kind] = st.by_type_time.get(path.kind, 0.0) + dt
@@ -222,7 +222,7 @@ def write_gcode(layers: list[Layer], params: SliceParams, source: str = "") -> t
                             k += 1
                             continue
                         m = b if d <= left else a + (b - a) * (left / d)
-                        out.append(f"G1 X{f(m[0])} Y{f(m[1])}{'' if planar else ' Z' + f(m[2])} E{e:.5f} F{feed:.0f}")
+                        out.append(f"G1 X{f(m[0])} Y{f(m[1])}{'' if planar else ' Z' + f(m[2])} E{e:.5f} F{feed * 60:.0f}")
                         left -= min(d, left)
                         cur = m
                         k += 1
@@ -232,8 +232,6 @@ def write_gcode(layers: list[Layer], params: SliceParams, source: str = "") -> t
             all_pts.append(P3)
     st.e_total = e
     st.mass_g = st.volume_mm3 / 1000.0 * density
-    if p.end_gcode.strip():
-        out.extend(p.end_gcode.splitlines())
     out.append("M30")
     if all_pts:
         a = np.concatenate(all_pts)

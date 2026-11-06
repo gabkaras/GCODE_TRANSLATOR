@@ -78,7 +78,9 @@ def test_slice_box_end_to_end():
     ev = [i.kind for i in items if isinstance(i, EventItem)]
     assert "extruder_on" in ev and "extruder_off" in ev
     src = write_krl(items, KrlOptions(name="BOX", extruder_out=7), stats).files["BOX.src"]
-    assert "$OUT[7] = TRUE" in src and "$OUT[7] = FALSE" in src
+    # robot-native switching: triggers at the start / end of each extrusion, no advance-run stop
+    assert "TRIGGER WHEN DISTANCE=0 DELAY=0 DO $OUT[7]=TRUE PRIO=-1" in src and "TRIGGER WHEN PATH=0 DELAY=0 DO $OUT[7]=FALSE PRIO=-1" in src
+    assert "$OUT[7] = FALSE" not in src  # every switch-off is a trigger at a block end
     assert st.bounds["max"][2] == pytest.approx(20.0)
 
 
@@ -91,7 +93,7 @@ def test_relative_e_and_g92():
 def test_concentric_and_grid_patterns():
     tris = box((30, 30, 6), (0, 0, 3))
     for pat in ("concentric", "grid", "none"):
-        gcode, st, layers = slice_triangles(tris, SliceParams(layer_height=1, bead_width=2, perimeters=1, infill_density=0.2, infill_pattern=pat, top_layers=1, bottom_layers=1))
+        gcode, st, layers = slice_triangles(tris, SliceParams(layer_height=1, first_layer_height=1, bead_width=2, perimeters=1, infill_density=0.2, infill_pattern=pat, top_layers=1, bottom_layers=1))
         assert st.layers == 6
         has_fill = any(q.kind == "FILL" for L in layers for q in L.paths)
         assert has_fill == (pat != "none")

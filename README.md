@@ -26,7 +26,7 @@ STEP/STL ──slicer──> ścieżka (G-code + I J K) ──parser──> ruch
 pip install -e .          # wymaga Python >= 3.10 i numpy
 pip install -e .[test]    # dodatkowo pytest
 pip install -e .[step]    # import STEP/IGES (OpenCASCADE)
-pytest                    # 124 testy
+pytest                    # 129 testów
 ```
 
 ## GUI
@@ -88,8 +88,9 @@ dynamiczne linkowanie), więc licencja projektu pozostaje MIT.
 
 ```bash
 pip install -e .[slicer]
-gcode2krl-slice czesc.step -o czesc.gcode --layer-height 1 --bead-width 2 --perimeters 2 --infill-density 0.2
-gcode2krl czesc.gcode -o out/ --extruder-out 7 --robot KR90R2700PRO --base-frame 1400 0 500 0 0 0
+gcode2krl-slice czesc.step -o czesc.gcode --layer-height 2 --bead-width 4 --perimeters 2 --infill-density 0.2 --speed-outer 20
+gcode2krl czesc.gcode -o out/ --extruder-out 7 --extruder-reverse-out 8 --extruder-on-delay -0.1 --extruder-anout 2 --extruder-flow-full 60 \
+          --robot KR90R2700PRO --base-frame 1400 0 500 0 0 0
 ```
 
 Co robi (zestaw funkcji wzorowany na PrusaSlicer / OrcaSlicer / Cura; każdy
@@ -126,14 +127,15 @@ parametr jest w GUI, w sekcji *Slicer*, z przyciskiem „?”):
   siatka o stałym kierunku, minimalny obszar wysepki,
 * **przyczepność**: skirt, brim, **raft** (podstawa rzadka, warstwy pośrednie,
   górna pełna, model przesunięty w górę),
-* **ekstruzja**: E objętościowe / filament / bez E, mnożnik, wydatek pierwszej
-  warstwy, **limit objętościowy** mm³/s (obcina posuw), gęstość materiału →
-  szacunek masy; **retrakcja** z prędkością, dodatkowym podaniem, minimalnym
-  przejazdem, przy zmianie warstwy, **z-hop**, **wipe** (cofanie po ścieżce
-  przy retrakcji), **coasting** (koniec obrysu bez ekstruzji),
-* **prędkości** per funkcja (obrys zewn./wewn., wypełnienie, góra/dół, mosty,
-  nawisy, szczeliny, podpory, małe obrysy, pierwsza warstwa, przejazdy),
-  **minimalny czas warstwy** z dolną granicą prędkości,
+* **materiał**: mm³ na odcinek (albo sama geometria), mnożnik wydatku,
+  wydatek pierwszej warstwy, **wydajność ekstrudera** mm³/s (obcina prędkość),
+  gęstość materiału → szacunek masy; **cofnięcie** ekstrudera w mm³ z
+  dodatkowym dopuszczeniem, minimalnym przejazdem, przy zmianie warstwy,
+  **podniesienie na przejeździe**, **wipe** (cofanie po ścieżce), **coasting**
+  (koniec obrysu z wyłączonym ekstruderem),
+* **prędkości TCP w mm/s** per funkcja (obrys zewn./wewn., wypełnienie,
+  góra/dół, mosty, nawisy, szczeliny, podpory, małe obrysy, pierwsza warstwa,
+  przejazdy), **minimalny czas warstwy** z dolną granicą prędkości,
 * **kolejność**: skirt/brim → raft → wyspa po wyspie (obrysy → gap → mosty →
   skin → wypełnienie) → podpory, najbliższy sąsiad w każdym bloku,
 * **G-code** z `;LAYER_COUNT`, `;LAYER`, `;Z`, `;HEIGHT`, `;TYPE` (WALL-OUTER,
@@ -149,6 +151,39 @@ wygładzania wydatku (pressure advance jest po stronie sterownika ekstrudera).
 Podpory, raft, spirala i warstwy adaptacyjne działają tylko dla warstw
 płaskich; tryby stożkowe i konforemne mają nawisy, gap fill, mosty i wszystkie
 pozostałe funkcje liczone w przestrzeni warstw.
+
+### Stricte pod robota: jednostki, ekstruder, program
+
+Slicer i translator nie udają drukarki FDM. Parametry są w jednostkach robota
+i ekstrudera przemysłowego, a sterowanie materiałem jest natywne dla KRL:
+
+![ekstruder: wyjścia robota](docs/gui_robot_extruder.png)
+
+* **prędkości w mm/s** (prędkość TCP), w KRL `$VEL.CP` w m/s; przejazdy jako
+  `LIN` z własną prędkością; **ilość materiału w mm³** na odcinek (szerokość ×
+  wysokość × długość), bez filamentu i bez M-kodów drukarkowych,
+* **włączanie ekstrudera przez TRIGGER**: `TRIGGER WHEN DISTANCE=0 DELAY=t DO
+  $OUT[n]=TRUE PRIO=-1` przed blokiem SPLINE (start ścieżki) i `TRIGGER WHEN
+  PATH=0 DELAY=t DO $OUT[n]=FALSE PRIO=-1` (koniec bloku) — sterownik wykonuje
+  je w locie, bez zatrzymania wyprzedzania, więc ruch zostaje ciągły;
+  opóźnienia włączenia/wyłączenia w ms kompensują rozruch i dobieg ślimaka
+  (opcja: zwykłe `$OUT` z zatrzymaniem),
+* **wydatek analogowo ∝ prędkości TCP**: `ANOUT ON $ANOUT[n] = k * $VEL_ACT`
+  z `$VEL_FLT_OFF`, k z mm³/mm ścieżki i wydajności ekstrudera przy 1.0; sygnał
+  jest włączany raz i bramkowany wyjściem cyfrowym na przejazdach (bez bramki:
+  `ANOUT OFF/ON` wokół przejazdów), zmiana wydatku (mosty, łączone warstwy,
+  inna wysokość) = nowa linia `ANOUT ON`,
+* **cofnięcie i dopuszczenie** ze slicera (mm³) to w KRL impuls na wyjściu
+  rewersu (`$OUT[r]=TRUE`, `WAIT SEC t`, `$OUT[r]=FALSE`, t = mm³ / wydajność)
+  oraz `WAIT SEC` z włączonym ekstruderem przed startem ścieżki,
+* **wydajność ekstrudera** (mm³/s) obcina prędkość TCP każdej ścieżki,
+  **minimalny czas warstwy** i **spowolnienie na nawisach** działają na
+  prędkości TCP, więc z wydatkiem analogowym szerokość ścieżki zostaje stała,
+* **własne linie KRL** na starcie (po `$TOOL/$BASE/$VEL`, np. `WAIT FOR
+  $IN[k]` gotowości ekstrudera, grzałki) i na końcu (przed `END`) — z GUI,
+* G-code pozostaje tylko formatem przekazania i eksportu ścieżki (F w mm/min,
+  E objętościowe, I J K osi narzędzia); import G-code z CAM zachowuje obsługę
+  wrzeciona, chłodziwa i M-kodów w osobnej, zwiniętej sekcji.
 
 ### Druk 6-osiowy: tryby warstw i orientacja narzędzia
 

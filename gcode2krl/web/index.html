@@ -14,7 +14,7 @@
     <div class="grow">
       <div class="logo" role="img" aria-label="Robco"></div>
       <h1>gcode2krl</h1>
-      <div class="sub">model → ścieżka → KUKA KRL · slicer 6-osiowy <span id="version"></span></div>
+      <div class="sub">model → ścieżka → program KRL robota · druk 6-osiowy <span id="version"></span></div>
     </div>
     <div class="theme-switch" role="group" aria-label="motyw">
       <button type="button" data-theme="auto" title="jak system">auto</button>
@@ -92,6 +92,8 @@
       <label class="row"><span>Orientacja A B C [°]</span><input type="text" id="opt_abc" data-default="0 180 0" value="0 180 0"></label>
       <label class="row"><span>Przesunięcie X Y Z [mm]</span><input type="text" id="opt_offset" data-default="0 0 0" value="0 0 0"></label>
       <label class="row"><span>Pozycja startowa X Y Z</span><input type="text" id="opt_start" data-default="0 0 0" value="0 0 0"></label>
+      <label class="col"><span>Własne linie KRL na starcie <small>(po $TOOL/$BASE/$VEL, przed ruchami)</small></span><textarea id="opt_krl_start" data-default="" rows="2" spellcheck="false" placeholder="; np. $OUT[10] = TRUE  ; grzałka"></textarea></label>
+      <label class="col"><span>Własne linie KRL na końcu <small>(przed END)</small></span><textarea id="opt_krl_end" data-default="" rows="2" spellcheck="false" placeholder="; np. $OUT[10] = FALSE"></textarea></label>
     </details>
 
     <details open id="cell-setup">
@@ -172,7 +174,7 @@
 
     <details>
       <summary>Prędkości i wygładzanie</summary>
-      <label class="row"><span>Posuw domyślny [mm/min]</span><input type="number" id="opt_default_feed" data-default="1000" value="1000" min="1" step="100"></label>
+      <label class="row"><span>Posuw domyślny [mm/s]</span><input type="number" id="opt_default_feed" data-default="20" value="20" min="0.1" step="5"></label>
       <label class="row"><span>G0: $VEL.CP [m/s]</span><input type="number" id="opt_rapid_vel" data-default="0.5" value="0.5" min="0.01" max="3" step="0.05"></label>
       <label class="row"><span>Maks. $VEL.CP [m/s]</span><input type="number" id="opt_max_vel" data-default="2" value="2" min="0.01" max="3" step="0.1"></label>
       <label class="row"><span>$ACC.CP [m/s²]</span><input type="number" id="opt_acc" data-default="2" value="2" min="0.1" max="20" step="0.1"></label>
@@ -185,17 +187,25 @@
       <label class="row check"><input type="checkbox" id="opt_bco" data-default="true" checked><span>PTP $POS_ACT na starcie (BCO)</span></label>
     </details>
 
+    <details open>
+      <summary>Ekstruder: wyjścia robota</summary>
+      <label class="row check"><input type="checkbox" id="opt_extruder" data-default="false"><span>Steruj ekstruderem z KRL (ruchy z materiałem)</span></label>
+      <label class="row"><span>Ekstruder $OUT[n] (0 = komentarz)</span><input type="number" id="opt_extruder_out" data-default="0" value="0" min="0" max="4096" step="1"></label>
+      <label class="row check"><input type="checkbox" id="opt_extruder_trigger" data-default="true" checked><span>Przełączaj przez TRIGGER (bez zatrzymania robota)</span></label>
+      <label class="row"><span>Opóźnienie włączenia / wyłączenia [ms]</span><span class="pair2"><input type="number" id="opt_extruder_on_delay" data-default="0" value="0" step="10"><input type="number" id="opt_extruder_off_delay" data-default="0" value="0" step="10"></span></label>
+      <label class="row"><span>Cofanie: $OUT[n] rewersu (0 = brak)</span><input type="number" id="opt_extruder_reverse_out" data-default="0" value="0" min="0" max="4096" step="1"></label>
+      <label class="row check"><input type="checkbox" id="opt_extruder_analog" data-default="false"><span>Wydatek analogowo ∝ prędkości TCP (ANOUT ON $VEL_ACT)</span></label>
+      <label class="row"><span>$ANOUT[n] / mm³/s przy 1.0 / opóźnienie [s]</span><span class="pair3"><input type="number" id="opt_extruder_anout" data-default="0" value="0" min="0" max="32" step="1"><input type="number" id="opt_extruder_flow_full" data-default="100" value="100" min="0.1" step="10"><input type="number" id="opt_extruder_delay" data-default="0" value="0" step="0.01"></span></label>
+      <div class="row-note muted">Włączenie: <code>TRIGGER WHEN DISTANCE=0</code> na starcie bloku SPLINE, wyłączenie: <code>TRIGGER WHEN PATH=0</code> na jego końcu — robot nie zatrzymuje się na przełączeniu. Cofnięcie ze slicera = impuls na wyjściu rewersu (czas z „mm³/s przy 1.0”), dopuszczenie = <code>WAIT SEC</code> z włączonym ekstruderem.</div>
+    </details>
+
     <details>
-      <summary>Wrzeciono, chłodziwo, M-kody</summary>
+      <summary>Import G-code z CAM: wrzeciono, chłodziwo, M-kody</summary>
       <label class="row"><span>Wrzeciono $OUT[n] (0 = brak)</span><input type="number" id="opt_spindle_out" data-default="0" value="0" min="0" max="4096" step="1"></label>
       <label class="row"><span>Obroty $ANOUT[n] (0 = brak)</span><input type="number" id="opt_spindle_anout" data-default="0" value="0" min="0" max="32" step="1"></label>
       <label class="row"><span>Obroty dla $ANOUT = 1.0</span><input type="number" id="opt_spindle_max_rpm" data-default="24000" value="24000" min="1" step="1000"></label>
       <label class="row"><span>Chłodziwo $OUT[n] (0 = brak)</span><input type="number" id="opt_coolant_out" data-default="0" value="0" min="0" max="4096" step="1"></label>
       <label class="row check"><input type="checkbox" id="opt_halt_tool_change" data-default="true" checked><span>HALT przy M6</span></label>
-      <label class="row check"><input type="checkbox" id="opt_extruder" data-default="false"><span>Ekstruder: włączaj na ruchach z E (druk 3D)</span></label>
-      <label class="row"><span>Ekstruder $OUT[n] (0 = komentarz)</span><input type="number" id="opt_extruder_out" data-default="0" value="0" min="0" max="4096" step="1"></label>
-      <label class="row check"><input type="checkbox" id="opt_extruder_analog" data-default="false"><span>Ekstruder analogowo ∝ prędkości (ANOUT ON $VEL_ACT)</span></label>
-      <label class="row"><span>$ANOUT[n] / E/s przy 1.0 / opóźnienie [s]</span><span class="pair3"><input type="number" id="opt_extruder_anout" data-default="0" value="0" min="0" max="32" step="1"><input type="number" id="opt_extruder_flow_full" data-default="100" value="100" min="0.1" step="10"><input type="number" id="opt_extruder_delay" data-default="0" value="0" step="0.01"></span></label>
       <label class="row check"><input type="checkbox" id="opt_dwell_ms" data-default="false"><span>G4 P w milisekundach</span></label>
     </details>
   </form>
@@ -204,8 +214,8 @@
 <main id="main">
   <div id="empty" class="empty">
     <div class="empty-card">
-      <h2>Model → ścieżka → KRL</h2>
-      <p><b>Krok 1:</b> wczytaj model STEP/STL/OBJ i pokrój go w slicerze (warstwy płaskie, stożkowe, konforemne albo wielokierunkowe). <b>Krok 2:</b> translator zamienia ścieżkę na <b>SLIN</b>/<b>SCIRC</b>/<b>SPL</b> z orientacją narzędzia, sprawdza zasięg i kolizje robota i generuje <b>.src/.dat</b> dla KUKA KRC4.</p>
+      <h2>Model → ścieżka → program robota</h2>
+      <p><b>Krok 1:</b> wczytaj model STEP/STL/OBJ i pokrój go pod ekstruder na robocie (ścieżki w mm/s i mm³, warstwy płaskie, stożkowe, konforemne albo wielokierunkowe). <b>Krok 2:</b> ścieżka staje się programem KRL: <b>SLIN</b>/<b>SCIRC</b>/<b>SPL</b> z orientacją narzędzia, ekstruder sterowany wyjściami robota przez <b>TRIGGER</b> i <b>ANOUT</b>, kontrola zasięgu, limitów osi i kolizji, pliki <b>.src/.dat</b> dla KUKA KRC4.</p>
       <p class="muted">Masz gotowy G-code z innego slicera lub CAM? Wybierz „Gotowy G-code” po lewej, upuść plik gdziekolwiek w oknie albo wybierz przykład.</p>
       <ul class="keys"><li><kbd>F</kbd> dopasuj widok</li><li><kbd>T</kbd> z góry</li><li><kbd>I</kbd> izometria</li><li><kbd>Ctrl+⏎</kbd> tłumacz</li></ul>
     </div>

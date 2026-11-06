@@ -46,6 +46,12 @@ class KrlOptions:
     extruder_anout: int = 0  # analog output driven proportionally to the path velocity while extruding (ANOUT ON)
     extruder_flow_full: float = 100.0  # E units per second (mm^3/s or mm/s of filament) at analog signal 1.0
     extruder_delay: float = 0.0  # ANOUT DELAY in s (negative = advance)
+    extruder_trigger: bool = True  # switch the extruder output with TRIGGER WHEN DISTANCE/PATH (no advance-run stop)
+    extruder_on_delay: float = 0.0  # s, delay of the ON trigger at the start of extrusion (negative = earlier)
+    extruder_off_delay: float = 0.0  # s, delay of the OFF trigger at the end of extrusion
+    extruder_reverse_out: int = 0  # digital output that runs the extruder backwards (retraction); 0 = none
+    krl_start: str = ""  # user KRL lines inserted after the settings
+    krl_end: str = ""  # user KRL lines inserted before END
     ori_var: bool = False  # orientation varies along the path ($ORI_TYPE = #VAR)
     base_frame: tuple[float, ...] | None = None  # literal $BASE {X Y Z A B C} instead of BASE_DATA[n]
     tool_frame: tuple[float, ...] | None = None  # literal $TOOL {X Y Z A B C} instead of TOOL_DATA[n]
@@ -92,6 +98,9 @@ class KrlWriter:
         self.first_motion_done = False
         self.rate = 0.0
         self.extruding_now = False
+        self.out_on = False  # digital extruder output state
+        self.anout_on = False  # analog extruder output active
+        self.pending_triggers: list[str] = []  # TRIGGER lines for the next motion / spline block
 
     # ------------------------------------------------------------ format
     def frame(self, p: np.ndarray, abc=None) -> str:
@@ -120,7 +129,8 @@ class KrlWriter:
 
     # ------------------------------------------------------------ spline
     def open_block(self, feed: float) -> None:
-        self.block = [f"SPLINE WITH $VEL.CP = {fvel(self.vel_of(feed))}, $ACC.CP = {fnum(self.o.acc, 2)}"]
+        self.block = self.pending_triggers + [f"SPLINE WITH $VEL.CP = {fvel(self.vel_of(feed))}, $ACC.CP = {fnum(self.o.acc, 2)}"]
+        self.pending_triggers = []
         self.block_feed = feed
         self.block_segments = 0
         self.block_motions = 0
@@ -171,16 +181,18 @@ class KrlWriter:
                 approx = ""
         elif next_item is None or not hasattr(next_item, "t_in"):
             approx = ""
+        pre = self.pending_triggers
+        self.pending_triggers = []
         if isinstance(item, LineItem):
-            self.emit([f"LIN {self.frame(item.end, item.abc)}{approx}"], 1)
+            self.emit(pre + [f"LIN {self.frame(item.end, item.abc)}{approx}"], 1)
         elif isinstance(item, ArcItem):
-            self.emit([f"CIRC {self.frame(item.mid, item.abc)}, {self.frame(item.end, item.abc)}{approx}"], 1)
+            self.emit(pre + [f"CIRC {self.frame(item.mid, item.abc)}, {self.frame(item.end, item.abc)}{approx}"], 1)
         else:
             pts = item.points[1:]
             ab = None if item.abcs is None else item.abcs[1:]
             lines = [f"LIN {self.frame(p, None if ab is None else tuple(ab[k]))} C_DIS" for k, p in enumerate(pts[:-1])]
             lines.append(f"LIN {self.frame(pts[-1], None if ab is None else tuple(ab[-1]))}{approx}")
-            self.emit(lines, len(pts))
+            self.emit(pre + lines, len(pts))
         self.last_t_out = item.t_out
 
     # ------------------------------------------------------------ events
@@ -192,19 +204,61 @@ class KrlWriter:
         self.emit([f"LIN {self.frame(item.target, item.abc)}{approx}"], 1)
         self.last_t_out = None
 
+    @staticmethod
+    def trigger(when: str, delay_s: float, action: str) -> str:
+        """TRIGGER WHEN DISTANCE=0 (start of the next motion / spline block) or PATH=0
+        (its end point), DELAY in ms, executed as a sub-program-free action."""
+        return f"TRIGGER WHEN {when} DELAY={delay_s * 1000.0:.0f} DO {action} PRIO=-1"
+
+    def extruder_off_now(self, lines: list[str]) -> None:
+        """Switch the digital extruder output off at the end of the current extrusion."""
+        if self.o.extruder_out > 0 and self.out_on:
+            trig = self.trigger("PATH=0", self.o.extruder_off_delay, f"$OUT[{self.o.extruder_out}]=FALSE")
+            if self.o.extruder_trigger and self.block:
+                # the block that is still open is the last one of this extrusion: its end point
+                k = next((i for i, l in enumerate(self.block) if l.startswith("SPLINE")), 0)
+                self.block.insert(k, trig)
+            elif self.o.extruder_trigger and self.pending_triggers:
+                # extrusion never produced a motion: drop the pending ON trigger instead
+                self.pending_triggers = [t for t in self.pending_triggers if "=TRUE" not in t]
+            else:
+                lines.append(f"$OUT[{self.o.extruder_out}] = FALSE")
+            self.out_on = False
+        if self.o.extruder_anout > 0 and self.anout_on and not self.o.extruder_out > 0:
+            # analog only (no digital gate): the signal must not run during travel
+            lines.append(f"ANOUT OFF $ANOUT[{self.o.extruder_anout}]")
+            self.anout_on = False
+        self.extruding_now = False
+
     def anout_line(self) -> str:
         """ANOUT ON: signal = factor * $VEL_ACT (m/s). E/s = rate (E/mm) * v (mm/s) = rate * 1000 * $VEL_ACT,
         signal 1.0 corresponds to extruder_flow_full E/s."""
         rate = self.rate or 0.0
         factor = rate * 1000.0 / max(self.o.extruder_flow_full, 1e-9)
         delay = f" DELAY={self.o.extruder_delay:.3f}" if self.o.extruder_delay else ""
-        self.extruding_now = True
+        self.anout_on = True
         return f"ANOUT ON $ANOUT[{self.o.extruder_anout}] = {factor:.5f} * $VEL_ACT + 0.0{delay} MINIMUM=0.0 MAXIMUM=1.0"
 
     def event(self, ev: EventItem) -> None:
         k = ev.kind
-        if k == "extruder_off":
-            self.extruding_now = False
+        if k in ("extruder_off", "extruder_retract"):
+            # the OFF trigger has to go into the block that is still open
+            lines = [f"; extruder off"] if k == "extruder_off" else []
+            self.extruder_off_now(lines)
+            if k == "extruder_off":
+                self.close_block()
+                self.last_t_out = None
+                self.emit(lines)
+                return
+            self.close_block()
+            self.last_t_out = None
+            de = float(ev.value)
+            t = de / max(self.o.extruder_flow_full, 1e-9)
+            lines.append(f"; extruder reverse {de:g} E ({t:.2f} s)")
+            if self.o.extruder_reverse_out > 0:
+                lines += [f"$OUT[{self.o.extruder_reverse_out}] = TRUE", f"WAIT SEC {fnum(t, 2)}", f"$OUT[{self.o.extruder_reverse_out}] = FALSE"]
+            self.emit(lines)
+            return
         if k == "comment":
             text = str(ev.value).replace("\n", " ")
             if self.block:
@@ -242,21 +296,32 @@ class KrlWriter:
             if self.o.coolant_out > 0:
                 lines.append(f"$OUT[{self.o.coolant_out}] = {'TRUE' if on else 'FALSE'}")
             self.emit(lines)
-        elif k in ("extruder_on", "extruder_off"):
-            on = k == "extruder_on"
-            lines = [f"; extruder {'on' if on else 'off'}"]
-            if self.o.extruder_out > 0:
-                lines.append(f"$OUT[{self.o.extruder_out}] = {'TRUE' if on else 'FALSE'}")
-            if self.o.extruder_anout > 0:
-                if on:
-                    lines.append(self.anout_line())
+        elif k == "extruder_on":
+            lines = ["; extruder on"]
+            if self.o.extruder_out > 0 and not self.out_on:
+                if self.o.extruder_trigger:
+                    self.pending_triggers.append(self.trigger("DISTANCE=0", self.o.extruder_on_delay, f"$OUT[{self.o.extruder_out}]=TRUE"))
                 else:
-                    lines.append(f"ANOUT OFF $ANOUT[{self.o.extruder_anout}]")
+                    lines.append(f"$OUT[{self.o.extruder_out}] = TRUE")
+                self.out_on = True
+            if self.o.extruder_anout > 0 and not self.anout_on:
+                lines.append(self.anout_line())
+            self.extruding_now = True
+            self.emit(lines)
+        elif k == "extruder_prime":
+            de = float(ev.value)
+            t = de / max(self.o.extruder_flow_full, 1e-9)
+            lines = [f"; extruder prime {de:g} E ({t:.2f} s)"]
+            if self.o.extruder_out > 0:
+                if not self.out_on:
+                    lines.append(f"$OUT[{self.o.extruder_out}] = TRUE")
+                    self.out_on = True
+                lines.append(f"WAIT SEC {fnum(t, 2)}")
             self.emit(lines)
         elif k == "extruder_rate":
             self.rate = float(ev.value)
             lines = [f"; extrusion rate {self.rate:.5f} E/mm"]
-            if self.o.extruder_anout > 0 and self.extruding_now:
+            if self.o.extruder_anout > 0 and self.anout_on:
                 lines.append(f"ANOUT OFF $ANOUT[{self.o.extruder_anout}]")
                 lines.append(self.anout_line())
             self.emit(lines)
@@ -268,7 +333,16 @@ class KrlWriter:
         elif k == "pause":
             self.emit(["; optional stop (M1)" if ev.value else "; program stop (M0)", "HALT"])
         elif k == "end":
-            self.emit(["; program end"])
+            lines = []
+            if self.o.extruder_anout > 0 and self.anout_on:
+                lines.append(f"ANOUT OFF $ANOUT[{self.o.extruder_anout}]")
+                self.anout_on = False
+            if self.o.extruder_out > 0 and self.out_on:
+                lines.append(f"$OUT[{self.o.extruder_out}] = FALSE")
+                self.out_on = False
+            if self.o.krl_end.strip():
+                lines += ["; user end"] + [l.rstrip() for l in self.o.krl_end.splitlines()]
+            self.emit(lines + ["; program end"])
         else:
             self.emit([f"; unknown event {k}"])
 
@@ -320,7 +394,8 @@ class KrlWriter:
             f"$APO.CDIS = {fnum(self.o.cdis, 2)}",
             f"$ADVANCE = {self.o.advance}",
         ] + (["$ORI_TYPE = #VAR  ; orientation varies along the path"] if self.o.ori_var else []) + (
-            ["$VEL_FLT_OFF = TRUE  ; unfiltered $VEL_ACT for ANOUT"] if self.o.extruder_anout > 0 else [])
+            ["$VEL_FLT_OFF = TRUE  ; unfiltered $VEL_ACT for ANOUT"] if self.o.extruder_anout > 0 else []) + (
+            ["", "; user start"] + [l.rstrip() for l in self.o.krl_start.splitlines()] if self.o.krl_start.strip() else [])
 
     def assemble(self, stats: Stats | None) -> KrlProgram:
         prog = KrlProgram(main=self.o.name)

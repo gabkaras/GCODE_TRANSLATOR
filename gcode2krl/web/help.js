@@ -43,7 +43,7 @@
     opt_cutter_len: ['Ostrze', 'Długość i promień samej części roboczej (frez, dysza) na końcu uchwytu. Ostrze może wchodzić w materiał (detal) bez zgłaszania kolizji — uchwyt nie.'],
     opt_obstacles: ['Przeszkody', 'Lista brył do kontroli kolizji, jedna na linię: box, cylinder, sphere, floor, capsule albo mesh (wgrany model). Współrzędne w układzie robota lub bazy. Składnia jest opisana pod polem; „#” zaczyna komentarz.'],
     // ---- speeds ---------------------------------------------------------
-    opt_default_feed: ['Posuw domyślny', 'Używany dla ruchów G1 bez słowa F (G-code bez posuwu).'],
+    opt_default_feed: ['Posuw domyślny', 'Prędkość TCP w mm/s dla ruchów G1 bez słowa F (G-code z CAM bez posuwu). Ścieżki ze slicera zawsze mają własne prędkości.'],
     opt_rapid_vel: ['G0: $VEL.CP', 'Prędkość ruchów szybkich G0 zapisanych jako SLIN / LIN, w m/s.'],
     opt_max_vel: ['Maks. $VEL.CP', 'Górne ograniczenie prędkości z posuwów F (przeliczone z mm/min na m/s). Chroni przed zbyt dużymi F z CAM.'],
     opt_acc: ['$ACC.CP', 'Przyspieszenie ruchów kartezjańskich w m/s² ustawiane na początku programu.'],
@@ -60,10 +60,15 @@
     opt_spindle_max_rpm: ['Obroty dla 1.0', 'Prędkość obrotowa odpowiadająca pełnemu wysterowaniu wyjścia analogowego (1.0 = 10 V).'],
     opt_coolant_out: ['Chłodziwo $OUT[n]', 'Wyjście cyfrowe dla M7/M8 (włącz) i M9 (wyłącz).'],
     opt_halt_tool_change: ['HALT przy M6', 'Przy zmianie narzędzia M6 program zatrzymuje się (HALT) i czeka na operatora.'],
-    opt_extruder: ['Ekstruder cyfrowo', 'Na ruchach z dodatnim E włącza wyjście ekstrudera, na przejazdach wyłącza. Wymagane w druku 3D, jeśli ekstruder nie jest sterowany analogowo.'],
-    opt_extruder_out: ['Ekstruder $OUT[n]', 'Wyjście cyfrowe ekstrudera. 0 = tylko komentarze w KRL (gdy sterujesz ekstruderem z zewnątrz).'],
-    opt_extruder_analog: ['Ekstruder analogowo', 'Wydatek proporcjonalny do faktycznej prędkości robota: ANOUT ON $ANOUT[n] = k × $VEL_ACT. Robot zwalnia w narożach, a ekstruder razem z nim — stała grubość ścieżki.'],
-    opt_extruder_anout: ['Parametry ekstrudera analogowego', '$ANOUT[n]: numer wyjścia analogowego. E/s przy 1.0: ile jednostek E na sekundę podaje ekstruder przy pełnym wysterowaniu (skalowanie współczynnika k z E/mm ścieżki). Opóźnienie: przesunięcie w czasie sygnału względem ruchu (ujemne = wcześniej), kompensuje bezwładność ekstrudera.'],
+    opt_extruder: ['Sterowanie ekstruderem', 'Na ruchach z materiałem program KRL włącza wyjścia ekstrudera, na przejazdach je wyłącza; cofnięcia i dopuszczenia ze slicera stają się impulsem rewersu i WAIT SEC. Slicer włącza tę opcję automatycznie.'],
+    opt_extruder_out: ['Ekstruder $OUT[n]', 'Wyjście cyfrowe uruchamiające ekstruder (zezwolenie / start silnika). 0 = tylko komentarze w KRL, gdy ekstruder jest sterowany z zewnątrz. Przy wydatku analogowym to wyjście bramkuje sygnał na przejazdach.'],
+    opt_extruder_analog: ['Wydatek analogowo', 'Prędkość ekstrudera proporcjonalna do faktycznej prędkości TCP: ANOUT ON $ANOUT[n] = k × $VEL_ACT. Robot zwalnia w narożach i na nawisach, a ekstruder razem z nim — stała szerokość ścieżki. k wynika z mm³/mm ścieżki i wydajności przy 1.0.'],
+    opt_extruder_anout: ['Parametry wydatku analogowego', '$ANOUT[n]: numer wyjścia analogowego (0…1 = 0…10 V). mm³/s przy 1.0: wydajność ekstrudera przy pełnym wysterowaniu — skaluje współczynnik k i czasy cofnięcia / dopuszczenia. Opóźnienie: przesunięcie sygnału w czasie względem ruchu (ANOUT DELAY, ujemne = wcześniej), kompensuje bezwładność ekstrudera.'],
+    opt_extruder_trigger: ['Przełączanie przez TRIGGER', 'Włączenie wyjścia jako TRIGGER WHEN DISTANCE=0 przed blokiem SPLINE (start ekstruzji), wyłączenie jako TRIGGER WHEN PATH=0 (koniec bloku). Sterownik wykonuje je w locie, bez zatrzymania wyprzedzania ($ADVANCE) — ruch pozostaje ciągły. Wyłączone = zwykłe $OUT[n] = TRUE/FALSE, które zatrzymują robota na każdym przełączeniu.'],
+    opt_extruder_on_delay: ['Opóźnienia włączenia i wyłączenia', 'DELAY triggerów w ms. Włączenie: ujemne = ekstruder rusza przed startem ruchu (kompensacja rozruchu ślimaka), wyłączenie: dodatnie = wyjście gaśnie po końcu ścieżki. Dobierz tak, by początek i koniec ścieżki miały pełną szerokość.'],
+    opt_extruder_reverse_out: ['Wyjście rewersu', 'Wyjście cyfrowe, które cofa ekstruder (bieg wsteczny). Cofnięcie ze slicera (mm³) zamienia się w impuls: $OUT=TRUE, WAIT SEC t, $OUT=FALSE, gdzie t = mm³ / wydajność przy 1.0. 0 = tylko komentarz.'],
+    opt_krl_start: ['Własne linie KRL na starcie', 'Wstawiane po ustawieniach ($TOOL, $BASE, $VEL.CP, $ADVANCE), przed pierwszym ruchem — np. włączenie grzałek, podajnika, czekanie na gotowość ekstrudera (WAIT FOR $IN[n]).'],
+    opt_krl_end: ['Własne linie KRL na końcu', 'Wstawiane po ostatnim ruchu i wyłączeniu ekstrudera, przed END — np. wyłączenie grzałek, odjazd do pozycji serwisowej.'],
     opt_dwell_ms: ['G4 P w ms', 'Interpretacja G4 P: zaznaczone = milisekundy (Marlin, drukarki), odznaczone = sekundy (Fanuc / większość CAM).'],
   };
 

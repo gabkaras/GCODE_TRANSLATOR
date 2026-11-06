@@ -57,6 +57,12 @@ def build_parser() -> argparse.ArgumentParser:
     k.add_argument("--extruder-anout", type=int, default=0, help="analog output driven proportionally to path velocity while extruding (ANOUT ON ... $VEL_ACT)")
     k.add_argument("--extruder-flow-full", type=float, default=100.0, help="E units per second at analog signal 1.0 (default 100)")
     k.add_argument("--extruder-delay", type=float, default=0.0, help="ANOUT DELAY in seconds (default 0)")
+    k.add_argument("--extruder-on-delay", type=float, default=0.0, help="delay of the extruder ON trigger in s (negative = earlier)")
+    k.add_argument("--extruder-off-delay", type=float, default=0.0, help="delay of the extruder OFF trigger in s")
+    k.add_argument("--extruder-reverse-out", type=int, default=0, help="digital output running the extruder backwards for retraction (0 = none)")
+    k.add_argument("--no-extruder-trigger", action="store_true", help="switch the extruder output with plain $OUT instead of TRIGGER (advance-run stop)")
+    k.add_argument("--krl-start", default="", help="file with user KRL lines inserted after the settings")
+    k.add_argument("--krl-end", default="", help="file with user KRL lines inserted before END")
     k.add_argument("--no-orient-solve", action="store_true", help="keep zero spin for I J K tool axes instead of the singularity-aware solver (needs --robot)")
     k.add_argument("--spin-step", type=float, default=15.0, help="orientation solver: spin sampling step, deg (default 15)")
     k.add_argument("--singular-deg", type=float, default=8.0, help="orientation solver: keep |A5| above this, deg (default 8)")
@@ -128,6 +134,10 @@ def run(argv: list[str] | None = None) -> int:
                        block_approx=not args.no_block_approx, spindle_out=args.spindle_out,
                        coolant_out=args.coolant_out, spindle_anout=args.spindle_anout, extruder_out=max(0, args.extruder_out),
                        extruder_anout=args.extruder_anout, extruder_flow_full=args.extruder_flow_full, extruder_delay=args.extruder_delay,
+                       extruder_trigger=not args.no_extruder_trigger, extruder_on_delay=args.extruder_on_delay, extruder_off_delay=args.extruder_off_delay,
+                       extruder_reverse_out=args.extruder_reverse_out,
+                       krl_start=open(args.krl_start, encoding="utf-8").read() if args.krl_start else "",
+                       krl_end=open(args.krl_end, encoding="utf-8").read() if args.krl_end else "",
                        spindle_max_rpm=args.spindle_max_rpm, bco_ptp=not args.no_bco, advance=args.advance,
                        source_name=os.path.basename(args.input), halt_on_tool_change=not args.no_halt_tool_change,
                        base_frame=tuple(args.base_frame) if args.base_frame else None,

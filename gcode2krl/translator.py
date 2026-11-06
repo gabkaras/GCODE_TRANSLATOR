@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from .arc_fitter import ArcElement, FitParams, LineElement, dedupe_points, segment_polyline
-from .gcode_parser import (ArcMove, Comment, Coolant, Dwell, LinearMove, ParseResult, Pause,
+from .gcode_parser import (ArcMove, Comment, Coolant, Dwell, ExtrudeOnly, LinearMove, ParseResult, Pause,
                            ProgramEnd, Spindle, SpindleSpeed, ToolChange)
 from .geometry import ArcFit, arc_from_center, sample_arc, unit
 from .simplify import douglas_peucker
@@ -350,6 +350,10 @@ class Translator:
                 if self.o.extruder:
                     self.set_extruding(cmd.extrude > 1e-9, cmd.extrude, cmd.start, cmd.end)
                 self.push_arc(cmd)
+            elif isinstance(cmd, ExtrudeOnly):
+                if self.o.extruder:
+                    self.flush()
+                    self.items.append(EventItem("extruder_retract" if cmd.delta < 0 else "extruder_prime", abs(cmd.delta)))
             elif isinstance(cmd, Comment):
                 # comments never break a chain (CAM output is full of them);
                 # they are emitted right after the chain they interrupt
@@ -362,7 +366,12 @@ class Translator:
                 self.items.append(self.event(cmd))
         self.flush()
         if self.o.extruder and self.extruding:
-            self.items.append(EventItem("extruder_off"))
+            off = EventItem("extruder_off")
+            k = next((i for i, it in enumerate(self.items) if isinstance(it, EventItem) and it.kind == "end"), None)
+            if k is None:
+                self.items.append(off)
+            else:
+                self.items.insert(k, off)
             self.extruding = False
         if not any(isinstance(i, EventItem) and i.kind == "end" for i in self.items):
             self.items.append(EventItem("end"))

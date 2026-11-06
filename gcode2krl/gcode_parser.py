@@ -40,6 +40,13 @@ class LinearMove:
 
 
 @dataclass
+class ExtrudeOnly:
+    """E change without axis motion: negative = extruder reverse (retraction), positive = prime."""
+    delta: float
+    line_no: int
+
+
+@dataclass
 class ArcMove:
     start: np.ndarray
     end: np.ndarray
@@ -315,6 +322,8 @@ class GCodeParser:
                 self.warn(line_no, "axis words without a motion mode (G0/G1/G2/G3) ignored")
             return
         if not has_axis and not (self.motion in (2, 3) and has_arc_words):
+            if abs(de) > 1e-9 and self.motion in (0, 1):
+                self.emit(ExtrudeOnly(de, line_no))
             return
 
         target = self.pos.copy()
