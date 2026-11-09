@@ -68,7 +68,7 @@
     'extruder_trigger','extruder_on_delay','extruder_off_delay','extruder_reverse_out','krl_start','krl_end',
     'home_start','home_end','home_mode','home_axes','home_vel','zones','zones_krl',
     'orient_solve','spin_step','singular_deg','max_tilt','spin_mode','spin_fixed','spin_offset','status_turn','max_refine','robot','base_frame','tool_frame','base_literal','tool_literal','robot_samples','path_step','margin',
-    'tbl_sx','tbl_sy','tbl_cx','tbl_cy','tbl_anchor','mat_t','mat_pad','tool_mesh','tool_mesh_units','tool_mesh_frame','printed_check','printed_margin','auto_spin',
+    'tbl_sx','tbl_sy','tbl_cx','tbl_cy','mat_t','mat_pad','tool_mesh','tool_mesh_units','tool_mesh_frame','printed_check','printed_margin','auto_spin',
     'tool_radius','cutter_len','cutter_radius','obstacles','tol','max_radius','min_radius','min_arc_points','refine_shift','spl_max_segment','corner_angle',
     'default_feed','offset','fit_arcs','use_spl','name','mode','tool','base','abc','rapid_vel','max_vel','acc','cdis',
     'round_corners','max_block_segments','max_motions_per_file','block_approx','spindle_out','coolant_out','spindle_anout',
@@ -497,8 +497,7 @@
       const f = parse6('#opt_base_frame', [1400, 0, 500, 0, 0, 0]);
       const sx = Number($('#tbl_sx').value) || 900, sy = Number($('#tbl_sy').value) || 900;
       const b0 = state.result ? state.result.preview.bounds : { min: [-100, -100, 0], max: [100, 100, 0] };
-      const cx = $('#tbl_cx').value === '' ? (b0.min[0] + b0.max[0]) / 2 : Number($('#tbl_cx').value);
-      const cy = $('#tbl_cy').value === '' ? (b0.min[1] + b0.max[1]) / 2 : Number($('#tbl_cy').value);
+      const [cx, cy] = tableCentre();
       // table height: from the base plane down to the robot floor (z=0) when the base is level above it
       const t = Number($('#mat_t').value) || 20, pad = Number($('#mat_pad').value) || 0;
       // the table top carries the stock: top at base Z = -t, bottom on the robot floor when the base is level
@@ -516,19 +515,15 @@
     if (text !== ta.value) { ta.value = text; saveOptions(); scheduleAuto(); }
   }
   // the base origin can be tied to a corner of the table: the table centre then follows the size
-  const ANCHOR_SIGN = { mm: [1, 1], pm: [-1, 1], pp: [-1, -1], mp: [1, -1] };
-  function tableAnchor() { const el = $('#tbl_anchor'); return el && ANCHOR_SIGN[el.value] ? el.value : 'center'; }
+  // the base origin always sits at the -X -Y corner of the table: +X / +Y of $BASE point onto the bed
+  const ANCHOR_SIGN = { mm: [1, 1] };
+  function tableAnchor() { return 'mm'; }
+  function tableCentre() { const sx = Number($('#tbl_sx').value) || 800, sy = Number($('#tbl_sy').value) || 800; return [sx / 2, sy / 2]; }
   function applyTableAnchor() {
-    const a = tableAnchor();
-    const locked = a !== 'center';
-    $('#tbl_cx').readOnly = locked; $('#tbl_cy').readOnly = locked;
-    if (locked) {
-      const sx = Number($('#tbl_sx').value) || 800, sy = Number($('#tbl_sy').value) || 800;
-      const [kx, ky] = ANCHOR_SIGN[a];
-      $('#tbl_cx').value = String(kx * sx / 2); $('#tbl_cy').value = String(ky * sy / 2);
-    }
+    const [cx, cy] = tableCentre();
+    $('#tbl_cx').readOnly = true; $('#tbl_cy').readOnly = true;
+    $('#tbl_cx').value = String(cx); $('#tbl_cy').value = String(cy);
   }
-  $('#tbl_anchor').addEventListener('change', () => { applyTableAnchor(); saveOptions(); updateAutoObstacles(); scheduleAuto(); });
   ['#tbl_sx', '#tbl_sy'].forEach(sel => $(sel).addEventListener('input', applyTableAnchor));
   ['#auto-table', '#tbl_sx', '#tbl_sy', '#tbl_cx', '#tbl_cy', '#mat_t', '#mat_pad'].forEach(sel => $(sel).addEventListener('input', updateAutoObstacles));
   // ---- imported meshes (tables, fixtures, tools) ------------------------
@@ -703,7 +698,8 @@
     const ref = $('#slice-mesh').value; if (!ref) { setStatus('Najpierw wybierz lub wgraj model', 'err'); return; }
     const m = meshMeta[ref]; const rows = platerRows();
     const span = m ? Math.max(m.max[0] - m.min[0], 60) : 100;
-    rows.push({ mesh: ref, units: $('#slice-units').value, name: m ? m.name : ref, x: rows.length ? Math.round(rows[rows.length - 1].x + span + 20) : 0, y: 0, rz: 0, scale: 1 });
+    const tc = tableCentre();
+    rows.push({ mesh: ref, units: $('#slice-units').value, name: m ? m.name : ref, x: rows.length ? Math.round(rows[rows.length - 1].x + span + 20) : Math.round(tc[0]), y: Math.round(tc[1]), rz: 0, scale: 1 });
     savePlater(rows);
   });
   renderPlater();
@@ -727,7 +723,8 @@
     setStatus('Krojenie…', 'busy'); $('#btn-slice').disabled = true;
     try {
       const params = sliceParams();
-      const body = { mesh: ref, units: $('#slice-units').value, params, deflection: Number(($('#step-deflection') || {}).value) || 0.2 };
+      const tc = tableCentre();
+      const body = { mesh: ref, units: $('#slice-units').value, params, deflection: Number(($('#step-deflection') || {}).value) || 0.2, offset: [tc[0], tc[1], 0] };
       const rows = platerRows();
       if (rows.length) body.models = rows.map(r => ({ mesh: r.mesh, units: r.units, name: r.name, offset: [r.x, r.y, 0], rot: [0, 0, r.rz], scale: r.scale }));
       if (params.layer_mode === 'multi') { body.segments = window.SLICER_FORM.extras().segments; params.layer_mode = 'planar'; if (!body.segments.trim()) throw new Error('tryb wielokierunkowy wymaga definicji segmentów'); }
@@ -1100,6 +1097,6 @@
   window.GCODE2KRL = {
     get viewer() { return viewer; }, get robotView() { return robotView; }, state,
     parse6, kukaFrame, invert, setFrameFields, applyFrames, updateAutoObstacles, platerRows, savePlater, saveOptions, scheduleAuto,
-    previewCell, localObstacles, localZones, tableAnchor, applyTableAnchor, ANCHOR_SIGN,
+    previewCell, localObstacles, localZones, tableAnchor, applyTableAnchor, ANCHOR_SIGN, tableCentre,
   };
 })();

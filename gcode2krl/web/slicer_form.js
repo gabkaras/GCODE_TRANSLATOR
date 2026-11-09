@@ -151,7 +151,7 @@
     ] },
     { id: 'misc', title: 'Inne', fields: [
       C('comments', 'Komentarze ;TYPE / ;LAYER w ścieżce', ['Komentarze', 'Zapisuje ;LAYER, ;Z, ;HEIGHT i ;TYPE w eksportowanej ścieżce G-code (czytelność). Własne linie KRL ustawia się w sekcji „Program KRL”.'], { def: true }),
-      C('origin_center', 'Wyśrodkuj model w XY', ['Wyśrodkowanie', 'Przesuwa model tak, aby środek jego obrysu XY był w (0, 0) bazy ($BASE); wyłącz, żeby zachować współrzędne z pliku.'], { def: true }),
+      C('origin_center', 'Ustaw model na środku stołu', ['Wyśrodkowanie', 'Przesuwa model tak, aby środek jego obrysu XY był na środku blatu (w bazie $BASE: długość/2, szerokość/2 – baza leży w narożniku stołu); wyłącz, żeby zachować współrzędne XY z pliku. Modele z platera mają pozycje podane w platerze.'], { def: true }),
     ] },
   ];
 

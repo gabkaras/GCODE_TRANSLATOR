@@ -715,6 +715,8 @@ class Handler(SimpleHTTPRequestHandler):
                 models = body.get("models") or []
                 deflection = float(body.get("deflection") or 0.1)
                 if models:
+                    # the plater positions are authoritative: no re-centring of the combined set
+                    params = SliceParams.from_dict({**params.to_dict(), "origin_center": False})
                     placed = []
                     for md in models:
                         ref = str(md.get("mesh") or "")
@@ -735,8 +737,16 @@ class Handler(SimpleHTTPRequestHandler):
                     if not ref:
                         raise ValueError("no mesh given")
                     tris, key = meshstore.load(ref, str(body.get("units") or "mm"), deflection)
-                    gcode, st, layers = slice_triangles(tris, params, source=ref, segments=segments)
                     name = names.get(ref, ref)
+                    off = body.get("offset")
+                    if params.origin_center and off and any(abs(float(v)) > 1e-9 for v in off[:2]):
+                        # place the single model on the bed (e.g. the table centre) instead of the base origin
+                        from .slicer.pipeline import placed as _placed
+                        pl = Placement(name=name, offset=(float(off[0]), float(off[1]), 0.0))
+                        p2 = SliceParams.from_dict({**params.to_dict(), "origin_center": False})
+                        gcode, st, layers = slice_models([(_placed(tris, params), pl)], p2, source=ref, segments=segments)
+                    else:
+                        gcode, st, layers = slice_triangles(tris, params, source=ref, segments=segments)
                 preview = {k: _f32(v) for k, v in preview_segments(layers).items()}
                 res = {"gcode": gcode, "stats": {**{k: v for k, v in vars(st).items()}, "time": time.perf_counter() - t0},
                        "name": name, "preview": preview}
@@ -771,6 +781,9 @@ class Handler(SimpleHTTPRequestHandler):
 
 def free_port(preferred: int) -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        # the HTTP server itself sets allow_reuse_address, so lingering
+        # TIME_WAIT sockets from a previous run must not push us off the port
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         try:
             s.bind(("127.0.0.1", preferred))
             return preferred

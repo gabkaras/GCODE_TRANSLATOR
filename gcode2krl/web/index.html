@@ -204,11 +204,9 @@
         <div class="fb-head"><span>Wymiary podstawy i materiał</span>
           <label class="auto"><input type="checkbox" id="auto-table" data-default="true" checked> automatycznie</label>
         </div>
-        <div class="row"><span>Początek bazy na stole</span><select id="tbl_anchor" data-default="center">
-          <option value="center">środek stołu (środek podawany ręcznie)</option>
-          <option value="mm">narożnik −X −Y</option><option value="pm">narożnik +X −Y</option><option value="pp">narożnik +X +Y</option><option value="mp">narożnik −X +Y</option></select></div>
+        <div class="row-note muted">Początek bazy ($BASE) leży zawsze w narożniku stołu, osie +X i +Y bazy wskazują na stół: blat zajmuje 0…dł. × 0…szer. Model przy krojeniu trafia na środek blatu.</div>
         <div class="row"><span>Podstawa (dł. × szer.) [mm]</span><span class="pair2"><input type="number" id="tbl_sx" data-default="800" value="800" step="50"><input type="number" id="tbl_sy" data-default="800" value="800" step="50"></span></div>
-        <div class="row"><span>Środek podstawy w bazie X, Y<br><small>puste = środek ścieżki</small></span><span class="pair2"><input type="number" id="tbl_cx" data-default="" value="" step="10" placeholder="auto"><input type="number" id="tbl_cy" data-default="" value="" step="10" placeholder="auto"></span></div>
+        <div class="row"><span>Środek blatu w bazie X, Y<br><small>z wymiarów (dł./2, szer./2)</small></span><span class="pair2"><input type="number" id="tbl_cx" data-default="" value="" step="10" placeholder="auto"><input type="number" id="tbl_cy" data-default="" value="" step="10" placeholder="auto"></span></div>
         <div class="row"><span>Materiał: grubość, zapas [mm]</span><span class="pair2"><input type="number" id="mat_t" data-default="20" value="20" step="1"><input type="number" id="mat_pad" data-default="20" value="20" step="5"></span></div>
         <div class="fb-head" style="margin-top:8px"><span>Modele stołu i uchwytów</span>
           <label class="file-btn mini">wgraj STEP/STL/OBJ<input type="file" id="obstacle-mesh-file" accept=".stl,.obj,.step,.stp,.iges,.igs" multiple hidden></label>

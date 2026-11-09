@@ -35,17 +35,15 @@
   function labelText(h) {
     const b = h.kind === 'bed' ? bedRect() : null;
     switch (h.kind) {
-      case 'bed': return h.id === 'bedc' ? `stół: środek ${inp('X', b.cx, 'tbl_cx')}${inp('Y', b.cy, 'tbl_cy')}` : `stół: wymiary ${inp('dł.', b.sx, 'tbl_sx')}${inp('szer.', b.sy, 'tbl_sy')}<span class="k">mm</span>` + (anchorSign() ? ` <small>· początek bazy w narożniku</small>` : '');
+      case 'bed': return h.id === 'bedc' ? `stół: środek ${inp('X', b.cx, 'tbl_cx')}${inp('Y', b.cy, 'tbl_cy')}` : `stół: wymiary ${inp('dł.', b.sx, 'tbl_sx')}${inp('szer.', b.sy, 'tbl_sy')}<span class="k">mm</span>`;
       case 'base': { const f = A.parse6('#opt_base_frame', [0, 0, 0, 0, 0, 0]);
-        const sel = `<select data-k="tbl_anchor" title="gdzie na stole leży początek bazy"><option value="center"${A.tableAnchor() === 'center' ? ' selected' : ''}>w środku</option>${['mm', 'pm', 'pp', 'mp'].map(k => `<option value="${k}"${A.tableAnchor() === k ? ' selected' : ''}>narożnik ${k[0] === 'm' ? '−X' : '+X'} ${k[1] === 'm' ? '−Y' : '+Y'}</option>`).join('')}</select>`;
-        return h.id === 'base' ? `baza stołu $BASE ${inp('X', f[0], 'bf_x')}${inp('Y', f[1], 'bf_y')}${inp('Z', f[2], 'bf_z')}${inp('A', f[3], 'bf_a')}<span class="k">°</span> ${sel}` : `obrót bazy ${inp('A', f[3], 'bf_a')}<span class="k">°</span>`; }
+        return h.id === 'base' ? `baza stołu $BASE <small>(narożnik blatu)</small> ${inp('X', f[0], 'bf_x')}${inp('Y', f[1], 'bf_y')}${inp('Z', f[2], 'bf_z')}${inp('A', f[3], 'bf_a')}<span class="k">°</span>` : `obrót bazy ${inp('A', f[3], 'bf_a')}<span class="k">°</span>`; }
       case 'tcp': { const t = A.parse6('#opt_tool_frame', [0, 0, 0, 0, 0, 0]); return `TCP narzędzia ${inp('X', t[0], 'tf_x')}${inp('Y', t[1], 'tf_y')}${inp('Z', t[2], 'tf_z')}`; }
       default: return h.label || h.id;
     }
   }
   function commitLabelInput(el) {
     const key = el.dataset.k;
-    if (key === 'tbl_anchor') { $('#tbl_anchor').value = el.value; A.applyTableAnchor(); A.updateAutoObstacles(); A.saveOptions(); A.scheduleAuto(); setTimeout(build, 50); return; }
     const val = Number(el.value);
     if (!Number.isFinite(val)) return;
     if (/^(bf|tf)_/.test(key)) {
@@ -106,7 +104,7 @@
   window.addEventListener('keyup', e => { if (e.key === 'Alt') altHeld = false; });
   const snap = v => { const st = snapStep(); return st > 0 && !altHeld ? Math.round(v / st) * st : v; };
   const snapAng = v => { const st = snapStep(); return st > 0 && !altHeld ? Math.round(v / 5) * 5 : v; };
-  const anchorSign = () => { const a = A.tableAnchor(); return a === 'center' ? null : A.ANCHOR_SIGN[a]; };
+  const anchorSign = () => [1, 1];  // the base origin is always the -X -Y corner of the table
 
   function num(id, def) { const el = $('#' + id); const v = el ? Number(el.value) : NaN; return Number.isFinite(v) && el.value !== '' ? v : def; }
   function setNum(id, val) { const el = $('#' + id); if (el) el.value = String(round(val, 1)); }
