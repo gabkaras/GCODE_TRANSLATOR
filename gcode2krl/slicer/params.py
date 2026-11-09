@@ -87,15 +87,21 @@ class SliceParams:
     # ---- overhangs / support -------------------------------------------
     overhang_detect: bool = True  # slow down wall segments printed over air
     overhang_max: float = 45.0  # printable overhang angle (deg): support indicator / generation threshold
-    support: str = "none"  # none | normal
+    support: str = "none"  # none | normal (columns) | tree (branches that merge into trunks)
     support_density: float = 0.2
-    support_pattern: str = "lines"  # lines | grid
+    support_pattern: str = "lines"  # lines | grid | walls (one wall ring + sparse lines, good for trees)
     support_z_gap: int = 1  # layers left empty between support top and the part
     support_xy_gap: float = 1.0  # mm between support and the part's walls
     support_interface_layers: int = 2
     support_interface_density: float = 0.6
     support_min_area: float = 4.0  # ignore overhang islands smaller than this (mm^2)
     support_angle: float = 0.0  # support line direction (deg)
+    tree_branch_angle: float = 40.0  # deg from vertical a branch may lean per layer
+    tree_tip_diameter: float = 0.0  # mm, 0 = 2 x bead width
+    tree_trunk_diameter: float = 40.0  # mm, largest branch / trunk diameter
+    tree_diameter_growth: float = 5.0  # deg: radius grows by tan(angle) per mm descended
+    tree_tip_spacing: float = 0.0  # mm between tips on an overhang (0 = auto)
+    support_on_model: bool = True  # tree branches may rest on the part
     support_modifiers: str = ""  # "block cx cy cz sx sy sz" / "force cx cy cz sx sy sz" per line (model coordinates)
     # ---- extrusion ------------------------------------------------------
     extrusion_mode: str = "volumetric"  # volumetric (E in mm^3, drives the robot extruder outputs) | none

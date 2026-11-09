@@ -369,8 +369,12 @@ def build_layers(layer_loops: list[list[np.ndarray]], zs: list[float], params: S
         regions[0] = offset(regions[0], -p.elephant_foot)
     # ---- support (planar only)
     sup_print, sup_iface = ([EMPTY] * n, [EMPTY] * n)
-    if p.support == "normal" and p.planar and not p.spiral_vase:
-        sup_print, sup_iface = support_areas(regions, heights, p)
+    if p.support in ("normal", "tree") and p.planar and not p.spiral_vase:
+        if p.support == "tree":
+            from .tree_support import tree_support_areas
+            sup_print, sup_iface = tree_support_areas(regions, heights, p)
+        else:
+            sup_print, sup_iface = support_areas(regions, heights, p)
         mods = parse_support_modifiers(p.support_modifiers)
         if mods:
             sup_print, sup_iface = list(sup_print), list(sup_iface)
@@ -534,9 +538,15 @@ def build_layers(layer_loops: list[list[np.ndarray]], zs: list[float], params: S
                     paths.append(Path("SUPPORT-INTERFACE", seg, False, w, sp))
             if not body.is_empty:
                 spacing = w / max(lp.support_density, 0.02)
-                segs = _infill.line_fill(body, spacing, lp.support_angle)
-                if lp.support_pattern == "grid":
-                    segs += _infill.line_fill(body, spacing, lp.support_angle + 90.0)
+                if lp.support_pattern == "walls":
+                    for r in rings(offset(body, -w / 2.0)):
+                        paths.append(Path("SUPPORT", r, True, w, sp))
+                    body_in = offset(body, -w)
+                    segs = _infill.line_fill(body_in, spacing, lp.support_angle) if not body_in.is_empty else []
+                else:
+                    segs = _infill.line_fill(body, spacing, lp.support_angle)
+                    if lp.support_pattern == "grid":
+                        segs += _infill.line_fill(body, spacing, lp.support_angle + 90.0)
                 for seg in segs:
                     paths.append(Path("SUPPORT", seg, False, w, sp))
         L.paths, cur = order_layer(paths, cur, lp, rng)

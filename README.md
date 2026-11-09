@@ -26,7 +26,7 @@ STEP/STL ──slicer──> ścieżka (G-code + I J K) ──parser──> ruch
 pip install -e .          # wymaga Python >= 3.10 i numpy
 pip install -e .[test]    # dodatkowo pytest
 pip install -e .[step]    # import STEP/IGES (OpenCASCADE)
-pytest                    # 156 testów
+pytest                    # 160 testów
 ```
 
 ## GUI
@@ -129,9 +129,17 @@ parametr jest w GUI, w sekcji *Slicer*, z przyciskiem „?”):
 * **nawisy**: każdy odcinek obrysu i skinu ma stopień „nad pustką” z odległości
   od warstwy niżej (plus podpory); prędkość interpolowana do prędkości nawisów;
   wskaźnik powierzchni wymagającej podpór,
-* **podpory**: kolumny pod nawisami propagowane do stołu lub modelu, przerwa Z
-  (warstwy) i XY (mm), warstwy łącznikowe o większej gęstości, wzór linie /
-  siatka o stałym kierunku, minimalny obszar wysepki,
+![podpory drzewiaste](docs/gui_tree.png)
+
+* **podpory** z automatycznym wykrywaniem miejsc (obszary warstwy, których
+  warstwa niżej nie niesie w granicach kąta nawisu): **kolumnowe** rzutowane w
+  dół do stołu lub modelu oraz **drzewiaste** (`tree_support.py`): końcówki
+  gałęzi na siatce heksagonalnej każdej wysepki nawisu, gałęzie schodzą
+  warstwa po warstwie z ruchem w bok ≤ h·tg(kąta gałęzi) w stronę sąsiadów i od
+  modelu, łączą się w pnie (zachowanie pola), rosną z wysokością do średnicy
+  pnia, trzymają odstęp XY, mogą opierać się na modelu; przerwa Z, warstwy
+  łącznikowe, wzór linie / siatka / ściana + linie, blokady i wymuszenia
+  pudełkami, minimalny obszar wysepki,
 * **przyczepność**: skirt, brim, **raft** (podstawa rzadka, warstwy pośrednie,
   górna pełna, model przesunięty w górę),
 * **materiał**: mm³ na odcinek (albo sama geometria), mnożnik wydatku,
@@ -173,9 +181,9 @@ parametr jest w GUI, w sekcji *Slicer*, z przyciskiem „?”):
 ![wiele modeli i podgląd typów](docs/gui_plater.png)
 
 Czego nie ma: Arachne (zmienna szerokość ścian wyliczana z osi medialnej —
-cienkie ściany są obsługiwane przez gap fill o stałej szerokości), podpór
-drzewiastych, omijania obrysów przy przejazdach, prasowania (ironing),
-wygładzania wydatku (pressure advance jest po stronie sterownika ekstrudera).
+cienkie ściany są obsługiwane przez gap fill o stałej szerokości), omijania
+obrysów przy przejazdach, wygładzania wydatku (pressure advance jest po
+stronie sterownika ekstrudera).
 Podpory, raft, spirala i warstwy adaptacyjne działają tylko dla warstw
 płaskich; tryby stożkowe i konforemne mają nawisy, gap fill, mosty i wszystkie
 pozostałe funkcje liczone w przestrzeni warstw.
