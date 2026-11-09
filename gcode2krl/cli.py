@@ -64,6 +64,7 @@ def build_parser() -> argparse.ArgumentParser:
     k.add_argument("--extruder-off-delay", type=float, default=0.0, help="delay of the extruder OFF trigger in s")
     k.add_argument("--extruder-reverse-out", type=int, default=0, help="digital output running the extruder backwards for retraction (0 = none)")
     k.add_argument("--no-extruder-trigger", action="store_true", help="switch the extruder output with plain $OUT instead of TRIGGER (advance-run stop)")
+    k.add_argument("--tool-mesh-frame", default="0 0 0 0 0 0", help="placement of the tool mesh in the flange frame: X Y Z A B C")
     k.add_argument("--no-status-turn", action="store_true", help="do not write Status/Turn (PTP approach) from the inverse kinematics")
     k.add_argument("--zones", default=None, help="file with safety zones (zone NAME allowed|forbidden tcp|robot robot|base cx cy cz sx sy sz [a b c])")
     k.add_argument("--no-zones-krl", action="store_true", help="do not write the zones as $WORKSPACE[n] into the program")
@@ -223,6 +224,11 @@ def run(argv: list[str] | None = None) -> int:
             if args.tool_mesh:
                 from . import meshstore
                 tool_mesh, tool_mesh_key = meshstore.load(args.tool_mesh, args.tool_mesh_units)
+                mf = tuple(float(v) for v in args.tool_mesh_frame.replace(",", " ").split())
+                if len(mf) == 6 and any(abs(v) > 1e-9 for v in mf):
+                    fm = frame(mf)
+                    tool_mesh = tool_mesh @ fm[:3, :3].T + fm[:3, 3]
+                    tool_mesh_key = (tool_mesh_key, mf)
             col_rep, _ = check_path_collisions(robot, pts, abc_used, base_t, tool_t, robot_rep, obstacles, margin=args.margin,
                                                tool_radius=args.tool_radius, cutter_len=args.cutter_len, cutter_radius=args.cutter_radius,
                                                tool_mesh=tool_mesh, tool_mesh_key=tool_mesh_key)

@@ -395,14 +395,66 @@ def tool_mesh_capsules(tris: np.ndarray, tool: np.ndarray, cutter_len: float, ke
     if len(body) == 0:
         return []
     from .robot_import import fit_capsules
-    k = (key, round(cutter_len, 3), tuple(np.round(tcp, 3)))
+    k = (key, round(cutter_len, 3), tuple(np.round(tcp, 3)), tuple(np.round(zt, 4)))
     if k in _mesh_prims_cache:
         caps = _mesh_prims_cache[k]
     else:
-        caps = fit_capsules(body)
+        # one capsule set per connected component (an extruder body next to its holder
+        # must not be swallowed by one fat capsule), clamped to the mesh extent along the
+        # nozzle axis so the hemispherical ends do not reach past the real body
+        caps = []
+        for comp in mesh_components(body):
+            depth_c = (comp.reshape(-1, 3) - tcp) @ (-zt)
+            d_lo, d_hi = float(depth_c.min()), float(depth_c.max())  # distance back from the tip, this component
+            for c in fit_capsules(comp):
+                a, b, r = np.array(c["a"], float), np.array(c["b"], float), float(c["radius"])
+                order0 = float((b - a) @ zt)
+                ends = []
+                for e in (a, b):
+                    d = float((e - tcp) @ (-zt))
+                    if d - r < d_lo:
+                        e = e - zt * (d_lo - (d - r))  # hemisphere would reach past the tip side: move towards the flange
+                    if d + r > d_hi:
+                        e = e + zt * (d + r - d_hi)  # past the flange side: move towards the tip
+                    ends.append(e)
+                a, b = ends
+                if order0 * float((b - a) @ zt) < 0:
+                    a = b = (a + b) / 2.0  # the clamps crossed: a sphere at the middle
+                caps.append({"a": a.tolist(), "b": b.tolist(), "radius": r})
         _mesh_prims_cache[k] = caps
     return [Capsule("narzedzie", FLANGE_LINK, np.array(c["a"], float), np.array(c["b"], float), float(c["radius"]), "tool")
             for c in caps]
+
+
+def mesh_components(tris: np.ndarray, weld: float = 1e-3) -> list[np.ndarray]:
+    """Split a triangle soup into connected components (vertices welded within ``weld``)."""
+    t = np.asarray(tris, dtype=float)
+    n = len(t)
+    if n == 0:
+        return []
+    keys = np.round(t.reshape(-1, 3) / weld).astype(np.int64)
+    _, inv = np.unique(keys, axis=0, return_inverse=True)
+    inv = inv.reshape(n, 3)
+    parent = list(range(n))
+
+    def find(i):
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    first: dict[int, int] = {}
+    for i in range(n):
+        for v in inv[i]:
+            j = first.setdefault(int(v), i)
+            if j != i:
+                ri, rj = find(i), find(j)
+                if ri != rj:
+                    parent[ri] = rj
+    groups: dict[int, list[int]] = {}
+    for i in range(n):
+        groups.setdefault(find(i), []).append(i)
+    return [t[idx] for idx in groups.values()]
 
 
 def robot_capsules(robot: RobotModel, tool: np.ndarray, tool_radius: float = 25.0, cutter_len: float = 20.0,

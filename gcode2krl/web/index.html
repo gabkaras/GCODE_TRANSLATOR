@@ -116,6 +116,9 @@
       <label class="row"><span>Stały kąt [°] / przesunięcie wzdłuż ścieżki [°]</span><span class="pair2"><input type="number" id="opt_spin_fixed" data-default="0" value="0" step="15"><input type="number" id="opt_spin_offset" data-default="0" value="0" step="15"></span></label>
       <label class="row"><span>Krok obrotu [°] / min |A5| [°] / dod. pochylenie [°]</span><span class="pair3"><input type="number" id="opt_spin_step" data-default="15" value="15" min="1" max="90" step="5"><input type="number" id="opt_singular_deg" data-default="8" value="8" min="0" max="45" step="1"><input type="number" id="opt_max_tilt" data-default="0" value="0" min="0" max="45" step="5"></span></label>
       <label class="row check"><input type="checkbox" id="opt_status_turn" data-default="true" checked><span>Status/Turn z kinematyki: dojazd PTP z S i T, PTP przy zmianie konfiguracji</span></label>
+      <label class="row check"><input type="checkbox" id="opt_printed_check" data-default="true" checked><span>Kolizje narzędzia i robota z już wydrukowaną częścią (druk planarny)</span></label>
+      <label class="row"><span>Wydruk: margines wokół obrysu [mm]</span><input type="number" id="opt_printed_margin" data-default="2" value="2" min="0" step="1"></label>
+      <label class="row"><span>Auto obrót narzędzia wokół dyszy (stała orientacja)</span><select id="opt_auto_spin" data-default="0"><option value="0">wyłączony</option><option value="90">co 90°</option><option value="45">co 45°</option><option value="30">co 30°</option><option value="15">co 15°</option></select></label>
       <label class="row"><span>Kontrola ciągła: rundy zagęszczania</span><input type="number" id="opt_max_refine" data-default="6" value="6" min="0" max="12" step="1"></label>
       <label class="row"><span>Próbki IK (maks.)</span><input type="number" id="opt_robot_samples" data-default="20000" value="20000" min="10" step="1000"></label>
       <label class="row"><span>Wymagany prześwit [mm]</span><input type="number" id="opt_margin" data-default="10" value="10" min="0" step="1"></label>
@@ -159,6 +162,13 @@
           <button type="button" id="tool-mesh-clear" class="mini" title="usuń model narzędzia">×</button></div>
         <div id="tool-mesh-info" class="row-note muted">Brak modelu: uchwyt jest kapsułą o promieniu z pola „promień uchwytu”.</div>
         <input type="hidden" id="opt_tool_mesh" data-default="" value="">
+        <div class="fb-head"><span>Położenie modelu narzędzia w układzie kołnierza <small>(STEP producenta rzadko ma początek w kołnierzu)</small></span></div>
+        <div class="frame-grid" data-prefix="mf">
+          <label>X<input type="number" id="mf_x" step="1"></label><label>Y<input type="number" id="mf_y" step="1"></label><label>Z<input type="number" id="mf_z" step="1"></label>
+          <label>A<input type="number" id="mf_a" step="1"></label><label>B<input type="number" id="mf_b" step="1"></label><label>C<input type="number" id="mf_c" step="1"></label>
+        </div>
+        <input type="hidden" id="opt_tool_mesh_frame" data-default="0 0 0 0 0 0" value="0 0 0 0 0 0">
+        <div class="row-note muted">Przesuń i obróć model tak, aby jego kołnierz pokrył się z kołnierzem robota w podglądzie 3D, a końcówka dyszy trafiła w TCP. Kapsuły kolizyjne i rysunek używają tej samej ramki.</div>
         <div class="row-note muted">Z = długość narzędzia od kołnierza wzdłuż jego osi; A B C obracają układ TCP (ZYX jak w KSS). Model narzędzia podaj w układzie kołnierza; część w zasięgu „długości ostrza” od TCP jest traktowana jako ostrze.</div>
       </div>
       <div class="frame-block">

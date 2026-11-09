@@ -26,7 +26,7 @@ STEP/STL ──slicer──> ścieżka (G-code + I J K) ──parser──> ruch
 pip install -e .          # wymaga Python >= 3.10 i numpy
 pip install -e .[test]    # dodatkowo pytest
 pip install -e .[step]    # import STEP/IGES (OpenCASCADE)
-pytest                    # 160 testów
+pytest                    # 163 testy
 ```
 
 ## GUI
@@ -264,6 +264,30 @@ zone operator forbidden robot robot 0 1600 900 1200 800 1800   # żaden człon n
   STATE FALSE}` — sterownik zatrzymuje robota, gdy TCP wyjdzie ze strefy
   dozwolonej albo wejdzie do zabronionej (KSS pilnuje tylko TCP; zakres
   `robot` zapewnia raport aplikacji). Opcja „$WORKSPACE w KRL” / `--no-zones-krl`.
+
+### Model narzędzia (STEP) i druk planarny bez kolizji
+
+![model narzędzia w kroku 1](docs/gui_tool_step.png)
+
+* **STEP/STL/OBJ ekstrudera** wgrywa się w kroku 1 („wgraj model narzędzia”);
+  jednostki i **położenie modelu w układzie kołnierza** (X Y Z A B C, bo pliki
+  producenta rzadko mają początek w kołnierzu) ustawia się obok i widać od
+  razu w podglądzie 3D na kołnierzu robota. CLI: `--tool-mesh`, `--tool-mesh-frame`.
+* Z siatki powstają **kapsuły kolizyjne per spójny element** (korpus obok
+  uchwytu nie jest zlewany w jedną grubą kapsułę), przycięte do zasięgu
+  elementu wzdłuż osi dyszy, więc półkule kapsuł nie wystają poza korpus;
+  ostatnie `cutter_len` mm przy TCP to dysza, która może dotykać materiału.
+* **Kolizje z już wydrukowaną częścią** (druk planarny): materiał wypełnia
+  otoczkę wypukłą ścieżki (plus margines) do wysokości bieżącej warstwy; każda
+  kapsuła uchwytu lub robota poniżej tego poziomu wewnątrz obrysu to kolizja
+  (typowo przy pochylonej dyszy, montażu pod kątem, szerokim korpusie).
+  Raport: liczba próbek, maksymalne zagłębienie, kapsuły; punkty w 3D, pasek
+  robota, ostrzeżenie.
+* **Automatyczny obrót narzędzia wokół osi dyszy** przy stałej orientacji
+  (ścieżka bez I J K): kandydaci kąta A co 90/45/30/15° są sprawdzane pod
+  kątem zasięgu, kolizji z przeszkodami i wydrukiem oraz prześwitu, wybrany A
+  trafia do programu (dojazd PTP, `$TOOL` bez zmian). Pozwala odwrócić korpus
+  ekstrudera od ściany, stołu czy sąsiednich obiektów.
 
 ### HOME na początku i końcu
 

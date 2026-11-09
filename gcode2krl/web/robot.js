@@ -179,7 +179,7 @@
         v.setMeshTransform('rb_flange', mul(B, f[7]));
       }
       v.setMeshTransform('rb_tool', mul(B, f[7]));
-      if (this.toolMeshOn) { v.setMeshTransform('rb_toolmesh', mul(B, f[7])); v.setVisible('rb_tool', false); const M = v.meshes.get('rb_tool'); if (M) M.visible = false; }
+      if (this.toolMeshOn) { v.setMeshTransform('rb_toolmesh', mul(mul(B, f[7]), this.toolMeshFrame || I4())); v.setVisible('rb_tool', false); const M = v.meshes.get('rb_tool'); if (M) M.visible = false; }
       v.setMeshTransform('rb_reach', B);
       // reach arc of the wrist centre in the current arm plane + TCP axes
       const lines = [];
@@ -271,10 +271,12 @@
     v.setGroupVisible('obstacles', this.obstaclesVisible !== false);
   };
   /** imported tool mesh (flange frame, mm): replaces the procedural tool cylinder */
-  RobotView.prototype.setToolMesh = function (g) {
+  RobotView.prototype.setToolMeshFrame = function (m) { this.toolMeshFrame = m || I4(); if (this.joints) this.setPose(this.joints); };
+  RobotView.prototype.setToolMesh = function (g, frameMat) {
     const v = this.viewer;
     v.removeGroup('toolmesh');
     this.toolMeshOn = !!g;
+    if (frameMat) this.toolMeshFrame = frameMat;
     if (g) {
       const geom = { positions: decodeF32(g.positions), normals: decodeF32(g.normals) };
       v.setMesh('rb_toolmesh', geom, TOOL, I4(), { group: 'toolmesh' });

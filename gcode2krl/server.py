@@ -336,12 +336,57 @@ def robot_report(items, options: dict, abc) -> dict | None:
     tool_mesh_ref = str(options.get("tool_mesh") or "").strip()
     if tool_mesh_ref:
         tool_mesh, tool_mesh_key = meshstore.load(tool_mesh_ref, _opt(options, "tool_mesh_units", "mm", str))
+        mf = _ntuple(options, "tool_mesh_frame", (0, 0, 0, 0, 0, 0), 6)
+        if any(abs(v) > 1e-9 for v in mf):
+            # the STEP / STL of the tool is placed in the flange frame by this frame
+            fm = frame(mf)
+            tool_mesh = tool_mesh @ fm[:3, :3].T + fm[:3, 3]
+            tool_mesh_key = (tool_mesh_key, tuple(round(float(v), 3) for v in mf))
+    cap_kw = dict(tool_radius=_opt(options, "tool_radius", 25.0, float), cutter_len=_opt(options, "cutter_len", 20.0, float),
+                  cutter_radius=_opt(options, "cutter_radius", 6.0, float), tool_mesh=tool_mesh, tool_mesh_key=tool_mesh_key)
+    # ---- the printed part (planar printing): footprint of the path, top = current layer
+    from shapely.geometry import MultiPoint
+    from .robot import check_printed
+    printed_on = _opt(options, "printed_check", True, bool)
+    printed_margin = _opt(options, "printed_margin", 2.0, float)
+    footprint = MultiPoint(pts[:, :2]).convex_hull if printed_on and len(pts) >= 3 else None
+    # ---- automatic spin of a constant orientation about the nozzle axis to avoid collisions
+    auto_spin = _opt(options, "auto_spin", 0.0, float)
+    spin_info = None
+    if auto_spin > 0 and not has_orientation(items) and len(pts) > 1:
+        sub = pts[:: max(1, len(pts) // 600)]
+        a0 = float(abc[0])
+        cands = []
+        for k in range(int(round(360.0 / auto_spin))):
+            cand = (((a0 + k * auto_spin) + 180.0) % 360.0 - 180.0, float(abc[1]), float(abc[2]))
+            rc = check_path(robot, sub, cand, base, tool)
+            cc, caps_c = check_path_collisions(robot, sub, cand, base, tool, rc, obstacles, margin=margin, max_refine=0, **cap_kw)
+            pr = check_printed(robot, rc.joints, rc.ok_mask, caps_c, sub, base, footprint, printed_margin) if footprint is not None else {"n_collision": 0}
+            score = (rc.n_unreachable + rc.n_limit, cc.n_collision + pr["n_collision"], cc.n_margin, -(cc.min_clearance if np.isfinite(cc.min_clearance) else 0.0))
+            cands.append({"a": round(cand[0], 1), "unreachable": rc.n_unreachable + rc.n_limit, "collisions": cc.n_collision + pr["n_collision"],
+                          "below_margin": cc.n_margin, "min_clearance": None if not np.isfinite(cc.min_clearance) else round(float(cc.min_clearance), 1), "_score": score})
+        best = min(cands, key=lambda c: c["_score"])
+        for c in cands:
+            c.pop("_score")
+        abc = (best["a"], float(abc[1]), float(abc[2]))
+        abc_used = abc
+        rep = check_path(robot, pts, abc_used, base, tool)
+        d.update(rep.to_dict())
+        d["joints"] = _f32(np.nan_to_num(rep.joints, nan=0.0).ravel()) if rep.joints is not None else ""
+        d["ok"] = base64.b64encode(np.asarray(rep.ok_mask, dtype=np.uint8).tobytes()).decode("ascii") if rep.ok_mask is not None else ""
+        bad = pts[~rep.ok_mask] if rep.ok_mask is not None else np.zeros((0, 3))
+        d["bad_points"] = _f32(bad.ravel())
+        spin_info = {"abc": list(abc), "a": best["a"], "step": auto_spin, "candidates": cands}
+    d["auto_spin"] = spin_info
     col, caps = check_path_collisions(robot, pts, abc_used, base, tool, rep, obstacles, margin=margin,
-                                      tool_radius=_opt(options, "tool_radius", 25.0, float),
-                                      cutter_len=_opt(options, "cutter_len", 20.0, float),
-                                      cutter_radius=_opt(options, "cutter_radius", 6.0, float),
-                                      max_refine=_opt(options, "max_refine", 6, int),
-                                      tool_mesh=tool_mesh, tool_mesh_key=tool_mesh_key)
+                                      max_refine=_opt(options, "max_refine", 6, int), **cap_kw)
+    if footprint is not None:
+        pr = check_printed(robot, rep.joints, rep.ok_mask, caps, pts, base, footprint, printed_margin)
+        d["printed"] = {"n_collision": pr["n_collision"], "max_depth": round(pr["max_depth"], 2), "by_capsule": pr["by_capsule"], "margin": printed_margin}
+        d["printed_points"] = _f32(pts[pr["mask"]].ravel())
+    else:
+        d["printed"] = None
+        d["printed_points"] = ""
     # ---- PTP moves HOME -> first point and last point -> HOME (joint interpolation)
     from .robot import check_joint_move
     home_q = np.asarray(_home_axes(options), dtype=float)
@@ -400,6 +445,7 @@ def robot_report(items, options: dict, abc) -> dict | None:
     cd["margin_points"] = _f32(pts[col.margin_mask].ravel())
     cd["obstacles"] = [o.to_dict() for o in obstacles]
     cd["tool_mesh"] = tool_mesh_ref or None
+    cd["tool_mesh_frame"] = list(_ntuple(options, "tool_mesh_frame", (0, 0, 0, 0, 0, 0), 6))
     cd["tool_mesh_units"] = _opt(options, "tool_mesh_units", "mm", str)
     cd["capsules"] = [{"name": c.name, "link": c.link, "a": c.a.tolist(), "b": c.b.tolist(), "radius": c.radius, "kind": c.kind} for c in caps]
     cd["pair_names"] = [[p.a, p.b, p.kind] for p in col.pairs]
@@ -435,6 +481,8 @@ def run_translation(gcode: str, filename: str, options: dict) -> dict:
     items, stats = translate(parsed, topts)
     t2 = time.perf_counter()
     robot = robot_report(items, options or {}, kopts.abc)  # may refine orientations (spin solver) before writing
+    if robot and robot.get("auto_spin"):
+        kopts.abc = tuple(robot["auto_spin"]["abc"])  # the collision-free spin chosen for the constant orientation
     t3 = time.perf_counter()
     from .translator import has_orientation
     kopts.ori_var = has_orientation(items)
@@ -454,6 +502,13 @@ def run_translation(gcode: str, filename: str, options: dict) -> dict:
                                   f"{worst['min_clearance']:.1f} mm)")
         elif c["n_margin"]:
             stats.warnings.append(f"collision margin {c['margin']:g} mm violated at {c['n_margin']} samples (min clearance {c['min_clearance']:.1f} mm)")
+        pr = robot.get("printed")
+        if pr and pr["n_collision"]:
+            worst = ", ".join(f"{k} ({v})" for k, v in sorted(pr["by_capsule"].items(), key=lambda kv: -kv[1])[:3])
+            stats.warnings.append(f"tool / robot dips into the printed part at {pr['n_collision']} samples (max {pr['max_depth']:.1f} mm): {worst}")
+        if robot.get("auto_spin"):
+            a = robot["auto_spin"]
+            stats.warnings.append(f"auto spin: orientation A set to {a['a']:g} deg (best of {len(a['candidates'])} candidates)")
         cfg = robot.get("configuration")
         if cfg:
             if cfg["status_changes_in_path"]:

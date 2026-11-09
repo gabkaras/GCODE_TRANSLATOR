@@ -16,6 +16,7 @@
     { key: 'collision_points', label: 'kolizja', color: 'var(--c-collision)', order: 12, on: true, mode: 'points', size: 11 },
     { key: 'margin_points', label: 'poniżej prześwitu', color: 'var(--c-margin)', order: 11, on: true, mode: 'points', size: 8 },
     { key: 'zone_points', label: 'naruszenie strefy bezpieczeństwa', color: 'var(--c-zone)', order: 12, on: true, mode: 'points', size: 11 },
+    { key: 'printed_points', label: 'kolizja z wydrukowaną częścią', color: 'var(--c-printed)', order: 12, on: true, mode: 'points', size: 11 },
     // slicer feature preview (from the slicer result, before translation)
     { key: 'sl_walls', label: 'slicer: obrysy', color: 'var(--c-sl-wall)', order: 20, on: false, kinds: ['WALL-OUTER', 'WALL-INNER'] },
     { key: 'sl_skin', label: 'slicer: góra/dół, mosty, ironing', color: 'var(--c-sl-skin)', order: 21, on: false, kinds: ['SKIN', 'BRIDGE', 'IRONING'] },
@@ -67,7 +68,7 @@
     'extruder_trigger','extruder_on_delay','extruder_off_delay','extruder_reverse_out','krl_start','krl_end',
     'home_start','home_end','home_mode','home_axes','home_vel','zones','zones_krl',
     'orient_solve','spin_step','singular_deg','max_tilt','spin_mode','spin_fixed','spin_offset','status_turn','max_refine','robot','base_frame','tool_frame','base_literal','tool_literal','robot_samples','path_step','margin',
-    'tbl_sx','tbl_sy','tbl_cx','tbl_cy','mat_t','mat_pad','tool_mesh','tool_mesh_units',
+    'tbl_sx','tbl_sy','tbl_cx','tbl_cy','mat_t','mat_pad','tool_mesh','tool_mesh_units','tool_mesh_frame','printed_check','printed_margin','auto_spin',
     'tool_radius','cutter_len','cutter_radius','obstacles','tol','max_radius','min_radius','min_arc_points','refine_shift','spl_max_segment','corner_angle',
     'default_feed','offset','fit_arcs','use_spl','name','mode','tool','base','abc','rapid_vel','max_vel','acc','cdis',
     'round_corners','max_block_segments','max_motions_per_file','block_approx','spindle_out','coolant_out','spindle_anout',
@@ -295,7 +296,8 @@
         const src = L.key === 'bad_points' ? (data.robot ? data.robot.bad_points : '')
           : L.key === 'collision_points' ? (col ? col.collision_points : '')
           : L.key === 'margin_points' ? (col ? col.margin_points : '')
-          : L.key === 'zone_points' ? (data.robot ? data.robot.zone_points : '') : p[L.key];
+          : L.key === 'zone_points' ? (data.robot ? data.robot.zone_points : '')
+          : L.key === 'printed_points' ? (data.robot ? data.robot.printed_points : '') : p[L.key];
         const arr = L.kinds ? previewLayer(L) : decode(src);
         viewer.setLayer(L.key, arr, L.color, { alpha: L.alpha, order: L.order, mode: L.mode, size: L.size, visible: $('#layer-' + L.key).checked });
       }
@@ -378,8 +380,10 @@
   AXES6.forEach(ax => {
     $('#tf_' + ax).addEventListener('input', () => onFrameEdit('tf', 'opt_tool_frame'));
     $('#bf_' + ax).addEventListener('input', () => onFrameEdit('bf', 'opt_base_frame'));
+    $('#mf_' + ax).addEventListener('input', () => { if (fieldsToHidden('mf', 'opt_tool_mesh_frame')) { saveOptions(); applyToolMeshFrame(); scheduleAuto(); } });
   });
-  function syncFramesFromOptions() { hiddenToFields('tf', 'opt_tool_frame'); hiddenToFields('bf', 'opt_base_frame'); }
+  function syncFramesFromOptions() { hiddenToFields('tf', 'opt_tool_frame'); hiddenToFields('bf', 'opt_base_frame'); hiddenToFields('mf', 'opt_tool_mesh_frame'); }
+  function applyToolMeshFrame() { if (robotView) robotView.setToolMeshFrame(kukaFrame(parse6('#opt_tool_mesh_frame', [0,0,0,0,0,0]))); }
   // safety zone helpers
   function addZoneLine(line) {
     const ta = $('#opt_zones');
@@ -613,7 +617,7 @@
     if (!robotView) return;
     if (!id) { robotView.setToolMesh(null); toolMeshLoaded = ''; return; }
     if (toolMeshLoaded === key) return;
-    try { const g = await (await fetch('/api/mesh/' + id + '?units=' + units)).json(); if (!g.error) { robotView.setToolMesh(g); toolMeshLoaded = key; } } catch (e) {}
+    try { const g = await (await fetch('/api/mesh/' + id + '?units=' + units)).json(); if (!g.error) { robotView.setToolMesh(g, kukaFrame(parse6('#opt_tool_mesh_frame', [0,0,0,0,0,0]))); toolMeshLoaded = key; } } catch (e) {}
   }
   // ---- slicer ------------------------------------------------------------
   function sliceParams() { return window.SLICER_FORM ? window.SLICER_FORM.params() : {}; }
@@ -814,6 +818,8 @@
     lim.className = 'rb-item ' + (rep.n_limit ? 'bad' : 'ok');
     $('#robot-axes').innerHTML = rep.joint_min.map((lo, i) => lo === null ? '' : `<span class="${rep.axis_violations[i] ? 'viol' : ''}">A${i+1} <b>${lo.toFixed(0)}…${rep.joint_max[i].toFixed(0)}°</b></span>`).join('')
       + (rep.zones && rep.zones.zones && rep.zones.zones.length ? (() => { const bad = rep.zones.results.filter(z => z.n_path || z.n_home); return `<span class="${bad.length ? 'viol' : ''}" title="strefy bezpieczeństwa: ścieżka i ruchy HOME">strefy <b>${bad.length ? bad.map(z => `${z.name} ${z.n_path + z.n_home}`).join(', ') : 'OK'}</b></span>`; })() : '')
+      + (rep.printed ? `<span class="${rep.printed.n_collision ? 'viol' : ''}" title="narzędzie / robot poniżej wierzchu wydrukowanej części">wydruk <b>${rep.printed.n_collision ? `${rep.printed.n_collision} kolizji (${rep.printed.max_depth} mm)` : 'OK'}</b></span>` : '')
+      + (rep.auto_spin ? `<span title="automatycznie dobrany obrót wokół osi dyszy">auto obrót <b>A ${rep.auto_spin.a}°</b></span>` : '')
       + (rep.home_moves ? ['start', 'end'].map(k => { const h = rep.home_moves[k]; if (!h) return ''; const bad = h.n_collision ? 'viol' : ''; const txt = h.n_collision ? `KOLIZJA ${h.worst ? h.worst.a + '/' + h.worst.b : ''}` : (h.n_margin ? `prześwit ${h.min_clearance.toFixed(0)} mm` : 'OK'); return `<span class="${bad}" title="ruch PTP ${k === 'start' ? 'HOME → start' : 'koniec → HOME'} (interpolacja osi)">${k === 'start' ? 'HOME→start' : 'koniec→HOME'} <b>${txt}</b></span>`; }).join('') : '')
       + (rep.orientation ? `<span title="rozwiązywanie obrotu wokół osi narzędzia">orient. <b>${rep.orientation.points}</b> pkt · ${{ free: 'solver', fixed: 'stały kąt', tangent: 'wzdłuż ścieżki' }[rep.orientation.spin_mode] || 'solver'} · ${rep.orientation.resampled} przestawień${rep.orientation.singular ? ` · <span class="viol">${rep.orientation.singular} osobl.</span>` : ''}${rep.orientation.unreachable ? ` · <span class="viol">${rep.orientation.unreachable} nieosiąg.</span>` : ''}</span>` : (rep.oriented ? '<span>orientacja z G-code</span>' : ''));
     showCollisions(rep.collision, rep);

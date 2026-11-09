@@ -733,6 +733,46 @@ def assign_configurations(items: list, robot: RobotModel, base: np.ndarray, tool
     return info
 
 
+def check_printed(robot: RobotModel, q: np.ndarray, ok: np.ndarray, caps: list, tcp_base: np.ndarray, base: np.ndarray,
+                  footprint, margin: float = 2.0, tol: float = 0.5) -> dict:
+    """Planar printing: the material already deposited fills the part footprint up to
+    the current layer top (= the TCP height of the sample). Any capsule of the tool
+    holder or the robot (not the nozzle) that dips below that level inside the
+    footprint collides with the print. Returns a per-sample mask and a summary."""
+    import shapely
+    from .collision import batch_fk, capsule_endpoints
+
+    n = len(tcp_base)
+    mask = np.zeros(n, dtype=bool)
+    out = {"n_collision": 0, "max_depth": 0.0, "by_capsule": {}, "mask": mask}
+    if footprint is None or footprint.is_empty or q is None or not np.any(ok):
+        return out
+    frames = batch_fk(robot, np.nan_to_num(np.asarray(q, dtype=float), nan=0.0))
+    ends = capsule_endpoints(frames, caps)  # (N, K, 2, 3) robot frame
+    r_inv = base[:3, :3].T
+    t_inv = -r_inv @ base[:3, 3]
+    z_top = np.asarray(tcp_base)[:, 2]
+    for k, c in enumerate(caps):
+        if c.kind == "cutter":
+            continue
+        a = ends[:, k, 0, :] @ r_inv.T + t_inv
+        b = ends[:, k, 1, :] @ r_inv.T + t_inv
+        fp = footprint.buffer(margin + c.radius)
+        worst = np.zeros(n)
+        for t in (0.0, 0.5, 1.0):
+            pt = a + (b - a) * t
+            depth = (z_top - tol) - (pt[:, 2] - c.radius)  # > 0: below the printed top
+            inside = shapely.contains_xy(fp, pt[:, 0], pt[:, 1])
+            hit = inside & (depth > 0) & ok
+            worst = np.where(hit, np.maximum(worst, depth), worst)
+        if worst.any():
+            out["by_capsule"][c.name] = int(np.count_nonzero(worst > 0))
+            out["max_depth"] = max(out["max_depth"], float(worst.max()))
+            mask |= worst > 0
+    out["n_collision"] = int(np.count_nonzero(mask))
+    return out
+
+
 def check_joint_move(robot: RobotModel, q_from, q_to, caps: list, obstacles: list, margin: float = 10.0,
                      n: int = 16, max_refine: int = 6):
     """Collision report of a PTP (joint-interpolated) move, e.g. HOME -> first path
