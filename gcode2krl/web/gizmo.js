@@ -40,7 +40,8 @@
         if (h.id === 'basez') return `wysokość bazy ${inp('Z', f[2], 'bf_z')}<span class="k">mm</span>`;
         return h.id === 'base' ? `baza stołu $BASE <small>(narożnik blatu)</small> ${inp('X', f[0], 'bf_x')}${inp('Y', f[1], 'bf_y')}${inp('Z', f[2], 'bf_z')}${inp('A', f[3], 'bf_a')}<span class="k">°</span>` : `obrót bazy ${inp('A', f[3], 'bf_a')}<span class="k">°</span>`; }
       case 'tcp': { const t = A.parse6('#opt_tool_frame', [0, 0, 0, 0, 0, 0]);
-        if (h.id === 'tcpz') return `oś dyszy <small>(pochylenie)</small> ${inp('A', t[3], 'tf_a')}${inp('B', t[4], 'tf_b')}${inp('C', t[5], 'tf_c')}<span class="k">°</span>`;
+        if (h.id === 'tcpz') { const R = A.kukaFrame([0, 0, 0, t[3], t[4], t[5]]); const tilt = Math.acos(Math.max(-1, Math.min(1, R[10]))) * 180 / Math.PI; const az = Math.atan2(R[9], R[8]) * 180 / Math.PI;
+          return `oś dyszy <small>pochylenie ${round(tilt, 1)}° kierunek ${Math.hypot(R[8], R[9]) > 1e-6 ? round(az, 0) : 0}°</small> ${inp('A', t[3], 'tf_a')}${inp('B', t[4], 'tf_b')}${inp('C', t[5], 'tf_c')}<span class="k">°</span>`; }
         if (h.id === 'tcpx') return `obrót wokół dyszy <small>(X narzędzia)</small>`;
         return `TCP narzędzia ${inp('X', t[0], 'tf_x')}${inp('Y', t[1], 'tf_y')}${inp('Z', t[2], 'tf_z')} ${inp('A', t[3], 'tf_a')}${inp('B', t[4], 'tf_b')}${inp('C', t[5], 'tf_c')}<span class="k">°</span>`; }
       default: return h.label || h.id;
@@ -147,11 +148,19 @@
       x = v3.add(v3.scale(x0, Math.cos(phi)), v3.scale(y0, Math.sin(phi)));
       abc = A.rotToABC(x, cross(z, x), z).map(a => round(((a + 180) % 360 + 360) % 360 - 180, 1));
     } else {
-      // tilt: the nozzle axis follows the drag, tool X stays as close as possible; A B C snapped (45°, 90° mounts hit exactly)
-      x = v3.sub(mcol(R, 0), v3.scale(z, v3.dot(mcol(R, 0), z)));
-      if (v3.len(x) < 1e-6) { x = mcol(R, 1); x = v3.sub(x, v3.scale(z, v3.dot(x, z))); }
+      // tilt: the nozzle axis follows the drag; what snaps is the tilt angle from the flange axis and
+      // its direction in the flange XY plane (so the 45° / 90° mounts are hit exactly), not A B C
+      let zz = z;
+      const tilt = Math.acos(Math.max(-1, Math.min(1, zz[2]))) * 180 / Math.PI;
+      const az = Math.atan2(zz[1], zz[0]) * 180 / Math.PI;
+      const ts = snapAng(round(tilt, 1)), as = Math.hypot(zz[0], zz[1]) > 1e-6 ? snapAng(round(az, 1)) : az;
+      const tr = ts * Math.PI / 180, ar = as * Math.PI / 180;
+      zz = [Math.sin(tr) * Math.cos(ar), Math.sin(tr) * Math.sin(ar), Math.cos(tr)];
+      // tool X: as close as possible to the current one (keeps the spin), orthogonal to the new axis
+      x = v3.sub(mcol(R, 0), v3.scale(zz, v3.dot(mcol(R, 0), zz)));
+      if (v3.len(x) < 1e-6) { x = mcol(R, 1); x = v3.sub(x, v3.scale(zz, v3.dot(x, zz))); }
       x = norm(x); if (!x) return;
-      abc = A.rotToABC(x, cross(z, x), z).map(a => snapAng(round(((a + 180) % 360 + 360) % 360 - 180, 1)));
+      abc = A.rotToABC(x, cross(zz, x), zz).map(a => round(((a + 180) % 360 + 360) % 360 - 180, 1));
     }
     A.setFrameFields('tf', 'opt_tool_frame', [cur[0], cur[1], cur[2], ...abc]);
     A.applyFrames();
