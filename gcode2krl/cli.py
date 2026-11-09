@@ -64,6 +64,7 @@ def build_parser() -> argparse.ArgumentParser:
     k.add_argument("--extruder-off-delay", type=float, default=0.0, help="delay of the extruder OFF trigger in s")
     k.add_argument("--extruder-reverse-out", type=int, default=0, help="digital output running the extruder backwards for retraction (0 = none)")
     k.add_argument("--no-extruder-trigger", action="store_true", help="switch the extruder output with plain $OUT instead of TRIGGER (advance-run stop)")
+    k.add_argument("--no-status-turn", action="store_true", help="do not write Status/Turn (PTP approach) from the inverse kinematics")
     k.add_argument("--zones", default=None, help="file with safety zones (zone NAME allowed|forbidden tcp|robot robot|base cx cy cz sx sy sz [a b c])")
     k.add_argument("--no-zones-krl", action="store_true", help="do not write the zones as $WORKSPACE[n] into the program")
     k.add_argument("--no-home-start", action="store_true", help="do not start the program with PTP HOME")
@@ -175,6 +176,11 @@ def run(argv: list[str] | None = None) -> int:
             orient_info = resolve_orientations(items, robot, base_t, tool_t, ref=kopts.abc, spin_step=args.spin_step,
                                                spin_mode=args.spin_mode, spin_fixed=args.spin_fixed, spin_offset=args.spin_offset,
                                                singular_deg=args.singular_deg, max_tilt_deg=args.max_tilt)
+        if not args.no_status_turn:
+            from .robot import assign_configurations
+            cfg_info = assign_configurations(items, robot, base_t, tool_t, ref=kopts.abc)
+            if cfg_info["status_changes_in_path"]:
+                stats.warnings.append(f"robot configuration (Status) changes {cfg_info['status_changes_in_path']}x inside a continuous path")
         if has_orientation(items):
             pts, abc_used = sample_items(items, max_samples=args.robot_samples, step=args.path_step if args.path_step > 0 else None,
                                          default_abc=kopts.abc, with_abc=True)

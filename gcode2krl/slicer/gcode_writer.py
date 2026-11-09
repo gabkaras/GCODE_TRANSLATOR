@@ -74,6 +74,10 @@ def write_gcode(layers: list[Layer], params: SliceParams, source: str = "") -> t
     if heights:
         st.min_layer_height, st.max_layer_height = float(min(heights)), float(max(heights))
     density = p.material_density  # g/cm^3
+    from .ranges import hooks_for_layer, parse_hooks
+    hooks = parse_hooks(p.layer_krl)
+    prev_layer_z = None
+    first_printed = True
 
     def travel_feed() -> float:
         return p.speed_travel
@@ -86,6 +90,13 @@ def write_gcode(layers: list[Layer], params: SliceParams, source: str = "") -> t
             out.append(f";LAYER:{L.index}")
             out.append(f";Z:{z:.3f}")
             out.append(f";HEIGHT:{L.height:.3f}")
+        # robot program hooks for this layer (raw KRL lines carried through the G-code)
+        if p.layer_wait > 0 and not first_printed:
+            out.append(f";KRL:WAIT SEC {p.layer_wait:g}")
+        for line in hooks_for_layer(hooks, L.index, L.z, prev_layer_z):
+            out.append(";KRL:" + line)
+        prev_layer_z = L.z
+        first_printed = False
         first_model = L.kind == "model" and L.index == next((x.index for x in layers if x.kind == "model"), -1)
         flow_layer = p.first_layer_flow if first_model else 1.0
         # ---- nominal layer time (for the minimum layer time rule)

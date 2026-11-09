@@ -7,9 +7,22 @@
   const C = (k, label, help, o = {}) => ({ k, label, help, type: 'check', ...o });
   const S = (k, label, help, opts, o = {}) => ({ k, label, help, type: 'select', opts, ...o });
   const T = (k, label, help, o = {}) => ({ k, label, help, type: 'textarea', ...o });
+  const A = (k, label, help, buttons) => ({ k, label, help, type: 'actions', buttons, extra: true });
 
   const GROUPS = [
-    { id: 'layers', title: 'Warstwy', open: true, fields: [
+    { id: 'model', title: 'Model: położenie i orientacja', open: true, fields: [
+      N('rot_x', 'Obrót X', ['Obrót modelu', 'Obrót wokół osi X, Y i Z stołu (w tej kolejności, stopnie). Po obrocie model jest stawiany na Z = 0 i centrowany.'], { unit: '°', step: 15, def: 0 }),
+      N('rot_y', 'Obrót Y', ['Obrót Y', 'Obrót wokół osi Y stołu.'], { unit: '°', step: 15, def: 0 }),
+      N('rot_z', 'Obrót Z', ['Obrót Z', 'Obrót wokół osi pionowej — ustawia model względem robota (np. długim bokiem wzdłuż X bazy).'], { unit: '°', step: 15, def: 0 }),
+      N('scale', 'Skala', ['Skala', 'Jednorodna skala modelu (1 = wymiary z pliku; 0.001 dla modelu w metrach).'], { unit: '×', step: 0.1, min: 0.001, def: 1 }),
+      C('mirror_x', 'Lustro X', ['Lustro', 'Odbicie modelu względem płaszczyzny YZ / XZ / XY; orientacja ścianek jest naprawiana automatycznie.'], { def: false }),
+      C('mirror_y', 'Lustro Y', ['Lustro Y', 'Odbicie względem płaszczyzny XZ.'], { def: false }),
+      C('mirror_z', 'Lustro Z', ['Lustro Z', 'Odbicie względem płaszczyzny XY (do góry nogami).'], { def: false }),
+      S('auto_orient', 'Automatyczna orientacja', ['Automatyczna orientacja', 'Brak: obroty jak wyżej. Ułóż płasko: największa płaska ścianka bryły na stole. Minimalne nawisy: orientacja spośród ścianek otoczki o najmniejszej powierzchni wymagającej podpór (przy równych: większy styk ze stołem, mniejsza wysokość). Zastępuje ręczne obroty przy każdym krojeniu; przyciski niżej wpisują wynik do pól na stałe.'], [['none', 'brak (obroty ręczne)'], ['lay_flat', 'ułóż płasko'], ['min_overhang', 'minimalne nawisy']], { def: 'none' }),
+      A('orient_actions', 'Oblicz orientację', ['Oblicz orientację', 'Liczy orientację wybranego modelu na serwerze i wpisuje obroty do pól X Y Z (można je potem poprawić ręcznie).'], [['orient_flat', 'ułóż płasko'], ['orient_min', 'min. nawisy'], ['orient_reset', 'zeruj']]),
+      S('print_sequence', 'Kilka modeli', ['Kolejność drukowania', 'Gdy na stole jest kilka modeli (lista „Modele na stole”): warstwa po warstwie — wszystkie razem, jak jeden obiekt; obiekt po obiekcie — każdy model dokończony przed następnym (sprawdź prześwit uchwytu obok gotowych obiektów; raport kolizji nie zna wydrukowanego materiału).'], [['all', 'warstwa po warstwie'], ['sequential', 'obiekt po obiekcie']], { def: 'all' }),
+    ] },
+    { id: 'layers', title: 'Warstwy', open: false, fields: [
       N('layer_height', 'Wysokość warstwy', ['Wysokość warstwy', 'Odstęp między kolejnymi warstwami. Dla ekstruzji robotem typowo 1–3 mm przy dyszy 3–6 mm; mniejsza = dokładniej i wolniej.'], { unit: 'mm', step: 0.5, min: 0.05, def: 2 }),
       N('first_layer_height', 'Pierwsza warstwa', ['Pierwsza warstwa', 'Wysokość pierwszej warstwy. Zwykle nieco większa niż pozostałe, żeby wyrównać stół i poprawić przyczepność.'], { unit: 'mm', step: 0.5, min: 0.05, def: 2 }),
       C('adaptive_layers', 'Adaptacyjna wysokość warstw', ['Warstwy adaptacyjne', 'Wysokość warstwy dobierana automatycznie z nachylenia powierzchni: płaskie, pochyłe fragmenty dostają cieńsze warstwy (mniejsze schodki), pionowe ściany grubsze. Tylko warstwy płaskie.'], { def: false }),
@@ -18,13 +31,21 @@
       N('adaptive_quality', 'Adapt.: maks. schodek', ['Jakość (adaptacyjne)', 'Największa dopuszczalna wysokość schodka na pochyłej powierzchni. Mniejsza wartość = cieńsze warstwy na skosach.'], { unit: 'mm', step: 0.1, min: 0.01, def: 0.5, show: v => v.adaptive_layers }),
       N('z_offset', 'Przesunięcie Z', ['Przesunięcie Z', 'Dodawane do wszystkich wysokości w G-code (np. korekta zera narzędzia nad stołem).'], { unit: 'mm', step: 0.1, def: 0 }),
     ] },
+    { id: 'ranges', title: 'Zakresy wysokości i haki KRL', fields: [
+      T('ranges', 'Zakresy wysokości', ['Zakresy wysokości', 'Nadpisania parametrów w przedziale Z, jedna linia: „z_od z_do klucz=wartość …”, np. „0 20 layer_height=1 speed_outer=10 infill_density=0.5”. Dozwolone klucze: wysokość warstwy, szerokości, obrysy, wypełnienie, góra/dół, prędkości, mnożnik, pochylenia, fuzzy, ironing, gęstość podpór. Późniejsze linie wygrywają.'], { def: '', rows: 3, placeholder: '0 20 layer_height=1 speed_outer=10\n20 200 infill_pattern=gyroid infill_density=0.15' }),
+      T('layer_krl', 'Haki KRL na warstwach', ['Haki KRL', 'Własne linie programu robota wstawiane przed warstwą: „layer N: …” (numer warstwy od 0), „z Z: …” (pierwsza warstwa na wysokości ≥ Z mm), „every: …” lub „every N: …” (co N warstw). Np. „z 100: HALT” (pauza na wymianę materiału), „every 10: WAIT FOR $IN[5]”. Linie trafiają do KRL dosłownie, między ścieżkami (ekstruder wyłączony).'], { def: '', rows: 3, placeholder: 'layer 5: WAIT SEC 10\nz 100: HALT\nevery 10: $OUT[12] = TRUE' }),
+      N('layer_wait', 'Czekanie między warstwami', ['Czekanie między warstwami', 'WAIT SEC przed każdą warstwą poza pierwszą — czas wiązania / stygnięcia materiału (beton, glina, duże przekroje). Robot stoi w miejscu startu warstwy.'], { unit: 's', step: 5, min: 0, def: 0 }),
+    ] },
     { id: 'walls', title: 'Ściany', fields: [
       N('bead_width', 'Szerokość ścieżki', ['Szerokość ścieżki', 'Szerokość wytłoczonej ścieżki (bead) — z reguły średnica dyszy ekstrudera na robocie (3–10 mm). Używana wszędzie, gdzie szerokość per funkcja jest 0. Wyznacza mm³ materiału na mm ruchu.'], { unit: 'mm', step: 0.5, min: 0.1, def: 4 }),
       N('outer_wall_width', 'Szer. obrysu zewn.', ['Szerokość obrysu zewnętrznego', 'Osobna szerokość dla obrysu zewnętrznego (0 = domyślna). Węższy obrys zewnętrzny daje dokładniejsze wymiary.'], { unit: 'mm', step: 0.1, min: 0, def: 0 }),
       N('inner_wall_width', 'Szer. obrysów wewn.', ['Szerokość obrysów wewnętrznych', 'Osobna szerokość dla obrysów wewnętrznych (0 = domyślna). Szersze obrysy wewnętrzne skracają czas.'], { unit: 'mm', step: 0.1, min: 0, def: 0 }),
       N('perimeters', 'Liczba obrysów', ['Obrysy', 'Liczba pętli konturu na każdej warstwie (zewnętrzna + wewnętrzne). Więcej = mocniejsza ściana.'], { step: 1, min: 0, def: 2 }),
-      S('wall_order', 'Kolejność obrysów', ['Kolejność obrysów', 'Wewnętrzne → zewnętrzny: zewnętrzny drukowany na końcu, ładniejsza powierzchnia. Zewnętrzny → wewnętrzne: lepsze wymiary i nawisy, bo zewnętrzny jest podparty tylko warstwą niżej.'], [['inner_outer', 'wewnętrzne → zewnętrzny'], ['outer_inner', 'zewnętrzny → wewnętrzne']], { def: 'inner_outer' }),
-      S('seam', 'Szew', ['Szew', 'Gdzie zaczynać każdą pętlę obrysu. Najbliższy: od punktu najbliższego poprzedniej pozycji. Wyrównany: zawsze w tym samym miejscu (szew w jednej linii). Z tyłu: po stronie +Y. Losowy: rozrzucone starty.'], [['nearest', 'najbliższy'], ['aligned', 'wyrównany'], ['rear', 'z tyłu (+Y)'], ['random', 'losowy']], { def: 'nearest' }),
+      S('wall_order', 'Kolejność obrysów', ['Kolejność obrysów', 'Wewnętrzne → zewnętrzny: zewnętrzny drukowany na końcu, ładniejsza powierzchnia. Zewnętrzny → wewnętrzne: lepsze wymiary i nawisy. Najpierw wypełnienie: wypełnienie i warstwy pełne przed obrysami (obrysy opierają się o wypełnienie, lepsze nawisy, gorsza powierzchnia).'], [['inner_outer', 'wewnętrzne → zewnętrzny'], ['outer_inner', 'zewnętrzny → wewnętrzne'], ['infill_first', 'najpierw wypełnienie']], { def: 'inner_outer' }),
+      S('seam', 'Szew', ['Szew', 'Gdzie zaczynać każdą pętlę obrysu. Najbliższy: od punktu najbliższego poprzedniej pozycji. Wyrównany: zawsze w tym samym miejscu (szew w jednej linii). Z tyłu: po stronie +Y. Najostrzejszy narożnik: szew ukryty w narożu. Losowy: rozrzucone starty.'], [['nearest', 'najbliższy'], ['aligned', 'wyrównany'], ['rear', 'z tyłu (+Y)'], ['corner', 'najostrzejszy narożnik'], ['random', 'losowy']], { def: 'nearest' }),
+      S('fuzzy_skin', 'Fuzzy skin (chropowata powierzchnia)', ['Fuzzy skin', 'Losowe odchylanie punktów obrysu w poziomie — chropowata, matowa faktura ściany (ukrywa linie warstw). Zewnętrzny: tylko obrys zewnętrzny. Wszystkie: wszystkie obrysy. Pierwsza warstwa zostaje gładka.'], [['none', 'wyłączone'], ['outer', 'obrys zewnętrzny'], ['all', 'wszystkie obrysy']], { def: 'none' }),
+      N('fuzzy_thickness', 'Fuzzy: grubość', ['Grubość fuzzy skin', 'Rozrzut punktów (od szczytu do szczytu) w mm.'], { unit: 'mm', step: 0.2, min: 0.1, def: 0.6, show: v => v.fuzzy_skin !== 'none' }),
+      N('fuzzy_point_distance', 'Fuzzy: odstęp punktów', ['Odstęp punktów fuzzy skin', 'Co ile mm wstawiany jest losowy punkt; mniejszy = drobniejsza faktura, więcej punktów SPL.'], { unit: 'mm', step: 0.5, min: 0.3, def: 3, show: v => v.fuzzy_skin !== 'none' }),
       C('spiral_vase', 'Tryb spiralny (wazon)', ['Tryb spiralny', 'Jeden ciągły obrys zewnętrzny bez szwu: Z rośnie płynnie wzdłuż ścieżki (helisa), bez wypełnienia i warstw górnych powyżej warstw dolnych. Idealny do dużych cienkościennych form drukowanych robotem.'], { def: false }),
       N('small_perimeter_length', 'Małe obrysy: próg', ['Małe obrysy', 'Pętle krótsze niż ta długość (np. małe otwory) są drukowane z prędkością „małe obrysy”. 0 = wyłączone.'], { unit: 'mm', step: 5, min: 0, def: 0 }),
       C('gap_fill', 'Wypełniaj szczeliny i cienkie ściany', ['Gap fill', 'Miejsca za wąskie na kolejny obrys lub wypełnienie (szczeliny między obrysami, cienkie żebra, ostre końcówki) są drukowane pojedynczą, zwężoną ścieżką zamiast zostawać puste.'], { def: true }),
@@ -51,6 +72,10 @@
       N('top_bottom_width', 'Szer. ścieżki góra/dół', ['Szerokość warstw pełnych', 'Osobna szerokość ścieżki dla powierzchni górnych, dolnych i mostów (0 = domyślna).'], { unit: 'mm', step: 0.1, min: 0, def: 0 }),
       C('bridges', 'Wykrywaj mosty', ['Mosty', 'Powierzchnia nad pustką zakotwiczona z obu stron jest mostem: drukowana prostymi liniami w kierunku łączącym podpory, z własną prędkością i wydatkiem, zamiast jako nawis.'], { def: true }),
       N('bridge_flow', 'Wydatek na mostach', ['Wydatek na mostach', 'Mnożnik ekstruzji dla linii mostów (mniej materiału = lepiej napięte nitki).'], { unit: '×', step: 0.05, min: 0.2, max: 2, def: 1, show: v => v.bridges }),
+      C('ironing', 'Prasowanie (ironing) powierzchni górnych', ['Ironing', 'Dodatkowe przejście po gotowych powierzchniach górnych: gęste, monotoniczne linie z bardzo małym wydatkiem i małą prędkością wygładzają wierzch (dysza wygrzewa i rozprowadza materiał).'], { def: false }),
+      N('ironing_flow', 'Ironing: wydatek', ['Wydatek ironingu', 'Mnożnik ekstruzji podczas prasowania (ułamek normalnego).'], { unit: '×', step: 0.05, min: 0, max: 1, def: 0.15, show: v => v.ironing }),
+      N('ironing_spacing', 'Ironing: odstęp linii', ['Odstęp linii ironingu', 'Odstęp między liniami prasowania (znacznie mniejszy niż szerokość ścieżki).'], { unit: 'mm', step: 0.5, min: 0.2, def: 1, show: v => v.ironing }),
+      N('ironing_speed', 'Ironing: prędkość', ['Prędkość ironingu', 'Prędkość TCP podczas prasowania.'], { unit: 'mm/s', step: 5, min: 1, def: 15, show: v => v.ironing }),
     ] },
     { id: 'support', title: 'Nawisy i podpory', fields: [
       C('overhang_detect', 'Zwalniaj na nawisach', ['Wykrywanie nawisów', 'Każdy odcinek obrysu dostaje stopień „nad pustką” z odległości od warstwy niżej (lub podpory). Odcinki nad powietrzem są drukowane wolniej (prędkość „nawisy”), interpolowanie od 25 % do 75 % szerokości ścieżki bez podparcia.'], { def: true }),
@@ -64,6 +89,7 @@
       N('support_interface_layers', 'Warstwy łącznikowe', ['Warstwy łącznikowe (interface)', 'Ile górnych warstw podpory (pod modelem) drukować gęściej, żeby powierzchnia nad podporą była gładsza.'], { step: 1, min: 0, max: 5, def: 2, show: v => v.support !== 'none' }),
       N('support_interface_density', 'Gęstość łącznika', ['Gęstość łącznika', 'Procent wypełnienia warstw łącznikowych.'], { unit: '%', step: 10, min: 10, max: 100, def: 60, pct: true, show: v => v.support !== 'none' && v.support_interface_layers > 0 }),
       N('support_min_area', 'Min. obszar nawisu', ['Minimalny obszar', 'Wysepki nawisu mniejsze niż ta powierzchnia nie dostają podpór (drobiazgi radzą sobie same).'], { unit: 'mm²', step: 1, min: 0, def: 4, show: v => v.support !== 'none' }),
+      T('support_modifiers', 'Blokady i wymuszenia podpór', ['Modyfikatory podpór', 'Pudełka w układzie modelu (po wyśrodkowaniu, Z od stołu), jedna linia: „block cx cy cz sx sy sz” usuwa podpory wewnątrz pudełka (np. otwór, który ma zostać czysty), „force cx cy cz sx sy sz” dodaje podpory wszędzie w pudełku poza modelem.'], { def: '', rows: 3, placeholder: 'block 0 0 20 40 40 30\nforce 60 0 10 20 20 20', show: v => v.support !== 'none' }),
     ] },
     { id: 'extrusion', title: 'Ekstruzja i retrakcja', fields: [
       S('extrusion_mode', 'Materiał w ścieżce', ['Ilość materiału', 'Objętościowo: każdy odcinek niesie mm³ materiału (szerokość × wysokość × długość); z tego KRL wylicza wydatek analogowy, czasy cofnięcia i dopuszczenia oraz masę. Bez materiału: sama geometria — ekstruder sterowany poza programem.'], [['volumetric', 'objętościowo (mm³)'], ['none', 'bez materiału']], { def: 'volumetric' }),
@@ -97,6 +123,9 @@
     { id: 'adhesion', title: 'Przyczepność: skirt, brim, raft', fields: [
       N('skirt_loops', 'Skirt: pętle', ['Skirt', 'Luźne pętle wokół modelu na pierwszej warstwie, rozruch ekstrudera (0 = brak).'], { step: 1, min: 0, def: 0 }),
       N('skirt_distance', 'Skirt: odstęp', ['Odstęp skirtu', 'Odległość skirtu od modelu (i brimu).'], { unit: 'mm', step: 1, min: 0, def: 5, show: v => v.skirt_loops > 0 }),
+      N('skirt_layers', 'Skirt: warstwy', ['Warstwy skirtu', 'Na ilu pierwszych warstwach drukować skirt; wysoki skirt działa jak osłona przed przeciągiem.'], { step: 1, min: 1, def: 1, show: v => v.skirt_loops > 0 }),
+      N('prime_line_length', 'Linia rozruchowa', ['Linia rozruchowa (prime line)', 'Prosta linia przed modelem drukowana jako pierwsza — rozrusza ekstruder i zdejmuje nadmiar materiału (0 = brak).'], { unit: 'mm', step: 10, min: 0, def: 0 }),
+      N('prime_line_offset', 'Linia rozruchowa: odstęp', ['Odstęp linii rozruchowej', 'Odległość linii od modelu (za brimem i skirtem), po stronie −Y.'], { unit: 'mm', step: 5, min: 0, def: 20, show: v => v.prime_line_length > 0 }),
       N('brim_width', 'Brim: szerokość', ['Brim', 'Obwódka przyklejona do modelu, poprawia przyczepność małych podstaw (0 = brak).'], { unit: 'mm', step: 1, min: 0, def: 0 }),
       N('raft_layers', 'Raft: warstwy', ['Raft', 'Tratwa pod modelem: rzadka warstwa podstawy, warstwy pośrednie i pełna warstwa górna; model stoi na niej zamiast na stole (0 = brak).'], { step: 1, min: 0, max: 5, def: 0 }),
       N('raft_margin', 'Raft: margines', ['Margines raftu', 'O ile raft wystaje poza obrys modelu (i podpór).'], { unit: 'mm', step: 1, min: 0, def: 5, show: v => v.raft_layers > 0 }),
@@ -141,6 +170,16 @@
           const inp = document.createElement('input'); inp.type = 'checkbox'; inp.id = id; inp.checked = !!f.def;
           const sp = document.createElement('span'); sp.textContent = f.label;
           row.append(inp, sp); inputs[f.k] = inp;
+        } else if (f.type === 'actions') {
+          row = document.createElement('div'); row.className = 'row actions-row';
+          const sp = document.createElement('span'); sp.textContent = f.label;
+          const wrap = document.createElement('span'); wrap.className = 'btns';
+          for (const [act, txt] of f.buttons) {
+            const b = document.createElement('button'); b.type = 'button'; b.className = 'mini'; b.textContent = txt; b.dataset.action = act;
+            b.addEventListener('click', () => window.dispatchEvent(new CustomEvent('slicer-action', { detail: act })));
+            wrap.appendChild(b);
+          }
+          row.append(sp, wrap); inputs[f.k] = { value: '', type: 'actions' };
         } else if (f.type === 'textarea') {
           row = document.createElement('label'); row.className = 'col';
           const sp = document.createElement('span'); sp.textContent = f.label;
@@ -173,6 +212,7 @@
   function rawValues() {
     const v = {};
     for (const [k, el] of Object.entries(inputs)) {
+      if (el.type === 'actions') continue;
       if (el.type === 'checkbox') v[k] = el.checked;
       else if (el.tagName === 'SELECT') v[k] = el.value === 'true' ? true : el.value === 'false' ? false : el.value;
       else if (el.type === 'number') v[k] = el.value === '' ? '' : Number(el.value);
@@ -184,6 +224,7 @@
   function updateVisibility() {
     const v = rawValues();
     for (const [k, f] of Object.entries(fieldDefs)) {
+      if (!inputs[k].closest) continue;
       const row = inputs[k].closest('[data-field]');
       if (row) row.classList.toggle('hidden', f.show ? !f.show(v) : false);
     }
@@ -213,7 +254,7 @@
     try { saved = JSON.parse(localStorage.getItem(KEY) || 'null'); } catch (e) {}
     if (!saved) return;
     for (const [k, el] of Object.entries(inputs)) {
-      if (!(k in saved)) continue;
+      if (!(k in saved) || el.type === 'actions') continue;
       const val = saved[k];
       if (el.type === 'checkbox') el.checked = !!val;
       else if (el.tagName === 'SELECT') el.value = String(val);
@@ -223,6 +264,7 @@
   function reset() {
     for (const [k, el] of Object.entries(inputs)) {
       const f = fieldDefs[k];
+      if (el.type === 'actions') continue;
       if (el.type === 'checkbox') el.checked = !!f.def;
       else el.value = f.def === null || f.def === undefined ? '' : String(f.def);
     }
@@ -235,5 +277,6 @@
   const resetBtn = document.getElementById('btn-slicer-reset');
   if (resetBtn) resetBtn.addEventListener('click', reset);
 
-  window.SLICER_FORM = { params, extras, reset, help: HELP, groups: GROUPS, inputs };
+  function setValue(k, val) { const el = inputs[k]; if (!el || el.type === 'actions') return; if (el.type === 'checkbox') el.checked = !!val; else el.value = String(val); }
+  window.SLICER_FORM = { params, extras, reset, help: HELP, groups: GROUPS, inputs, setValue, save, updateVisibility };
 })();

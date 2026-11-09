@@ -47,6 +47,48 @@ def overhang_areas(regions: list, heights: list[float], angle_deg: float, width:
     return out
 
 
+def parse_support_modifiers(text: str) -> list[dict]:
+    """Lines ``block|force cx cy cz sx sy sz`` (model coordinates, Z from the bed)."""
+    out = []
+    for ln, raw in enumerate((text or "").splitlines(), start=1):
+        line = raw.split("#", 1)[0].strip()
+        if not line:
+            continue
+        parts = line.replace(",", " ").split()
+        try:
+            kind = parts[0].lower()
+            if kind not in ("block", "force"):
+                raise ValueError("kind must be block or force")
+            nums = [float(v) for v in parts[1:7]]
+            if len(nums) != 6 or any(v <= 0 for v in nums[3:]):
+                raise ValueError("needs cx cy cz sx sy sz with positive sizes")
+            out.append({"kind": kind, "center": nums[:3], "size": nums[3:]})
+        except (IndexError, ValueError) as exc:
+            raise ValueError(f"support modifiers line {ln}: {raw.strip()!r}: {exc}") from None
+    return out
+
+
+def apply_support_modifiers(printed: list, interface: list, regions: list, zs: list[float], modifiers: list[dict], gap: float) -> None:
+    """Blockers remove support inside their box, enforcers add support (minus the part) inside theirs."""
+    from shapely.geometry import box as sbox
+
+    for i, z in enumerate(zs):
+        for m in modifiers:
+            cx, cy, cz = m["center"]
+            sx, sy, sz = m["size"]
+            if not (cz - sz / 2.0 - 1e-9 <= z <= cz + sz / 2.0 + 1e-9):
+                continue
+            b = sbox(cx - sx / 2.0, cy - sy / 2.0, cx + sx / 2.0, cy + sy / 2.0)
+            if m["kind"] == "block":
+                printed[i] = _multi(printed[i].difference(b)) if not printed[i].is_empty else EMPTY
+                interface[i] = _multi(interface[i].difference(b)) if not interface[i].is_empty else EMPTY
+            else:
+                add = b.difference(regions[i].buffer(gap)) if not regions[i].is_empty else b
+                if i == len(zs) - 1 or regions[i + 1].is_empty:
+                    pass
+                printed[i] = _multi(printed[i].union(add))
+
+
 def support_areas(regions: list, heights: list[float], params: SliceParams) -> tuple[list, list]:
     """Support to print on each layer and its interface part (dense, right under the part).
 

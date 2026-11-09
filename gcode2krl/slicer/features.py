@@ -101,3 +101,19 @@ def split_bridges(solid_below, below, width: float, min_area: float = 4.0, min_a
             rest = rest.difference(region)
     rest = rest if rest.is_empty else rest.buffer(-0.1 * width).buffer(0.1 * width)
     return bridges, (EMPTY if rest.is_empty else rest)
+
+
+def fuzzy_ring(points: np.ndarray, thickness: float, point_distance: float, rng) -> np.ndarray:
+    """Resample a closed ring every ``point_distance`` and jitter each point along the
+    local normal by up to +-thickness/2 (fuzzy skin)."""
+    pts = densify(np.asarray(points, float), True, max(point_distance, 0.1))
+    n = len(pts)
+    if n < 3 or thickness <= 0:
+        return pts
+    t = np.roll(pts, -1, axis=0) - np.roll(pts, 1, axis=0)
+    ln = np.linalg.norm(t, axis=1)
+    ln[ln < 1e-9] = 1.0
+    t /= ln[:, None]
+    nrm = np.column_stack([t[:, 1], -t[:, 0]])
+    amp = np.array([rng.uniform(-0.5, 0.5) for _ in range(n)]) * thickness
+    return pts + nrm * amp[:, None]

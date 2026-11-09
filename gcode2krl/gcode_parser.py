@@ -40,6 +40,13 @@ class LinearMove:
 
 
 @dataclass
+class KrlRaw:
+    """A raw robot-program line carried in a ``;KRL:`` comment (layer hooks of the slicer)."""
+    text: str
+    line_no: int
+
+
+@dataclass
 class ExtrudeOnly:
     """E change without axis motion: negative = extruder reverse (retraction), positive = prime."""
     delta: float
@@ -180,7 +187,10 @@ class GCodeParser:
         if self.keep_comments:
             for c in comments:
                 if c:
-                    self.emit(Comment(c, line_no))
+                    if c.strip().upper().startswith("KRL:"):
+                        self.emit(KrlRaw(c.strip()[4:].strip(), line_no))
+                    else:
+                        self.emit(Comment(c, line_no))
         line = line.strip()
         if not line:
             return

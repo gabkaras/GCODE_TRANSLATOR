@@ -15,14 +15,15 @@ from shapely.geometry import MultiPolygon, Polygon
 from shapely.validation import make_valid
 
 from . import infill as _infill
-from .features import densify, overhang_speeds, split_bridges
+from .features import densify, fuzzy_ring, overhang_speeds, split_bridges
 from .params import SliceParams
 from .support import overhang_areas, support_areas
 
 EMPTY = MultiPolygon()
 
 WALL_KINDS = ("WALL-OUTER", "WALL-INNER")
-MODEL_ORDER = (("WALL-INNER", "WALL-OUTER"), ("GAP",), ("BRIDGE",), ("SKIN",), ("FILL",))
+MODEL_ORDER = (("WALL-INNER", "WALL-OUTER"), ("GAP",), ("BRIDGE",), ("SKIN",), ("IRONING",), ("FILL",))
+ISLAND_KINDS = ("WALL-OUTER", "WALL-INNER", "GAP", "BRIDGE", "SKIN", "IRONING", "FILL")
 
 
 @dataclass
@@ -160,6 +161,14 @@ def start_index(points: np.ndarray, from_pt: np.ndarray, seam: str, rng: random.
         return int(np.argmax(points[:, 0] + points[:, 1]))
     if seam == "rear":
         return int(np.argmax(points[:, 1] * 1000.0 + points[:, 0]))
+    if seam == "corner":
+        a = np.roll(points, 1, axis=0) - points
+        b = np.roll(points, -1, axis=0) - points
+        la, lb = np.linalg.norm(a, axis=1), np.linalg.norm(b, axis=1)
+        ok = (la > 1e-9) & (lb > 1e-9)
+        cosang = np.ones(len(points))
+        cosang[ok] = np.einsum("ij,ij->i", a[ok], b[ok]) / (la[ok] * lb[ok])
+        return int(np.argmax(cosang))  # smallest interior angle = sharpest corner
     return int(np.argmin(np.linalg.norm(points - from_pt, axis=1)))
 
 
@@ -228,19 +237,25 @@ def order_layer(paths: list[Path], cur: np.ndarray, params: SliceParams, rng: ra
             last = ordered[-1]
             cur = last.points[0] if last.closed else last.points[-1]
 
+    block([p for p in paths if p.kind == "PRIME"])
     block([p for p in paths if p.kind in ("BRIM", "SKIRT")])
     block([p for p in paths if p.kind == "RAFT"])
-    islands = sorted({p.island for p in paths if p.kind in ("WALL-OUTER", "WALL-INNER", "GAP", "BRIDGE", "SKIN", "FILL")})
+    islands = sorted({p.island for p in paths if p.kind in ISLAND_KINDS})
     # visit islands nearest-first
     rep = {}
     for isl in islands:
-        pts = np.concatenate([p.points for p in paths if p.island == isl and p.kind in ("WALL-OUTER", "WALL-INNER", "GAP", "BRIDGE", "SKIN", "FILL")])
+        pts = np.concatenate([p.points for p in paths if p.island == isl and p.kind in ISLAND_KINDS])
         rep[isl] = pts
     remaining = list(islands)
     while remaining:
         isl = min(remaining, key=lambda k: float(np.min(np.linalg.norm(rep[k] - cur, axis=1))))
         remaining.remove(isl)
-        groups = MODEL_ORDER if params.wall_order != "outer_inner" else (("WALL-OUTER",), ("WALL-INNER",)) + MODEL_ORDER[1:]
+        if params.wall_order == "outer_inner":
+            groups = (("WALL-OUTER",), ("WALL-INNER",)) + MODEL_ORDER[1:]
+        elif params.wall_order == "infill_first":
+            groups = (("FILL",), ("SKIN",), ("BRIDGE",), ("GAP",), ("WALL-INNER", "WALL-OUTER"), ("IRONING",))
+        else:
+            groups = MODEL_ORDER
         for kinds in groups:
             block([p for p in paths if p.island == isl and p.kind in kinds])
     block([p for p in paths if p.kind == "SUPPORT-INTERFACE"])
@@ -249,7 +264,7 @@ def order_layer(paths: list[Path], cur: np.ndarray, params: SliceParams, rng: ra
 
 
 # ------------------------------------------------------------------- layers
-def _wall_paths(island, i_model: int, L: Layer, prev_region, params: SliceParams, first_on_plate: bool, isl: int) -> tuple[list[Path], list]:
+def _wall_paths(island, i_model: int, L: Layer, prev_region, params: SliceParams, first_on_plate: bool, isl: int, rng=None) -> tuple[list[Path], list]:
     """Perimeter rings of one island. Returns (paths, coverage polygons of the beads)."""
     w_o, w_i = params.width("WALL-OUTER"), params.width("WALL-INNER")
     n_walls = 1 if params.spiral_vase and i_model >= params.bottom_layers else params.perimeters
@@ -270,8 +285,10 @@ def _wall_paths(island, i_model: int, L: Layer, prev_region, params: SliceParams
                 speed = min(speed, params.small_perimeter_speed)
             pts = r
             speeds = None
+            if params.fuzzy_skin != "none" and not first_on_plate and (k == 0 or params.fuzzy_skin == "all") and rng is not None:
+                pts = fuzzy_ring(r, params.fuzzy_thickness, params.fuzzy_point_distance, rng)
             if params.overhang_detect and not first_on_plate:
-                pts = densify(r, True, w)
+                pts = densify(pts, True, w)
                 speeds, _ = overhang_speeds(pts, prev_region, w, speed, params.speed_overhang)
             paths.append(Path(kind, pts, True, w, speed, speeds=speeds, island=isl,
                               spiral=params.spiral_vase and i_model >= params.bottom_layers))
@@ -329,9 +346,22 @@ def _shorten(seg: np.ndarray, d: float) -> np.ndarray | None:
 
 
 def build_layers(layer_loops: list[list[np.ndarray]], zs: list[float], params: SliceParams,
-                 heights: list[float] | None = None) -> list[Layer]:
+                 heights: list[float] | None = None, ranges: list | None = None) -> list[Layer]:
+    from .ranges import params_for_z
+    from .support import apply_support_modifiers, parse_support_modifiers
+
     p = params
     n = len(zs)
+    ranges = ranges or []
+    cache: dict = {}
+
+    def layer_params(z: float) -> SliceParams:
+        if not ranges:
+            return p
+        key = round(z, 6)
+        if key not in cache:
+            cache[key] = params_for_z(p, ranges, z)
+        return cache[key]
     if heights is None:
         heights = [p.first_layer_height if i == 0 else p.layer_height for i in range(n)]
     regions = [compensate(loops_to_region(loops, p.min_feature), p.xy_compensation, p.hole_compensation) for loops in layer_loops]
@@ -341,6 +371,10 @@ def build_layers(layer_loops: list[list[np.ndarray]], zs: list[float], params: S
     sup_print, sup_iface = ([EMPTY] * n, [EMPTY] * n)
     if p.support == "normal" and p.planar and not p.spiral_vase:
         sup_print, sup_iface = support_areas(regions, heights, p)
+        mods = parse_support_modifiers(p.support_modifiers)
+        if mods:
+            sup_print, sup_iface = list(sup_print), list(sup_iface)
+            apply_support_modifiers(sup_print, sup_iface, regions, list(zs), mods, p.support_xy_gap)
     oh = overhang_areas(regions, heights, p.overhang_max, p.bead_width, 0.0)
     # ---- raft
     n_raft = max(0, p.raft_layers) if p.planar and not p.spiral_vase else 0
@@ -382,6 +416,10 @@ def build_layers(layer_loops: list[list[np.ndarray]], zs: list[float], params: S
         L.paths, cur = order_layer(paths, cur, p, rng)
     # ---- model layers
     for i, L in enumerate(model):
+        lp = layer_params(L.z)
+        w = lp.bead_width
+        w_f, w_s = lp.width("FILL"), lp.width("SKIN")
+        rng_layer = random.Random(1000 + i)
         paths: list[Path] = []
         first = i == 0
         first_on_plate = first and n_raft == 0
@@ -389,55 +427,55 @@ def build_layers(layer_loops: list[list[np.ndarray]], zs: list[float], params: S
         # what carries this layer for the overhang slow-down: the part below plus support (under the Z gap)
         carrier = prev_region
         if i > 0:
-            for j in (i - 1, i - 1 - p.support_z_gap):
+            for j in (i - 1, i - 1 - lp.support_z_gap):
                 if 0 <= j < n and not sup_print[j].is_empty:
                     carrier = as_multi((carrier if carrier is not None else EMPTY).union(sup_print[j]))
-        if first and n_raft == 0:
+        if n_raft == 0 and i < max(1, lp.skirt_layers):
             base = L.region
             if not L.support.is_empty:
                 base = as_multi(base.union(L.support))
-            paths += _adhesion(base, p, w)
+            paths += _adhesion(base, lp, w, i)
         if L.region.is_empty and L.support.is_empty:
-            L.paths, cur = order_layer(paths, cur, p, rng)
+            L.paths, cur = order_layer(paths, cur, lp, rng)
             continue
-        speed_fill = p.speed_first_layer if first_on_plate else p.speed_infill
-        speed_top = p.speed_first_layer if first_on_plate else p.speed_top
-        skin_angle = p.infill_angle + (90.0 if i % 2 else 0.0)
-        spiral_layer = p.spiral_vase and i >= p.bottom_layers
+        speed_fill = lp.speed_first_layer if first_on_plate else lp.speed_infill
+        speed_top = lp.speed_first_layer if first_on_plate else lp.speed_top
+        skin_angle = lp.infill_angle + (90.0 if i % 2 else 0.0)
+        spiral_layer = lp.spiral_vase and i >= lp.bottom_layers
         sparse_all = EMPTY
         for isl, island in enumerate(L.region.geoms):
             island = as_multi(island)
-            walls, cover = _wall_paths(island, i, L, carrier, p, first_on_plate, isl)
+            walls, cover = _wall_paths(island, i, L, carrier, lp, first_on_plate, isl, rng_layer)
             paths += walls
             if spiral_layer:
                 continue
-            n_walls = p.perimeters
-            inset = (p.width("WALL-OUTER") + max(0, n_walls - 1) * p.width("WALL-INNER")) if n_walls > 0 else 0.0
-            fill_area = offset(island, -inset + p.infill_overlap * w_f) if n_walls > 0 else island
+            n_walls = lp.perimeters
+            inset = (lp.width("WALL-OUTER") + max(0, n_walls - 1) * lp.width("WALL-INNER")) if n_walls > 0 else 0.0
+            fill_area = offset(island, -inset + lp.infill_overlap * w_f) if n_walls > 0 else island
             fill_area = as_multi(fill_area.intersection(island)) if not fill_area.is_empty else EMPTY
-            if p.gap_fill and n_walls > 0:
-                paths += _gap_paths(island, cover, fill_area, p, p.speed_first_layer if first_on_plate else p.speed_gap, isl)
+            if lp.gap_fill and n_walls > 0:
+                paths += _gap_paths(island, cover, fill_area, lp, lp.speed_first_layer if first_on_plate else lp.speed_gap, isl)
             if fill_area.is_empty:
                 continue
             # ---- top / bottom solid detection
             top_solid, bottom_solid = EMPTY, EMPTY
-            if p.bottom_layers and i < p.bottom_layers:
+            if lp.bottom_layers and i < lp.bottom_layers:
                 bottom_solid = fill_area
-            if p.top_layers and i >= n - p.top_layers:
+            if lp.top_layers and i >= n - lp.top_layers:
                 top_solid = fill_area
-            if p.top_layers and top_solid.is_empty:
-                above = intersect_all([model[j].region for j in range(i + 1, min(n, i + 1 + p.top_layers))])
+            if lp.top_layers and top_solid.is_empty:
+                above = intersect_all([model[j].region for j in range(i + 1, min(n, i + 1 + lp.top_layers))])
                 unc = fill_area.difference(above.buffer(-0.01)) if not above.is_empty else fill_area
                 top_solid = as_multi(unc.buffer(w).buffer(-w).intersection(fill_area)) if not unc.is_empty else EMPTY
-            if p.bottom_layers and bottom_solid.is_empty and i > 0:
-                below = intersect_all([model[j].region for j in range(max(0, i - p.bottom_layers), i)])
+            if lp.bottom_layers and bottom_solid.is_empty and i > 0:
+                below = intersect_all([model[j].region for j in range(max(0, i - lp.bottom_layers), i)])
                 unc = fill_area.difference(below.buffer(-0.01)) if not below.is_empty else fill_area
                 bottom_solid = as_multi(unc.buffer(w).buffer(-w).intersection(fill_area)) if not unc.is_empty else EMPTY
             solid_total = as_multi(top_solid.union(bottom_solid)) if not (top_solid.is_empty and bottom_solid.is_empty) else EMPTY
             sparse_area = as_multi(fill_area.difference(solid_total)) if not solid_total.is_empty else fill_area
             # small sparse islands become solid
-            if p.solid_threshold_area > 0 and not sparse_area.is_empty:
-                small = [g for g in sparse_area.geoms if g.area < p.solid_threshold_area]
+            if lp.solid_threshold_area > 0 and not sparse_area.is_empty:
+                small = [g for g in sparse_area.geoms if g.area < lp.solid_threshold_area]
                 if small:
                     extra = MultiPolygon(small)
                     top_solid = as_multi(top_solid.union(extra))
@@ -445,28 +483,32 @@ def build_layers(layer_loops: list[list[np.ndarray]], zs: list[float], params: S
             # ---- bridges and bottom skins
             if not bottom_solid.is_empty:
                 bridges, rest = ([], bottom_solid)
-                if p.bridges and i > 0 and prev_region is not None and not prev_region.is_empty:
+                if lp.bridges and i > 0 and prev_region is not None and not prev_region.is_empty:
                     bridges, rest = split_bridges(bottom_solid, prev_region, w_s)
                 for region, ang in bridges:
                     for seg in _infill.line_fill(region, w_s, ang):
-                        paths.append(Path("BRIDGE", seg, False, w_s, p.speed_bridge, flow=p.bridge_flow, island=isl))
-                segs, closed = _infill.solid_fill(rest, p.bottom_pattern, w_s, skin_angle, rings)
+                        paths.append(Path("BRIDGE", seg, False, w_s, lp.speed_bridge, flow=lp.bridge_flow, island=isl))
+                segs, closed = _infill.solid_fill(rest, lp.bottom_pattern, w_s, skin_angle, rings)
                 for seg in segs:
                     speeds = None
                     pts = seg
-                    if p.overhang_detect and not first_on_plate and carrier is not None:
+                    if lp.overhang_detect and not first_on_plate and carrier is not None:
                         pts = densify(seg, closed, w_s)
-                        speeds, _ = overhang_speeds(pts, carrier, w_s, speed_top, p.speed_overhang)
+                        speeds, _ = overhang_speeds(pts, carrier, w_s, speed_top, lp.speed_overhang)
                     paths.append(Path("SKIN", pts, closed, w_s, speed_top, speeds=speeds, island=isl))
                 top_solid = as_multi(top_solid.difference(bottom_solid)) if not top_solid.is_empty else EMPTY
             if not top_solid.is_empty:
-                segs, closed = _infill.solid_fill(top_solid, p.top_pattern, w_s, skin_angle, rings)
+                segs, closed = _infill.solid_fill(top_solid, lp.top_pattern, w_s, skin_angle, rings)
                 for seg in segs:
                     paths.append(Path("SKIN", seg, closed, w_s, speed_top, island=isl))
+                if lp.ironing and (i >= n - lp.top_layers or lp.top_layers == 0):
+                    iron_area = top_solid.buffer(-w_s / 2.0)
+                    for seg in _infill.line_fill(iron_area, max(lp.ironing_spacing, 0.2), skin_angle + 90.0, monotonic=True):
+                        paths.append(Path("IRONING", seg, False, w_s, lp.ironing_speed, flow=lp.ironing_flow, island=isl))
             # ---- sparse infill
-            if p.infill_density > 0 and p.infill_pattern != "none" and not sparse_area.is_empty:
+            if lp.infill_density > 0 and lp.infill_pattern != "none" and not sparse_area.is_empty:
                 sparse_all = as_multi(sparse_all.union(sparse_area))
-                nc = max(1, p.infill_combine)
+                nc = max(1, lp.infill_combine)
                 area = sparse_area
                 flow = 1.0
                 if nc > 1:
@@ -477,8 +519,8 @@ def build_layers(layer_loops: list[list[np.ndarray]], zs: list[float], params: S
                         area = intersect_all([sparse_area] + back) if back else sparse_area
                         flow = float(len(back) + 1)
                 if not area.is_empty:
-                    spacing = w_f / max(p.infill_density, 1e-3)
-                    segs, closed = _infill.sparse_fill(area, p.infill_pattern, spacing, p.infill_angle, i, L.z, rings)
+                    spacing = w_f / max(lp.infill_density, 1e-3)
+                    segs, closed = _infill.sparse_fill(area, lp.infill_pattern, spacing, lp.infill_angle, i, L.z, rings)
                     for seg in segs:
                         paths.append(Path("FILL", seg, closed, w_f, speed_fill, flow=flow, island=isl))
         L.sparse = sparse_all
@@ -486,35 +528,44 @@ def build_layers(layer_loops: list[list[np.ndarray]], zs: list[float], params: S
         if not L.support.is_empty:
             iface = sup_iface[i]
             body = as_multi(L.support.difference(iface)) if not iface.is_empty else L.support
-            sp = p.speed_first_layer if first_on_plate else p.speed_support
+            sp = lp.speed_first_layer if first_on_plate else lp.speed_support
             if not iface.is_empty:
-                for seg in _infill.line_fill(iface, w / max(p.support_interface_density, 0.05), p.support_angle + 90.0):
+                for seg in _infill.line_fill(iface, w / max(lp.support_interface_density, 0.05), lp.support_angle + 90.0):
                     paths.append(Path("SUPPORT-INTERFACE", seg, False, w, sp))
             if not body.is_empty:
-                spacing = w / max(p.support_density, 0.02)
-                segs = _infill.line_fill(body, spacing, p.support_angle)
-                if p.support_pattern == "grid":
-                    segs += _infill.line_fill(body, spacing, p.support_angle + 90.0)
+                spacing = w / max(lp.support_density, 0.02)
+                segs = _infill.line_fill(body, spacing, lp.support_angle)
+                if lp.support_pattern == "grid":
+                    segs += _infill.line_fill(body, spacing, lp.support_angle + 90.0)
                 for seg in segs:
                     paths.append(Path("SUPPORT", seg, False, w, sp))
-        L.paths, cur = order_layer(paths, cur, p, rng)
+        L.paths, cur = order_layer(paths, cur, lp, rng)
         if spiral_layer:
             _spiralize(L, cur)
     return layers
 
 
-def _adhesion(base, p: SliceParams, w: float) -> list[Path]:
+def _adhesion(base, p: SliceParams, w: float, layer_index: int = 0) -> list[Path]:
     paths = []
-    if p.brim_width > 0:
+    if base is None or base.is_empty:
+        return paths
+    if p.brim_width > 0 and layer_index == 0:
         k = 0
         while (k + 0.5) * w <= p.brim_width:
             for r in rings(offset(base, (k + 0.5) * w)):
                 paths.append(Path("BRIM", r, True, w, p.speed_first_layer))
             k += 1
-    if p.skirt_loops > 0:
+    if p.skirt_loops > 0 and layer_index < max(1, p.skirt_layers):
         for k in range(p.skirt_loops):
             for r in rings(offset(base, p.brim_width + p.skirt_distance + (k + 0.5) * w)):
                 paths.append(Path("SKIRT", r, True, w, p.speed_first_layer))
+    if p.prime_line_length > 0 and layer_index == 0:
+        minx, miny, maxx, maxy = base.bounds
+        extra = p.brim_width + (p.skirt_distance + p.skirt_loops * w if p.skirt_loops > 0 else 0.0)
+        y = miny - extra - p.prime_line_offset
+        cx = (minx + maxx) / 2.0
+        pts = np.array([[cx - p.prime_line_length / 2.0, y], [cx + p.prime_line_length / 2.0, y]])
+        paths.append(Path("PRIME", pts, False, w, p.speed_first_layer))
     return paths
 
 

@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from .arc_fitter import ArcElement, FitParams, LineElement, dedupe_points, segment_polyline
-from .gcode_parser import (ArcMove, Comment, Coolant, Dwell, ExtrudeOnly, LinearMove, ParseResult, Pause,
+from .gcode_parser import (ArcMove, Comment, Coolant, Dwell, ExtrudeOnly, KrlRaw, LinearMove, ParseResult, Pause,
                            ProgramEnd, Spindle, SpindleSpeed, ToolChange)
 from .geometry import ArcFit, arc_from_center, sample_arc, unit
 from .simplify import douglas_peucker
@@ -37,6 +37,8 @@ class RapidItem:
     start: np.ndarray
     abc: tuple | None = None
     axis: tuple | None = None
+    st: tuple | None = None  # KUKA (Status, Turn) at the target, from the inverse kinematics
+    ptp: bool = False  # write as PTP (first approach / configuration change) instead of LIN
 
 
 @dataclass
@@ -350,6 +352,9 @@ class Translator:
                 if self.o.extruder:
                     self.set_extruding(cmd.extrude > 1e-9, cmd.extrude, cmd.start, cmd.end)
                 self.push_arc(cmd)
+            elif isinstance(cmd, KrlRaw):
+                self.flush()
+                self.items.append(EventItem("krl", cmd.text))
             elif isinstance(cmd, ExtrudeOnly):
                 if self.o.extruder:
                     self.flush()

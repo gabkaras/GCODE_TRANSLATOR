@@ -107,6 +107,7 @@ class KrlWriter:
         self.out_on = False  # digital extruder output state
         self.anout_on = False  # analog extruder output active
         self.pending_triggers: list[str] = []  # TRIGGER lines for the next motion / spline block
+        self.ptp_vel_set = False
 
     # ------------------------------------------------------------ format
     def frame(self, p: np.ndarray, abc=None) -> str:
@@ -140,6 +141,7 @@ class KrlWriter:
             self.first_motion_done = True
             if self.o.home_start:
                 self.emit(self.home_lines("start"), 1)
+                self.ptp_vel_set = True
             elif self.o.bco_ptp:
                 self.emit(["PTP $POS_ACT  ; BCO run"])
 
@@ -215,6 +217,16 @@ class KrlWriter:
     def rapid(self, item: RapidItem, next_item) -> None:
         self.close_block()
         self.ensure_bco()
+        if getattr(item, "ptp", False) and getattr(item, "st", None) is not None:
+            # configuration-defining travel: PTP with Status / Turn (CP motions keep it afterwards)
+            if not self.ptp_vel_set:
+                self.emit([f"BAS (#VEL_PTP, {fnum(self.o.home_vel, 0)})"])
+                self.ptp_vel_set = True
+            fr = self.frame(item.target, item.abc)
+            st, tn = item.st
+            self.emit([f"; konfiguracja: S {st} T {tn}", f"PTP {fr[:-1]}, S {st}, T {tn}}}"], 1)
+            self.last_t_out = None
+            return
         self.set_global_vel(self.o.rapid_vel)
         approx = " C_DIS" if isinstance(next_item, RapidItem) else ""
         self.emit([f"LIN {self.frame(item.target, item.abc)}{approx}"], 1)
@@ -341,6 +353,8 @@ class KrlWriter:
                 lines.append(f"ANOUT OFF $ANOUT[{self.o.extruder_anout}]")
                 lines.append(self.anout_line())
             self.emit(lines)
+        elif k == "krl":
+            self.emit(["; hook", str(ev.value)])
         elif k == "tool_change":
             lines = [f"; tool change T{ev.value}"]
             if self.o.halt_on_tool_change:

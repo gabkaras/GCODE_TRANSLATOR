@@ -615,6 +615,124 @@ def solve_spins(robot: RobotModel, points: np.ndarray, axes: np.ndarray, base: n
     return abc_out, info
 
 
+# ------------------------------------------------------------ Status / Turn
+def critical_a3(robot: RobotModel) -> float:
+    """A3 angle (deg) at which the wrist root lies on the line through A2 and A3
+    (stretched arm): the boundary of status bit 1 (KUKA: bit 1 = 1 for A3 >= angle)."""
+    o = np.asarray(robot.origins[3], dtype=float)  # A3 -> wrist root in the link_3 frame
+    return math.degrees(math.atan2(o[2], o[0]))
+
+
+def status_turn(robot: RobotModel, q) -> tuple[int, int]:
+    """KUKA Status and Turn of a joint position (deg).
+
+    Status: bit 0 = wrist root behind the A1 axis (overhead area), bit 1 = A3 >= the
+    stretched-arm angle (basic arm configuration), bit 2 = A5 < 0.
+    Turn: bit i = 1 when axis A(i+1) is negative."""
+    qf = [float(v) for v in q]
+    fr = forward(robot, qf)
+    wc = fr[4][:3, 3]  # wrist root (A4/A5/A6 intersection)
+    r1 = fr[1]
+    local = r1[:3, :3].T @ (wc - r1[:3, 3])
+    s = 0
+    if local[0] < 0:
+        s |= 1
+    if qf[2] >= critical_a3(robot):
+        s |= 2
+    if qf[4] < 0:
+        s |= 4
+    t = 0
+    for i in range(6):
+        if qf[i] < 0:
+            t |= 1 << i
+    return s, t
+
+
+def status_turn_batch(robot: RobotModel, q: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Vectorised status_turn for (N,6) joint arrays (NaN rows -> -1)."""
+    from .collision import batch_fk
+
+    qq = np.asarray(q, dtype=float)
+    ok = ~np.isnan(qq).any(axis=1)
+    frames = batch_fk(robot, np.nan_to_num(qq, nan=0.0))
+    r1, p1 = frames[1]
+    wc = frames[4][1]
+    local_x = np.einsum("ni,ni->n", r1[:, :, 0], wc - p1)
+    st = np.where(local_x < 0, 1, 0) | np.where(qq[:, 2] >= critical_a3(robot), 2, 0) | np.where(qq[:, 4] < 0, 4, 0)
+    turn = np.zeros(len(qq), dtype=int)
+    for i in range(6):
+        turn |= np.where(qq[:, i] < 0, 1 << i, 0)
+    st = np.where(ok, st, -1)
+    turn = np.where(ok, turn, -1)
+    return st, turn
+
+
+def assign_configurations(items: list, robot: RobotModel, base: np.ndarray, tool: np.ndarray, ref=(0.0, 180.0, 0.0),
+                          start=None) -> dict:
+    """Give every travel a Status / Turn from the inverse kinematics and mark the travels
+    that have to be PTP (first approach, or a configuration change): CP motions keep the
+    configuration they start with, so a status change is only possible on a PTP."""
+    from .translator import ArcItem, LineItem, RapidItem, SplItem
+
+    tool_inv = inv_frame(tool)
+    prev_q = list(start) if start is not None else list(robot.home)
+    last_st = None
+    info = {"ptp_travels": 0, "status_changes_in_path": 0, "unreachable_travels": 0, "start": None}
+
+    def ik(p, abc):
+        nonlocal prev_q
+        t = frame((float(p[0]), float(p[1]), float(p[2]), *(abc if abc is not None else ref)))
+        q, viol = inverse(robot, base @ t @ tool_inv, prev_q)
+        if q is None:
+            return None
+        prev_q = list(q)
+        return q
+
+    # a path that starts without a travel still needs a PTP approach
+    first_motion = next((i for i, it in enumerate(items) if isinstance(it, (RapidItem, LineItem, ArcItem, SplItem))), None)
+    if first_motion is not None and not isinstance(items[first_motion], RapidItem):
+        it = items[first_motion]
+        p0 = it.start if not isinstance(it, SplItem) else it.points[0]
+        abc0 = (it.abcs[0] if isinstance(it, SplItem) and it.abcs is not None else getattr(it, "abc", None))
+        p0 = np.asarray(p0, dtype=float)
+        items.insert(first_motion, RapidItem(p0, p0.copy(), abc=None if abc0 is None else tuple(abc0)))
+    for it in items:
+        if isinstance(it, RapidItem):
+            q = ik(it.target, it.abc)
+            if q is None:
+                info["unreachable_travels"] += 1
+                it.ptp = last_st is None
+                continue
+            st = status_turn(robot, q)
+            it.st = st
+            # a Turn change is fine inside CP motions; only a Status change needs a PTP
+            it.ptp = last_st is None or st[0] != last_st[0]
+            if it.ptp:
+                info["ptp_travels"] += 1
+            if info["start"] is None:
+                info["start"] = st
+            last_st = st
+        elif isinstance(it, (LineItem, ArcItem)):
+            q = ik(it.end, it.abc)
+            if q is not None and last_st is not None:
+                st = status_turn(robot, q)
+                if st[0] != last_st[0]:
+                    info["status_changes_in_path"] += 1
+                last_st = st
+        elif isinstance(it, SplItem):
+            n = len(it.points)
+            step = max(1, n // 20)
+            for k in list(range(step, n, step)) + [n - 1]:
+                abc = None if it.abcs is None else tuple(it.abcs[k])
+                q = ik(it.points[k], abc)
+                if q is not None and last_st is not None:
+                    st = status_turn(robot, q)
+                    if st[0] != last_st[0]:
+                        info["status_changes_in_path"] += 1
+                    last_st = st
+    return info
+
+
 def check_joint_move(robot: RobotModel, q_from, q_to, caps: list, obstacles: list, margin: float = 10.0,
                      n: int = 16, max_refine: int = 6):
     """Collision report of a PTP (joint-interpolated) move, e.g. HOME -> first path

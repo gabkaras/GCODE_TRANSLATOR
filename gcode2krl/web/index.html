@@ -48,6 +48,9 @@
       <div class="fb-row"><button type="button" id="btn-model-upload" class="mini primary">Wgraj model…</button>
         <select id="slice-mesh" title="wgrane modele"><option value="">wgrane modele…</option></select>
         <select id="slice-units" title="jednostki STL/OBJ"><option value="mm">mm</option><option value="cm">cm</option><option value="m">m</option><option value="in">cale</option></select></div>
+      <div class="fb-head" style="margin-top:6px"><span>Modele na stole <small id="plater-count"></small></span><button type="button" id="plater-add" class="mini">+ dodaj wybrany model</button></div>
+      <div id="plater-list" class="plater"></div>
+      <div class="row-note muted">Pusta lista = krojony jest wybrany model z obrotami z sekcji „Model”. Z listą krojone są wszystkie modele naraz (każdy ze swoim położeniem X Y, obrotem Z i skalą), warstwa po warstwie albo obiekt po obiekcie.</div>
       <div id="slicer-form" class="slicer-form"></div>
       <div class="fb-row"><span class="muted">Wszystkie parametry slicera są tutaj; zapisują się w przeglądarce.</span><button type="button" id="btn-slicer-reset" class="mini ghost" title="Przywróć domyślne parametry slicera">domyślne</button></div>
       <div class="fb-row"><button type="button" id="btn-slice" class="primary">Pokrój i tłumacz na KRL</button><span id="slice-info" class="muted"></span></div>

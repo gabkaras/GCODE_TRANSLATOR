@@ -26,7 +26,7 @@ STEP/STL ──slicer──> ścieżka (G-code + I J K) ──parser──> ruch
 pip install -e .          # wymaga Python >= 3.10 i numpy
 pip install -e .[test]    # dodatkowo pytest
 pip install -e .[step]    # import STEP/IGES (OpenCASCADE)
-pytest                    # 144 testy
+pytest                    # 156 testów
 ```
 
 ## GUI
@@ -151,6 +151,27 @@ parametr jest w GUI, w sekcji *Slicer*, z przyciskiem „?”):
   startowy / końcowy; statystyki: długości i czasy per typ, materiał (cm³, g),
   mosty, długość nawisów, objętość podpór, spowolnione warstwy.
 
+* **model i stół**: obrót X/Y/Z, skala, lustro; **automatyczna orientacja**
+  (ułóż płasko / minimalne nawisy — kandydaci ze ścianek otoczki, ocena po
+  powierzchni nawisów, styku ze stołem i wysokości); **kilka modeli na stole**
+  z własnym położeniem, obrotem Z i skalą, drukowane warstwa po warstwie albo
+  obiekt po obiekcie,
+* **zakresy wysokości**: nadpisania parametrów (wysokość warstwy, prędkości,
+  wypełnienie, obrysy, szerokości, pochylenia…) w przedziałach Z,
+* **haki KRL na warstwach**: `layer N:`, `z Z:`, `every N:` z dowolną linią
+  KRL (HALT na wymianę materiału, WAIT FOR $IN, wyjścia) oraz czekanie między
+  warstwami (WAIT SEC — wiązanie betonu / stygnięcie); linie wędrują przez
+  G-code jako `;KRL:` i trafiają do programu dosłownie,
+* **fuzzy skin** (chropowata ściana), **ironing** (prasowanie wierzchu),
+  **linia rozruchowa**, **skirt na N warstwach** (osłona), szew w
+  **najostrzejszym narożniku**, kolejność **najpierw wypełnienie**,
+  **blokady i wymuszenia podpór** (pudełka),
+* **podgląd ścieżek slicera per typ** w widoku 3D (obrysy, góra/dół, mosty,
+  ironing, wypełnienie, gap fill, podpory, skirt/brim/raft/linia rozruchowa)
+  niezależnie od ścieżki KRL.
+
+![wiele modeli i podgląd typów](docs/gui_plater.png)
+
 Czego nie ma: Arachne (zmienna szerokość ścian wyliczana z osi medialnej —
 cienkie ściany są obsługiwane przez gap fill o stałej szerokości), podpór
 drzewiastych, omijania obrysów przy przejazdach, prasowania (ironing),
@@ -191,6 +212,20 @@ i ekstrudera przemysłowego, a sterowanie materiałem jest natywne dla KRL:
 * G-code pozostaje tylko formatem przekazania i eksportu ścieżki (F w mm/min,
   E objętościowe, I J K osi narzędzia); import G-code z CAM zachowuje obsługę
   wrzeciona, chłodziwa i M-kodów w osobnej, zwiniętej sekcji.
+
+### Status i Turn: konfiguracja robota bez osobliwości
+
+Każdy przejazd dostaje z kinematyki odwrotnej **Status** (bit 0: nadgarstek za
+osią A1, bit 1: A3 ≥ kąt wyprostowanego ramienia = atan(a₃/d₄) ≈ −2° dla KR 90,
+bit 2: A5 < 0) i **Turn** (bit i = oś A(i+1) ujemna) — definicja KUKA, ten sam
+podział konfiguracji, który stosuje smartPAD. Pierwszy dojazd do ścieżki to
+`PTP {X … C …, S s, T t}` (po `PTP XHOME`), więc sterownik startuje dokładnie w
+zaplanowanej konfiguracji; ruchy CP (SLIN/SCIRC/SPL/LIN) trzymają ją dalej.
+Przejazdy, na których Status się zmienia (np. łokieć), stają się PTP z nowym
+S/T; zmiana samego Turn nie wymaga PTP. Zmiana Statusu **wewnątrz** ścieżki
+ciągłej (czyli przejście przez osobliwość) jest wykrywana (pas robota, pole
+„configuration”, ostrzeżenie) — wtedy trzeba podnieść min |A5| solvera,
+zmienić tryb obrotu albo narzędzie. CLI: `--no-status-turn`.
 
 ### Strefy bezpieczeństwa
 

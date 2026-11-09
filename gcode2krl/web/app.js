@@ -16,7 +16,24 @@
     { key: 'collision_points', label: 'kolizja', color: 'var(--c-collision)', order: 12, on: true, mode: 'points', size: 11 },
     { key: 'margin_points', label: 'poniżej prześwitu', color: 'var(--c-margin)', order: 11, on: true, mode: 'points', size: 8 },
     { key: 'zone_points', label: 'naruszenie strefy bezpieczeństwa', color: 'var(--c-zone)', order: 12, on: true, mode: 'points', size: 11 },
+    // slicer feature preview (from the slicer result, before translation)
+    { key: 'sl_walls', label: 'slicer: obrysy', color: 'var(--c-sl-wall)', order: 20, on: false, kinds: ['WALL-OUTER', 'WALL-INNER'] },
+    { key: 'sl_skin', label: 'slicer: góra/dół, mosty, ironing', color: 'var(--c-sl-skin)', order: 21, on: false, kinds: ['SKIN', 'BRIDGE', 'IRONING'] },
+    { key: 'sl_fill', label: 'slicer: wypełnienie', color: 'var(--c-sl-fill)', order: 22, on: false, kinds: ['FILL'] },
+    { key: 'sl_gap', label: 'slicer: gap fill', color: 'var(--c-sl-gap)', order: 23, on: false, kinds: ['GAP'] },
+    { key: 'sl_support', label: 'slicer: podpory', color: 'var(--c-sl-support)', order: 24, on: false, kinds: ['SUPPORT', 'SUPPORT-INTERFACE'] },
+    { key: 'sl_adh', label: 'slicer: skirt, brim, raft, linia rozruchowa', color: 'var(--c-sl-adh)', order: 25, on: false, kinds: ['SKIRT', 'BRIM', 'RAFT', 'PRIME'] },
   ];
+  function previewLayer(L) {
+    const pv = state.slicePreview;
+    if (!pv) return '';
+    const parts = (L.kinds || []).map(k => pv[k]).filter(Boolean).map(decode);
+    if (!parts.length) return new Float32Array(0);
+    const n = parts.reduce((a, b) => a + b.length, 0);
+    const out = new Float32Array(n); let o = 0;
+    for (const a of parts) { out.set(a, o); o += a.length; }
+    return out;
+  }
   // ---------------------------------------------------------------- theme
   function setTheme(mode, save) {
     const root = document.documentElement;
@@ -279,7 +296,7 @@
           : L.key === 'collision_points' ? (col ? col.collision_points : '')
           : L.key === 'margin_points' ? (col ? col.margin_points : '')
           : L.key === 'zone_points' ? (data.robot ? data.robot.zone_points : '') : p[L.key];
-        const arr = decode(src);
+        const arr = L.kinds ? previewLayer(L) : decode(src);
         viewer.setLayer(L.key, arr, L.color, { alpha: L.alpha, order: L.order, mode: L.mode, size: L.size, visible: $('#layer-' + L.key).checked });
       }
       showRobot(data.robot);
@@ -633,17 +650,68 @@
   modelDrop.addEventListener('drop', e => { e.preventDefault(); e.stopPropagation(); modelDrop.classList.remove('over'); const f = e.dataTransfer.files[0]; if (f) uploadSliceModel(f); });
   $('#slice-mesh').addEventListener('change', e => showModel(meshMeta[e.target.value] || null));
   $('#slice-units').addEventListener('change', () => { const m = meshMeta[$('#slice-mesh').value]; if (m) showModel(m); });
+  // ---- plater: several models with their own placement ---------------------
+  const PLATER_KEY = 'gcode2krl.plater';
+  function platerRows() { try { return JSON.parse(localStorage.getItem(PLATER_KEY) || '[]'); } catch (e) { return []; } }
+  function savePlater(rows) { try { localStorage.setItem(PLATER_KEY, JSON.stringify(rows)); } catch (e) {} renderPlater(); }
+  function renderPlater() {
+    const rows = platerRows(); const host = $('#plater-list'); host.innerHTML = '';
+    $('#plater-count').textContent = rows.length ? `(${rows.length})` : '';
+    if (!rows.length) return;
+    const head = document.createElement('div'); head.className = 'pl-head';
+    ['model', 'X', 'Y', 'obrót Z', 'skala', ''].forEach(t => { const d = document.createElement('span'); d.textContent = t; head.appendChild(d); });
+    host.appendChild(head);
+    rows.forEach((r, i) => {
+      const div = document.createElement('div'); div.className = 'pl-row';
+      const nm = document.createElement('span'); nm.className = 'pl-name'; nm.title = r.name; nm.textContent = r.name; div.appendChild(nm);
+      for (const k of ['x', 'y', 'rz', 'scale']) {
+        const inp = document.createElement('input'); inp.type = 'number'; inp.value = r[k]; inp.step = k === 'scale' ? 0.1 : (k === 'rz' ? 15 : 10);
+        inp.addEventListener('change', () => { const rs = platerRows(); rs[i][k] = Number(inp.value) || (k === 'scale' ? 1 : 0); savePlater(rs); });
+        div.appendChild(inp);
+      }
+      const del = document.createElement('button'); del.type = 'button'; del.className = 'mini ghost'; del.textContent = '×'; del.title = 'usuń ze stołu';
+      del.addEventListener('click', () => { const rs = platerRows(); rs.splice(i, 1); savePlater(rs); });
+      div.appendChild(del);
+      host.appendChild(div);
+    });
+  }
+  $('#plater-add').addEventListener('click', () => {
+    const ref = $('#slice-mesh').value; if (!ref) { setStatus('Najpierw wybierz lub wgraj model', 'err'); return; }
+    const m = meshMeta[ref]; const rows = platerRows();
+    const span = m ? Math.max(m.max[0] - m.min[0], 60) : 100;
+    rows.push({ mesh: ref, units: $('#slice-units').value, name: m ? m.name : ref, x: rows.length ? Math.round(rows[rows.length - 1].x + span + 20) : 0, y: 0, rz: 0, scale: 1 });
+    savePlater(rows);
+  });
+  renderPlater();
+  // ---- orientation actions from the slicer form ---------------------------
+  window.addEventListener('slicer-action', async ev => {
+    const act = ev.detail; const F = window.SLICER_FORM;
+    if (act === 'orient_reset') { F.setValue('rot_x', 0); F.setValue('rot_y', 0); F.setValue('rot_z', 0); F.setValue('auto_orient', 'none'); F.save(); F.updateVisibility(); setStatus('Obroty wyzerowane', 'ok'); return; }
+    const ref = $('#slice-mesh').value; if (!ref) { setStatus('Najpierw wybierz lub wgraj model', 'err'); return; }
+    try {
+      setStatus('Liczenie orientacji…', 'busy');
+      const mode = act === 'orient_flat' ? 'lay_flat' : 'min_overhang';
+      const res = await fetch('/api/orient', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mesh: ref, units: $('#slice-units').value, mode, overhang: F.params().overhang_max }) });
+      const d = await res.json();
+      if (!res.ok || d.error) throw new Error(d.error || res.statusText);
+      F.setValue('rot_x', +d.rot[0].toFixed(2)); F.setValue('rot_y', +d.rot[1].toFixed(2)); F.setValue('rot_z', +d.rot[2].toFixed(2)); F.setValue('auto_orient', 'none'); F.save(); F.updateVisibility();
+      setStatus(`Orientacja: obrót X ${d.rot[0].toFixed(1)}° Y ${d.rot[1].toFixed(1)}° Z ${d.rot[2].toFixed(1)}° · nawisy ${(d.overhang_before / 100).toFixed(0)} → ${(d.overhang_after / 100).toFixed(0)} cm² · styk ze stołem ${(d.contact_area / 100).toFixed(0)} cm² · wysokość ${d.height.toFixed(0)} mm`, 'ok');
+    } catch (err) { setStatus('Błąd orientacji: ' + err.message, 'err'); }
+  });
   $('#btn-slice').addEventListener('click', async () => {
-    const ref = $('#slice-mesh').value; if (!ref) { setStatus('Wybierz model do pokrojenia', 'err'); return; }
+    const ref = $('#slice-mesh').value; if (!ref && !platerRows().length) { setStatus('Wybierz model do pokrojenia', 'err'); return; }
     setStatus('Krojenie…', 'busy'); $('#btn-slice').disabled = true;
     try {
       const params = sliceParams();
       const body = { mesh: ref, units: $('#slice-units').value, params };
+      const rows = platerRows();
+      if (rows.length) body.models = rows.map(r => ({ mesh: r.mesh, units: r.units, name: r.name, offset: [r.x, r.y, 0], rot: [0, 0, r.rz], scale: r.scale }));
       if (params.layer_mode === 'multi') { body.segments = window.SLICER_FORM.extras().segments; params.layer_mode = 'planar'; if (!body.segments.trim()) throw new Error('tryb wielokierunkowy wymaga definicji segmentów'); }
       const res = await fetch('/api/slice', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       const d = await res.json();
       if (!res.ok || d.error) throw new Error(d.error || res.statusText);
       const st = d.stats;
+      state.slicePreview = d.preview || null;
       const modeTxt = { planar: 'płaskie', conical: 'stożkowe', bottom: 'konforemne (dół)', top: 'konforemne (góra)', multi: 'wielokierunkowe' }[st.layer_mode] || st.layer_mode;
       const hTxt = st.min_layer_height && st.max_layer_height && Math.abs(st.max_layer_height - st.min_layer_height) > 1e-6 ? ` (${st.min_layer_height.toFixed(2)}–${st.max_layer_height.toFixed(2)} mm)` : '';
       const bt = st.by_type || {};

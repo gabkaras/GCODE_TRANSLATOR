@@ -26,6 +26,20 @@ class SliceParams:
     speed), minimum layer time, retraction with wipe / coast / extra prime.
     """
 
+    # ---- model placement -----------------------------------------------
+    rot_x: float = 0.0  # deg about X (fixed axes, X then Y then Z)
+    rot_y: float = 0.0
+    rot_z: float = 0.0
+    scale: float = 1.0
+    mirror_x: bool = False
+    mirror_y: bool = False
+    mirror_z: bool = False
+    auto_orient: str = "none"  # none | lay_flat | min_overhang (replaces rot_x/y/z)
+    print_sequence: str = "all"  # several models: all (layer by layer) | sequential (object by object)
+    # ---- height ranges / hooks ------------------------------------------
+    ranges: str = ""  # per-Z overrides: "z_from z_to key=value ..." per line
+    layer_krl: str = ""  # robot program hooks: "layer N: KRL", "z Z: KRL", "every [N]: KRL"
+    layer_wait: float = 0.0  # s, WAIT SEC before every layer except the first (curing / cooling)
     # ---- layers ---------------------------------------------------------
     layer_height: float = 2.0
     first_layer_height: float = 2.0
@@ -40,13 +54,16 @@ class SliceParams:
     infill_width: float = 0.0
     top_bottom_width: float = 0.0
     perimeters: int = 2
-    wall_order: str = "inner_outer"  # inner_outer | outer_inner
+    wall_order: str = "inner_outer"  # inner_outer | outer_inner | infill_first
     gap_fill: bool = True  # fill gaps between walls / thin walls with single beads
     gap_fill_min_width: float = 0.25  # as a fraction of the bead width
     xy_compensation: float = 0.0  # grow (+) / shrink (-) every contour (mm)
     hole_compensation: float = 0.0  # grow (+) holes (mm)
     elephant_foot: float = 0.0  # shrink the first layer contour (mm)
-    seam: str = "nearest"  # nearest | aligned | rear | random
+    seam: str = "nearest"  # nearest | aligned | rear | corner | random
+    fuzzy_skin: str = "none"  # none | outer | all: jitter the wall points for a rough surface
+    fuzzy_thickness: float = 0.6  # mm, peak-to-peak jitter
+    fuzzy_point_distance: float = 3.0  # mm between jittered points
     spiral_vase: bool = False  # one continuous outer wall with a Z ramp, no infill above the bottom layers
     small_perimeter_length: float = 0.0  # loops shorter than this (mm) use small_perimeter_speed (0 = off)
     # ---- sparse infill --------------------------------------------------
@@ -63,6 +80,10 @@ class SliceParams:
     bottom_pattern: str = "zigzag"
     bridges: bool = True  # detect bridges: straight lines across, anchored on both ends
     bridge_flow: float = 1.0
+    ironing: bool = False  # extra low-flow pass over top surfaces
+    ironing_flow: float = 0.15
+    ironing_spacing: float = 1.0  # mm between ironing lines
+    ironing_speed: float = 15.0  # mm/s
     # ---- overhangs / support -------------------------------------------
     overhang_detect: bool = True  # slow down wall segments printed over air
     overhang_max: float = 45.0  # printable overhang angle (deg): support indicator / generation threshold
@@ -75,6 +96,7 @@ class SliceParams:
     support_interface_density: float = 0.6
     support_min_area: float = 4.0  # ignore overhang islands smaller than this (mm^2)
     support_angle: float = 0.0  # support line direction (deg)
+    support_modifiers: str = ""  # "block cx cy cz sx sy sz" / "force cx cy cz sx sy sz" per line (model coordinates)
     # ---- extrusion ------------------------------------------------------
     extrusion_mode: str = "volumetric"  # volumetric (E in mm^3, drives the robot extruder outputs) | none
     extrusion_multiplier: float = 1.0
@@ -105,6 +127,9 @@ class SliceParams:
     # ---- adhesion -------------------------------------------------------
     skirt_loops: int = 0
     skirt_distance: float = 5.0
+    skirt_layers: int = 1  # print the skirt on the first N layers (a draft shield when high)
+    prime_line_length: float = 0.0  # mm, straight purge line in front of the part before printing (0 = none)
+    prime_line_offset: float = 20.0  # mm from the part / brim
     brim_width: float = 0.0
     raft_layers: int = 0
     raft_margin: float = 5.0

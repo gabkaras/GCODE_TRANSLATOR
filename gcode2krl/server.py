@@ -291,6 +291,8 @@ def robot_report(items, options: dict, abc) -> dict | None:
                                            spin_mode=str(options.get("spin_mode") or "free"),
                                            spin_fixed=_opt(options, "spin_fixed", 0.0, float),
                                            spin_offset=_opt(options, "spin_offset", 0.0, float))
+    from .robot import assign_configurations, status_turn_batch
+    cfg = assign_configurations(items, robot, base, tool, ref=tuple(abc)) if _opt(options, "status_turn", True, bool) else None
     if has_orientation(items):
         pts, abcs = sample_items(items, max_samples=max_samples, step=step if step > 0 else None, default_abc=abc, with_abc=True)
         abc_used = abcs
@@ -301,6 +303,14 @@ def robot_report(items, options: dict, abc) -> dict | None:
     d = rep.to_dict()
     d["robot"] = robot.key
     d["orientation"] = orient_info
+    if cfg is not None and rep.joints is not None:
+        st, tn = status_turn_batch(robot, rep.joints)
+        okm = st >= 0
+        changes = int(np.sum((st[1:] != st[:-1]) & okm[1:] & okm[:-1]))
+        cfg["status_changes_sampled"] = changes
+        cfg["status_values"] = sorted({int(v) for v in st[okm]})
+        d["status"] = _f32(st.astype(np.float32))
+    d["configuration"] = cfg
     d["oriented"] = bool(has_orientation(items))
     d["step"] = step
     d["points"] = _f32(pts.ravel())
@@ -444,6 +454,13 @@ def run_translation(gcode: str, filename: str, options: dict) -> dict:
                                   f"{worst['min_clearance']:.1f} mm)")
         elif c["n_margin"]:
             stats.warnings.append(f"collision margin {c['margin']:g} mm violated at {c['n_margin']} samples (min clearance {c['min_clearance']:.1f} mm)")
+        cfg = robot.get("configuration")
+        if cfg:
+            if cfg["status_changes_in_path"]:
+                stats.warnings.append(f"robot configuration (Status) changes {cfg['status_changes_in_path']}x inside a continuous path: "
+                                      f"the controller cannot pass that (singularity) - raise min |A5|, change the spin mode or the tool")
+            if cfg["unreachable_travels"]:
+                stats.warnings.append(f"{cfg['unreachable_travels']} travel targets out of reach (no Status/Turn assigned)")
         for zr in (robot.get("zones") or {}).get("results", []):
             if zr["n_path"] or zr["n_home"]:
                 what = "outside the allowed zone" if zr["mode"] == "allowed" else "inside the forbidden zone"
@@ -617,20 +634,57 @@ class Handler(SimpleHTTPRequestHandler):
                 return
             self.send_json({"deleted": ok})
             return
+        if path == "/api/orient":
+            try:
+                body = self.read_json()
+                from .slicer.plater import auto_orient
+                ref = str(body.get("mesh") or "")
+                if not ref:
+                    raise ValueError("no mesh given")
+                tris, _ = meshstore.load(ref, str(body.get("units") or "mm"), float(body.get("deflection") or 0.2))
+                res = auto_orient(tris, str(body.get("mode") or "min_overhang"), float(body.get("overhang") or 45.0))
+                self.send_json({k: (list(v) if isinstance(v, tuple) else v) for k, v in res.items()})
+            except ValueError as exc:
+                self.send_json({"error": str(exc)}, 400)
+            return
         if path == "/api/slice":
             try:
                 body = self.read_json()
                 from .slicer import SliceParams, slice_triangles
-                ref = str(body.get("mesh") or "")
-                if not ref:
-                    raise ValueError("no mesh given")
-                tris, key = meshstore.load(ref, str(body.get("units") or "mm"), float(body.get("deflection") or 0.1))
+                from .slicer.pipeline import preview_segments, slice_models
+                from .slicer.plater import Placement
                 params = SliceParams.from_dict(body.get("params") or {})
                 t0 = time.perf_counter()
                 segments = body.get("segments") or None
-                gcode, st, layers = slice_triangles(tris, params, source=ref, segments=segments)
+                names = {m["id"]: m["name"] for m in meshstore.list_meshes()}
+                models = body.get("models") or []
+                deflection = float(body.get("deflection") or 0.1)
+                if models:
+                    placed = []
+                    for md in models:
+                        ref = str(md.get("mesh") or "")
+                        if not ref:
+                            continue
+                        tris, _ = meshstore.load(ref, str(md.get("units") or body.get("units") or "mm"), deflection)
+                        pl = Placement.from_dict({**md, "name": md.get("name") or names.get(ref, ref)})
+                        # the global placement of the parameters applies on top of each row
+                        from .slicer.pipeline import placed as _placed
+                        placed.append((_placed(tris, params), pl))
+                    if not placed:
+                        raise ValueError("no models given")
+                    source = ", ".join(pl.name for _, pl in placed)
+                    gcode, st, layers = slice_models(placed, params, source=source, segments=segments)
+                    name = placed[0][1].name if len(placed) == 1 else "stol"
+                else:
+                    ref = str(body.get("mesh") or "")
+                    if not ref:
+                        raise ValueError("no mesh given")
+                    tris, key = meshstore.load(ref, str(body.get("units") or "mm"), deflection)
+                    gcode, st, layers = slice_triangles(tris, params, source=ref, segments=segments)
+                    name = names.get(ref, ref)
+                preview = {k: _f32(v) for k, v in preview_segments(layers).items()}
                 res = {"gcode": gcode, "stats": {**{k: v for k, v in vars(st).items()}, "time": time.perf_counter() - t0},
-                       "name": (meshstore.list_meshes() and next((m["name"] for m in meshstore.list_meshes() if m["id"] == ref), ref)) or ref}
+                       "name": name, "preview": preview}
             except ImportError as exc:
                 self.send_json({"error": f"slicer needs shapely: pip install shapely ({exc})"}, 500)
                 return
