@@ -40,12 +40,59 @@ def test_spline_block_syntax():
     assert "BAS (#INITMOV,0 )" in src
     assert "$TOOL = TOOL_DATA[1]" in src and "$BASE = BASE_DATA[1]" in src
     assert "PTP XHOME" in src  # HOME move is the BCO run by default
-    # plunge (own block, corner) + the two half circles in one block
+    # plunge (own block, corner) + the two half circles in one block; the last block ends
+    # without C_SPL because PTP HOME / END follow (KSS: approximation inadmissible)
     assert src.count("SPLINE WITH $VEL.CP = 0.0083, $ACC.CP = 2.00") == 2
-    assert src.count("ENDSPLINE C_SPL") == 2
+    assert src.count("ENDSPLINE C_SPL") == 1 and src.count("ENDSPLINE") == 2
     assert len(re.findall(r"^  SCIRC \{X [-\d.]+, Y [-\d.]+, Z [-\d.]+, A [-\d.]+, B [-\d.]+, C [-\d.]+\}, \{X ", src, re.M)) == 2
     assert "LIN {X 75.000, Y 50.000, Z 0.000, A 0.000, B 180.000, C 0.000}" in src  # rapid
     assert prog.files["CIRC_T.dat"].startswith("&ACCESS RVP\n&REL 1\nDEFDAT CIRC_T\n")
+
+
+def test_spline_tangency_bridges_and_no_approx_before_statements():
+    # a long line into an arc whose start tangent is 3 deg off the line: KSS would stop at the
+    # SLIN-SCIRC junction ("velocity 0 in point"), so the writer ends the line with an SPL bridge
+    pts = [(0.0, 0.0)]
+    pts += [(x, 0.0) for x in (20.0, 40.0, 60.0)]
+    r, k = 30.0, math.radians(3.0)
+    cx, cy = 60.0 + r * math.sin(k), r * math.cos(k)  # circle tangent at the junction tilted by 3 deg
+    for i in range(1, 25):
+        a = -math.pi / 2 - k + i * 0.05
+        pts.append((cx + r * math.cos(a), cy + r * math.sin(a)))
+    g = "G1 Z0 F600\n" + "\n".join(f"G1 X{x:.4f} Y{y:.4f}" for x, y in pts) + "\nM30\n"
+    items, stats = translate(parse_gcode(g), TranslateOptions(tol=0.05))
+    kinds = [type(i).__name__ for i in items if type(i).__name__ in ("LineItem", "ArcItem", "SplItem")]
+    assert kinds[:2] == ["LineItem", "ArcItem"], kinds
+    src = write_krl(items, KrlOptions(name="T", home_start=False, home_end=False), stats).files["T.src"]
+    seq = [w for w in (l.strip().split()[0] for l in src.splitlines() if l.strip()) if w in ("SLIN", "SCIRC", "SPL")]
+    assert seq[:3] == ["SLIN", "SPL", "SCIRC"], seq
+    # the SPL bridge ends exactly at the junction (60, 0); the SLIN stops shortly before it
+    lines = [l.strip() for l in src.splitlines() if l.strip().split()[0:1] and l.strip().split()[0] in ("SLIN", "SPL")]
+    assert "SPL {X 60.000, Y 0.000" in lines[1] and "SLIN {X 5" in lines[0]
+    # a statement after the block (extruder output off) forbids the C_SPL approximation
+    g2 = "G1 Z0 F600\nG1 X50 E5\nG1 X100 E10\nG1 X100 Y50 E15\nG4 P500\nG1 X0 E20\nM30\n"
+    items, stats = translate(parse_gcode(g2), TranslateOptions(tol=0.05, extruder=True))
+    src = write_krl(items, KrlOptions(name="T", extruder_out=5, extruder_trigger=False, home_end=False), stats).files["T.src"]
+    pos = src.index("WAIT SEC")
+    before = [l for l in src[:pos].splitlines() if l.startswith("ENDSPLINE")]
+    assert before and before[-1] == "ENDSPLINE", before
+
+
+def test_lint_catches_kss_spline_problems():
+    from gcode2krl.krl_lint import lint_krl
+    bad = "\n".join([
+        "LIN {X 0.000, Y 0.000, Z 0.000, A 0.000, B 180.000, C 0.000}",
+        "SPLINE WITH $VEL.CP = 0.01, $ACC.CP = 2.00",
+        "  SLIN {X 100.000, Y 0.000, Z 0.000, A 0.000, B 180.000, C 0.000}",
+        "  SLIN {X 200.000, Y 5.000, Z 0.000, A 0.000, B 180.000, C 0.000}",   # 2.9 deg kink
+        "  SLIN {X 200.000, Y 5.000, Z 0.000, A 0.000, B 180.000, C 0.000}",   # repeated point
+        "ENDSPLINE C_SPL",
+        "WAIT SEC 1.0",                                                        # approximation into a WAIT
+        "END"])
+    msgs = [m for _, m in lint_krl(bad)]
+    assert any("SLIN-SLIN" in m for m in msgs) and any("powtorzony" in m for m in msgs) and any("C_SPL" in m for m in msgs)
+    good = bad.replace("ENDSPLINE C_SPL", "ENDSPLINE").replace("  SLIN {X 200.000, Y 5.000, Z 0.000, A 0.000, B 180.000, C 0.000}\n  SLIN", "  SPL {X 200.000, Y 5.000, Z 0.000, A 0.000, B 180.000, C 0.000}\n  SLIN {X 250.000, Y 5.000, Z 0.000, A 0.000, B 180.000, C 0.000}\n  SLIN")
+    assert [m for _, m in lint_krl(good) if "C_SPL" in m] == []
 
 
 def test_frame_modes_declare_data_literal():

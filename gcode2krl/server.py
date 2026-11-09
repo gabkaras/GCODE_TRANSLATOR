@@ -117,6 +117,8 @@ def build_options(options: dict, filename: str) -> tuple[TranslateOptions, KrlOp
         acc=_opt(options, "acc", 2.0, float),
         cdis=_opt(options, "cdis", 0.2, float),
         corner_angle_deg=_opt(options, "corner_angle", 10.0, float),
+        tangent_deg=_opt(options, "tangent_deg", 0.1, float),
+        bridge_mm=_opt(options, "bridge_mm", 3.0, float),
         exact_corners=not _opt(options, "round_corners", False, bool),
         max_block_segments=_opt(options, "max_block_segments", 500, int),
         max_motions_per_file=_opt(options, "max_motions_per_file", 4000, int),
@@ -488,6 +490,8 @@ def run_translation(gcode: str, filename: str, options: dict) -> dict:
     from .translator import has_orientation
     kopts.ori_var = has_orientation(items)
     prog = write_krl(items, kopts, stats)
+    from .krl_lint import lint_files
+    stats.warnings.extend(lint_files(prog.files, kopts.tangent_deg))
     t4 = time.perf_counter()
     token = _remember(prog.files)
     if robot:

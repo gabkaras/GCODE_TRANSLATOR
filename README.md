@@ -744,8 +744,22 @@ Zasady bloków `SPLINE`:
   wyprzedzenie `$ADVANCE`);
 * blok kończy się przy zmianie posuwu, w narożu (kąt skrętu >
   `--corner-angle`, domyślnie 10°) i po `--max-block-segments` segmentach;
-* `ENDSPLINE C_SPL` wygładza przejście do następnego ruchu (`--no-block-approx`
-  dla starszych wersji KSS, które nie znają `C_SPL`);
+* wewnątrz bloku KSS zatrzymuje robota („Velocity 0 m/s in point …
+  (SLIN-SCIRC sequence)” / „(broken XYZ path)” w RRS) w każdym złączu dwóch
+  segmentów `SLIN`/`SCIRC`, które nie są styczne — niezależne dopasowanie
+  odcinków i łuków zostawia w złączach załamania rzędu 0,1–5°. Writer pilnuje
+  styczności: złącze z załamaniem większym niż `--tangent-deg` (0,1°) dostaje
+  **mostek SPL** — odcinek kończy się `--bridge-mm` (≤ 3 mm, skracane tak, by
+  odchyłka została w setnych mm) przed złączem, punkt `SPL` leży w złączu, a
+  łuk po załamaniu idzie punktami `SPL`; krótkie odcinki stają się jednym
+  punktem `SPL`. Punkty powtórzone (zerowe odcinki) są pomijane;
+* `ENDSPLINE C_SPL` wygładza przejście do następnego ruchu CP (`SPLINE`,
+  `LIN`); przed `PTP`, wyjściem `$OUT`, `WAIT`, `HALT`, `BAS`, wywołaniem
+  podprogramu i `END` blok kończy się zwykłym `ENDSPLINE`, bo KSS zgłasza tam
+  „Approximation inadmissible” (`--no-block-approx` dla starszych wersji KSS,
+  które nie znają `C_SPL`);
+* wygenerowane pliki przechodzą lint pod te reguły (`python -m
+  gcode2krl.krl_lint PLIK.src`, w GUI i CLI jako ostrzeżenia „KSS …”);
 * w trybie `lin` naroża są domyślnie dokładne (bez `C_DIS`), `--round-corners`
   zaokrągla wszystko odległością `$APO.CDIS = --cdis`.
 

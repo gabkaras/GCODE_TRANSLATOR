@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from .geometry import turning_angle
+from .geometry import sample_arc, turning_angle
 from .translator import ArcItem, EventItem, LineItem, RapidItem, SplItem, Stats
 
 
@@ -34,6 +34,11 @@ class KrlOptions:
     max_block_segments: int = 500
     max_motions_per_file: int = 4000
     block_approx: bool = True  # ENDSPLINE C_SPL
+    # inside a SPLINE block KSS stops (velocity 0, "SLIN-SCIRC sequence" / "broken XYZ path")
+    # at every SLIN / SCIRC junction that is not tangential; junction kinks above tangent_deg
+    # (and below the corner angle) get a short SPL bridge (bridge_mm) that absorbs the kink
+    tangent_deg: float = 0.1
+    bridge_mm: float = 3.0
     spindle_out: int = 0  # digital output number, 0 = comment only
     coolant_out: int = 0
     spindle_anout: int = 0  # analog output for spindle speed, 0 = none
@@ -105,6 +110,7 @@ class KrlWriter:
         self.block_segments = 0
         self.block_motions = 0
         self.last_t_out: np.ndarray | None = None
+        self.last_kind: str | None = None  # "prim" (SLIN / SCIRC) | "spl" | None: what the block ended with
         self.global_vel: float | None = opts.rapid_vel  # set in the settings header
         self.first_motion_done = False
         self.rate = 0.0
@@ -158,20 +164,49 @@ class KrlWriter:
         self.block_segments = 0
         self.block_motions = 0
 
-    def close_block(self) -> None:
+    def close_block(self, approx: bool = True) -> None:
+        """End the open block; approx=False when a non-motion statement (WAIT, $OUT, HALT,
+        PTP...) follows, where KSS reports "approximation inadmissible"."""
         if not self.block:
             return
-        self.block.append("ENDSPLINE C_SPL" if self.o.block_approx else "ENDSPLINE")
+        self.block.append("ENDSPLINE C_SPL" if (self.o.block_approx and approx) else "ENDSPLINE")
         self.emit(self.block, self.block_motions)
         self.block = []
         self.block_feed = None
+        self.last_kind = None
 
     def is_corner(self, item) -> bool:
         if self.last_t_out is None:
             return False
         return math.degrees(turning_angle(self.last_t_out, item.t_in)) > self.o.corner_angle_deg
 
-    def spline_motion(self, item) -> None:
+    def kink_deg(self, t_a, t_b) -> float:
+        if t_a is None or t_b is None:
+            return 0.0
+        return math.degrees(turning_angle(t_a, t_b))
+
+    def same_block_next(self, item, nxt) -> bool:
+        """Will the next item land in the block of this one (no feed change, no corner)?"""
+        if not isinstance(nxt, (LineItem, ArcItem, SplItem)):
+            return False
+        if abs(nxt.feed - item.feed) > 1e-9 or self.block_segments + 1 >= self.o.max_block_segments:
+            return False
+        return self.kink_deg(item.t_out, nxt.t_in) <= self.o.corner_angle_deg
+
+    def bridge_len(self, kink: float, length: float) -> float:
+        """SPL bridge length: short enough that the blend stays within a few hundredths of a mm."""
+        d = min(self.o.bridge_mm, length / 3.0)
+        if kink > 1e-9:
+            d = min(d, max(0.5, 0.2 / math.tan(math.radians(min(kink, 89.0)))))
+        return d
+
+    def spl_point(self, p, abc=None) -> None:
+        self.block.append(f"  SPL {self.frame(p, abc)}")
+        self.block_segments += 1
+        self.block_motions += 1
+        self.last_kind = "spl"
+
+    def spline_motion(self, item, nxt=None) -> None:
         self.ensure_bco()
         corner = self.is_corner(item)
         if self.block and (abs(self.block_feed - item.feed) > 1e-9 or corner
@@ -179,19 +214,48 @@ class KrlWriter:
             self.close_block()
         if not self.block:
             self.open_block(item.feed)
+        # a kink (not a corner) between two SLIN / SCIRC segments in the same block: KSS would stop there
+        kink_in = self.kink_deg(self.last_t_out, item.t_in) if (self.block_segments > 0 and self.last_kind == "prim") else 0.0
+        kink_before = kink_in > self.o.tangent_deg
         if isinstance(item, LineItem):
-            self.block.append(f"  SLIN {self.frame(item.end, item.abc)}")
-            self.block_segments += 1
-            self.block_motions += 1
+            start, end = np.asarray(item.start, dtype=float), np.asarray(item.end, dtype=float)
+            length = float(np.linalg.norm(end - start))
+            if length < 1e-6:
+                return  # a zero-length segment breaks the path ("broken XYZ path")
+            t = (end - start) / length
+            kink_out = self.kink_deg(item.t_out, nxt.t_in) if (isinstance(nxt, (LineItem, ArcItem)) and self.same_block_next(item, nxt)) else 0.0
+            kink_after = kink_out > self.o.tangent_deg
+            if length < 2.0 * max(self.o.bridge_mm, 1.0) and (kink_before or kink_after):
+                self.spl_point(end, item.abc)  # too short for SLIN + bridges: the whole line is one SPL point
+            else:
+                if kink_before:
+                    self.spl_point(start + t * self.bridge_len(kink_in, length), item.abc)
+                lin_end = end - t * self.bridge_len(kink_out, length) if kink_after else end
+                self.block.append(f"  SLIN {self.frame(lin_end, item.abc)}")
+                self.block_segments += 1
+                self.block_motions += 1
+                self.last_kind = "prim"
+                if kink_after:
+                    self.spl_point(end, item.abc)
         elif isinstance(item, ArcItem):
-            self.block.append(f"  SCIRC {self.frame(item.mid, item.abc)}, {self.frame(item.end, item.abc)}")
-            self.block_segments += 1
-            self.block_motions += 1
+            if kink_before:
+                # SCIRC after a kink: the arc goes as SPL points (a smooth curve absorbs the kink)
+                pts = sample_arc(item.fit, 0.01, min_points=4)
+                for p in pts[1:]:
+                    self.spl_point(p, item.abc)
+            else:
+                self.block.append(f"  SCIRC {self.frame(item.mid, item.abc)}, {self.frame(item.end, item.abc)}")
+                self.block_segments += 1
+                self.block_motions += 1
+                self.last_kind = "prim"
         else:
+            last = np.asarray(item.points[0], dtype=float)
             for k, p in enumerate(item.points[1:], start=1):
-                self.block.append(f"  SPL {self.frame(p, None if item.abcs is None else tuple(item.abcs[k]))}")
-            self.block_segments += len(item.points) - 1
-            self.block_motions += len(item.points) - 1
+                p = np.asarray(p, dtype=float)
+                if np.linalg.norm(p - last) < 1e-6:
+                    continue  # repeated point = broken path
+                self.spl_point(p, None if item.abcs is None else tuple(item.abcs[k]))
+                last = p
         self.last_t_out = item.t_out
 
     # --------------------------------------------------------------- lin
@@ -220,7 +284,8 @@ class KrlWriter:
 
     # ------------------------------------------------------------ events
     def rapid(self, item: RapidItem, next_item) -> None:
-        self.close_block()
+        # a spline block may approximate into a LIN travel, not into a PTP (configuration change)
+        self.close_block(approx=not (getattr(item, "ptp", False) and getattr(item, "st", None) is not None))
         self.ensure_bco()
         if getattr(item, "ptp", False) and getattr(item, "st", None) is not None:
             # configuration-defining travel: PTP with Status / Turn (CP motions keep it afterwards)
@@ -272,6 +337,14 @@ class KrlWriter:
         self.anout_on = True
         return f"ANOUT ON $ANOUT[{self.o.extruder_anout}] = {factor:.5f} * $VEL_ACT + 0.0{delay} MINIMUM=0.0 MAXIMUM=1.0"
 
+    def emit_event(self, lines: list[str], n_motions: int = 0) -> None:
+        """Close the open block and emit event lines; a real statement (not a comment) after
+        ENDSPLINE forbids the C_SPL approximation."""
+        stmt = any(l.strip() and not l.lstrip().startswith(";") for l in lines)
+        self.close_block(approx=not stmt)
+        self.last_t_out = None
+        self.emit(lines, n_motions)
+
     def event(self, ev: EventItem) -> None:
         k = ev.kind
         if k in ("extruder_off", "extruder_retract"):
@@ -279,18 +352,14 @@ class KrlWriter:
             lines = [f"; extruder off"] if k == "extruder_off" else []
             self.extruder_off_now(lines)
             if k == "extruder_off":
-                self.close_block()
-                self.last_t_out = None
-                self.emit(lines)
+                self.emit_event(lines)
                 return
-            self.close_block()
-            self.last_t_out = None
             de = float(ev.value)
             t = de / max(self.o.extruder_flow_full, 1e-9)
             lines.append(f"; extruder reverse {de:g} E ({t:.2f} s)")
             if self.o.extruder_reverse_out > 0:
                 lines += [f"$OUT[{self.o.extruder_reverse_out}] = TRUE", f"WAIT SEC {fnum(t, 2)}", f"$OUT[{self.o.extruder_reverse_out}] = FALSE"]
-            self.emit(lines)
+            self.emit_event(lines)
             return
         if k == "comment":
             text = str(ev.value).replace("\n", " ")
@@ -299,10 +368,8 @@ class KrlWriter:
             else:
                 self.emit([f"; {text}"])
             return
-        self.close_block()
-        self.last_t_out = None
         if k == "dwell":
-            self.emit([f"WAIT SEC {fnum(float(ev.value), 3)}"])
+            self.emit_event([f"WAIT SEC {fnum(float(ev.value), 3)}"])
         elif k == "spindle_on":
             rpm, ccw = ev.value
             lines = [f"; spindle on {'CCW' if ccw else 'CW'} {rpm:g} rpm"]
@@ -310,25 +377,25 @@ class KrlWriter:
                 lines.append(f"$ANOUT[{self.o.spindle_anout}] = {fnum(min(1.0, rpm / self.o.spindle_max_rpm), 4)}")
             if self.o.spindle_out > 0:
                 lines.append(f"$OUT[{self.o.spindle_out}] = TRUE")
-            self.emit(lines)
+            self.emit_event(lines)
         elif k == "spindle_off":
             lines = ["; spindle off"]
             if self.o.spindle_out > 0:
                 lines.append(f"$OUT[{self.o.spindle_out}] = FALSE")
             if self.o.spindle_anout > 0:
                 lines.append(f"$ANOUT[{self.o.spindle_anout}] = 0.0")
-            self.emit(lines)
+            self.emit_event(lines)
         elif k == "spindle_speed":
             lines = [f"; spindle speed {float(ev.value):g} rpm"]
             if self.o.spindle_anout > 0 and self.o.spindle_max_rpm > 0:
                 lines.append(f"$ANOUT[{self.o.spindle_anout}] = {fnum(min(1.0, float(ev.value) / self.o.spindle_max_rpm), 4)}")
-            self.emit(lines)
+            self.emit_event(lines)
         elif k in ("coolant_on", "coolant_off"):
             on = k == "coolant_on"
             lines = [f"; coolant {'on' if on else 'off'}"]
             if self.o.coolant_out > 0:
                 lines.append(f"$OUT[{self.o.coolant_out}] = {'TRUE' if on else 'FALSE'}")
-            self.emit(lines)
+            self.emit_event(lines)
         elif k == "extruder_on":
             lines = ["; extruder on"]
             if self.o.extruder_out > 0 and not self.out_on:
@@ -340,7 +407,7 @@ class KrlWriter:
             if self.o.extruder_anout > 0 and not self.anout_on:
                 lines.append(self.anout_line())
             self.extruding_now = True
-            self.emit(lines)
+            self.emit_event(lines)
         elif k == "extruder_prime":
             de = float(ev.value)
             t = de / max(self.o.extruder_flow_full, 1e-9)
@@ -350,23 +417,23 @@ class KrlWriter:
                     lines.append(f"$OUT[{self.o.extruder_out}] = TRUE")
                     self.out_on = True
                 lines.append(f"WAIT SEC {fnum(t, 2)}")
-            self.emit(lines)
+            self.emit_event(lines)
         elif k == "extruder_rate":
             self.rate = float(ev.value)
             lines = [f"; extrusion rate {self.rate:.5f} E/mm"]
             if self.o.extruder_anout > 0 and self.anout_on:
                 lines.append(f"ANOUT OFF $ANOUT[{self.o.extruder_anout}]")
                 lines.append(self.anout_line())
-            self.emit(lines)
+            self.emit_event(lines)
         elif k == "krl":
-            self.emit(["; hook", str(ev.value)])
+            self.emit_event(["; hook", str(ev.value)])
         elif k == "tool_change":
             lines = [f"; tool change T{ev.value}"]
             if self.o.halt_on_tool_change:
                 lines.append("HALT")
-            self.emit(lines)
+            self.emit_event(lines)
         elif k == "pause":
-            self.emit(["; optional stop (M1)" if ev.value else "; program stop (M0)", "HALT"])
+            self.emit_event(["; optional stop (M1)" if ev.value else "; program stop (M0)", "HALT"])
         elif k == "end":
             lines = []
             if self.o.extruder_anout > 0 and self.anout_on:
@@ -379,9 +446,10 @@ class KrlWriter:
                 lines += self.home_lines("end")
             if self.o.krl_end.strip():
                 lines += ["; user end"] + [l.rstrip() for l in self.o.krl_end.splitlines()]
-            self.emit(lines + ["; program end"], 1 if self.o.home_end else 0)
+            self.close_block(approx=False)
+            self.emit_event(lines + ["; program end"], 1 if self.o.home_end else 0)
         else:
-            self.emit([f"; unknown event {k}"])
+            self.emit_event([f"; unknown event {k}"])
 
     # --------------------------------------------------------------- run
     def write(self, items: list, stats: Stats | None = None) -> KrlProgram:
@@ -391,7 +459,7 @@ class KrlWriter:
                 self.rapid(item, nxt)
             elif isinstance(item, (LineItem, ArcItem, SplItem)):
                 if self.o.mode == "spline":
-                    self.spline_motion(item)
+                    self.spline_motion(item, nxt)
                 else:
                     self.lin_motion(item, nxt)
             elif isinstance(item, EventItem):
@@ -480,6 +548,7 @@ class KrlWriter:
             cur.extend(lines)
             cur_motions += n
         parts.append(cur)
+        parts = [self.fix_block_approx(body) for body in parts]
         single = len(parts) == 1
         main_body: list[str] = []
         if single:
@@ -493,6 +562,28 @@ class KrlWriter:
         prog.files[f"{self.o.name}.src"] = self.main_src(main_body, stats)
         prog.files[f"{self.o.name}.dat"] = self.dat(self.o.name)
         return prog
+
+    @staticmethod
+    def fix_block_approx(lines: list[str]) -> list[str]:
+        """ENDSPLINE C_SPL may only approximate into a following CP motion (a spline block or a
+        LIN / CIRC, possibly behind TRIGGER lines); before PTP, outputs, WAIT, BAS, HALT, a
+        subprogram call or the end of the file KSS reports "approximation inadmissible"."""
+        out = list(lines)
+        for i, l in enumerate(out):
+            if l != "ENDSPLINE C_SPL":
+                continue
+            ok = False
+            for nxt in out[i + 1:]:
+                w = nxt.strip().split(" ")[0] if nxt.strip() else ""
+                if not w or w.startswith(";"):
+                    continue
+                if w == "TRIGGER":
+                    continue  # belongs to the motion that follows
+                ok = w in ("SPLINE", "LIN", "CIRC")
+                break
+            if not ok:
+                out[i] = "ENDSPLINE"
+        return out
 
     def main_src(self, body: list[str], stats: Stats | None) -> str:
         lines = [

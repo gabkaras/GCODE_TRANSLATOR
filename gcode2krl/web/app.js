@@ -70,7 +70,7 @@
     'orient_solve','spin_step','singular_deg','max_tilt','spin_mode','spin_fixed','spin_offset','status_turn','max_refine','robot','base_frame','tool_frame','frame_mode','robot_samples','path_step','margin',
     'tbl_sx','tbl_sy','tbl_cx','tbl_cy','mat_t','mat_pad','tool_mesh','tool_mesh_units','tool_mesh_frame','printed_check','printed_margin','auto_spin',
     'tool_radius','cutter_len','cutter_radius','obstacles','tol','max_radius','min_radius','min_arc_points','refine_shift','spl_max_segment','corner_angle',
-    'default_feed','offset','fit_arcs','use_spl','name','mode','tool','base','abc','rapid_vel','max_vel','acc','cdis',
+    'default_feed','offset','fit_arcs','use_spl','name','mode','tool','base','abc','rapid_vel','max_vel','acc','cdis','tangent_deg','bridge_mm',
     'round_corners','max_block_segments','max_motions_per_file','block_approx','spindle_out','coolant_out','spindle_anout',
     'spindle_max_rpm','bco','advance','halt_tool_change','dwell_ms','start'];
 

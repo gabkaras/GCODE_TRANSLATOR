@@ -71,6 +71,8 @@ def build_parser() -> argparse.ArgumentParser:
     k.add_argument("--no-home-start", action="store_true", help="do not start the program with PTP HOME")
     k.add_argument("--no-home-end", action="store_true", help="do not end the program with PTP HOME")
     k.add_argument("--home-mode", choices=("xhome", "axes"), default="xhome", help="HOME as PTP XHOME ($CONFIG.DAT) or a literal axis position (--home-axes)")
+    k.add_argument("--tangent-deg", type=float, default=0.1, help="SLIN/SCIRC junctions in a SPLINE block kinked by more than this get an SPL bridge (KSS stops at non-tangential junctions; default 0.1)")
+    k.add_argument("--bridge-mm", type=float, default=3.0, help="length of the SPL bridge at a kinked junction, mm (default 3)")
     k.add_argument("--home-axes", default="", help="A1..A6 in deg for --home-mode axes (default: the robot model's home)")
     k.add_argument("--home-vel", type=float, default=100.0, help="PTP velocity for the HOME moves in %% (default 100)")
     k.add_argument("--krl-start", default="", help="file with user KRL lines inserted after the settings")
@@ -148,6 +150,7 @@ def run(argv: list[str] | None = None) -> int:
     kopts = KrlOptions(name=args.name or derive_name(args.input), mode=args.mode, tool=args.tool, base=args.base,
                        abc=tuple(args.abc), rapid_vel=args.rapid_vel, max_vel=args.max_vel, acc=args.acc,
                        cdis=args.cdis, corner_angle_deg=args.corner_angle, exact_corners=not args.round_corners,
+                       tangent_deg=args.tangent_deg, bridge_mm=args.bridge_mm,
                        max_block_segments=args.max_block_segments, max_motions_per_file=args.max_motions_per_file,
                        block_approx=not args.no_block_approx, spindle_out=args.spindle_out,
                        coolant_out=args.coolant_out, spindle_anout=args.spindle_anout, extruder_out=max(0, args.extruder_out),
@@ -205,6 +208,8 @@ def run(argv: list[str] | None = None) -> int:
                 kopts.workspaces.append({"name": z.name, "mode": z.mode, "scope": z.scope, "center": z.center.tolist(),
                                          "half": z.half.tolist(), "abc": [float(v) for v in rot_to_abc(z.rot)]})
     prog = write_krl(items, kopts, stats)
+    from .krl_lint import lint_files
+    stats.warnings.extend(lint_files(prog.files, kopts.tangent_deg))
     zone_res = []
     if zone_dicts and args.robot.lower() != "none" and robot_rep is not None:
         from .collision import check_zones, robot_capsules, zone_from_dict
