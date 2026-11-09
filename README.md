@@ -42,22 +42,39 @@ gcode2krl-gui --port 9000 --no-browser
 Lokalna aplikacja webowa bez żadnych zależności poza biblioteką standardową
 Pythona i numpy (działa offline, np. na komputerze przy robocie):
 
-* **krok 1 – Stanowisko** (pierwsze uruchomienie zaczyna tutaj): model
-  robota, pozycja HOME, narzędzie (TCP X Y Z, montaż dyszy A B C, model
-  STEP), podstawa do druku (położenie `$BASE` w układzie robota, także z 3
-  punktów; wymiary podstawy, grubość materiału), modele stołu i uchwytów;
-  ustawienia zostają w przeglądarce,
-* **krok 2 – Model → ścieżka**: upuść model STEP/STL/OBJ na pole w sekcji
-  *Slicer* (albo „Wgraj model…”), ustaw parametry i tryb warstw, „Pokrój i
-  tłumacz na KRL”; każdy parametr ma przycisk „?” z wyjaśnieniem; zakładka zakładka *Gotowy G-code* przyjmuje
-  *Gotowy G-code* przyjmuje plik z innego slicera / CAM (przeciągnij do okna
-  albo wybierz przykład),
-* **krok 3 – Program KRL**: łuki, program, orientacja i kolizje, prędkości,
-  ekstruder; wynik liczy się automatycznie po każdej zmianie opcji (suwak
-  tolerancji, tryb, orientacja…). Każda opcja, którą czyta serwer (translator,
-  writer KRL, raport robota, slicer), ma pole w GUI z przyciskiem „?”; w
-  plikach zostają tylko dane modeli robotów (JSON z oficjalnych danych KUKA) i
-  wgrane siatki,
+Praca idzie jak w każdym slicerze — cztery zakładki u góry okna:
+
+* **1 · Przygotowanie** (pierwsze uruchomienie zaczyna tutaj): stanowisko —
+  model robota, pozycja HOME, narzędzie (TCP X Y Z, montaż dyszy A B C, model
+  STEP), stół do druku (`$BASE` w narożniku blatu, także z 3 punktów; wymiary,
+  grubość materiału), strefy bezpieczeństwa, przeszkody, modele stołu i
+  uchwytów; wszystko można przeciągać uchwytami w 3D; ustawienia zostają w
+  przeglądarce,
+* **2 · Model**: upuść model STEP/STL/OBJ (albo „Wgraj model…”) — staje od
+  razu na środku stołu i jest rysowany w 3D; ułóż go: przeciągnij uchwyt nad
+  modelem albo wpisz X Y, obroty X Y Z, lustro X/Y/Z, skalę, „ułóż płasko” /
+  „min. nawisy” (automatyczna orientacja); kilka modeli = kilka kart „Modele
+  na stole” („rozmieść” ustawia je obok siebie). Niżej wszystkie parametry
+  slicera (każdy z „?”) i przycisk „Pokrój → symulacja”; zakładka *Gotowy
+  G-code* przyjmuje plik z innego slicera / CAM,
+* **3 · Cięcie**: symulacja pokrojonej i przetłumaczonej ścieżki — suwak
+  **warstwa** odsłania ścieżkę do wybranej wysokości (jak podgląd warstw w
+  slicerze), **▶** odtwarza ruch robota po ścieżce, a ścieżka nad dyszą jest
+  wtedy ukryta (postęp druku); podsumowanie krojenia (warstwy, czas,
+  materiał, nawisy), zasięgu i kolizji w panelu bocznym, zakładki *Kolizje*
+  i *Ostrzeżenia* nad widokiem, sekcja „Kontrola robota” (orientacja,
+  próbkowanie, prześwit, wydruk),
+* **4 · Kod**: program KRL z podświetlaniem, pobieranie `.src`/`.dat`, oraz
+  jego opcje: łuki, program (TOOL/BASE, A B C, własne linie), prędkości,
+  ekstruder, M-kody z CAM; wynik liczy się automatycznie po każdej zmianie.
+  Każda opcja, którą czyta serwer (translator, writer KRL, raport robota,
+  slicer), ma pole w GUI z przyciskiem „?”; w plikach zostają tylko dane modeli
+  robotów (JSON z oficjalnych danych KUKA) i wgrane siatki,
+
+![2 · Model: model ułożony na stole](docs/gui_step2.png)
+
+![3 · Cięcie: symulacja warstw i robota](docs/gui_step3.png)
+
 * kafelki: ruchy wejściowe / KRL, kompresja, maksymalna odchyłka (zielona,
   gdy mieści się w tolerancji), czasy parsera / dopasowania / generowania,
 * **podgląd 3D** na własnym rendererze WebGL: warstwy G-code wejściowy, G0,
@@ -79,7 +96,7 @@ Pythona i numpy (działa offline, np. na komputerze przy robocie):
   wielkimi literami z obrysem i poświatą, kafelki z niebieską krawędzią,
   chipy, teksturę siatki i logo (`web/brand/`), zdjęte z www.robco.technology.
 
-![zakładka KRL](docs/gui_krl.png)
+![4 · Kod: program KRL](docs/gui_step4.png)
 
 API JSON serwera (do własnej automatyzacji):
 
@@ -305,9 +322,9 @@ jak dotąd poza uchwytami.
 
 ### Model narzędzia (STEP) i druk planarny bez kolizji
 
-![model narzędzia w kroku 1](docs/gui_tool_step.png)
+![model narzędzia w zakładce Przygotowanie](docs/gui_tool_step.png)
 
-* **STEP/STL/OBJ ekstrudera** wgrywa się w kroku 1 („wgraj model narzędzia”);
+* **STEP/STL/OBJ ekstrudera** wgrywa się w zakładce „Przygotowanie” („wgraj model narzędzia”);
   jednostki i **położenie modelu w układzie kołnierza** (X Y Z A B C, bo pliki
   producenta rzadko mają początek w kołnierzu) ustawia się obok i widać od
   razu w podglądzie 3D na kołnierzu robota. CLI: `--tool-mesh`, `--tool-mesh-frame`.
@@ -334,11 +351,11 @@ literalna pozycja osi `PTP {A1 …, A6 …}`) z `BAS (#VEL_PTP, n)` — ten ruch
 zarazem dojazdem BCO — i kończy się `PTP XHOME` po wyłączeniu ekstrudera, przed
 własnymi liniami KRL. Oba ruchy PTP są sprawdzane pod kątem kolizji z
 interpolacją w osiach (dokładny midpoint = średnia kątów), wynik jest w pasku
-robota („HOME→start OK / koniec→HOME OK”) i w ostrzeżeniach. Opcje w kroku 1
+robota („HOME→start OK / koniec→HOME OK”) i w ostrzeżeniach. Opcje w zakładce „Przygotowanie”
 GUI i w CLI: `--no-home-start`, `--no-home-end`, `--home-mode axes
 --home-axes "0 -90 90 0 0 0"`, `--home-vel 50`.
 
-![krok 1: stanowisko](docs/gui_step1.png)
+![1 · Przygotowanie: stanowisko](docs/gui_step1.png)
 
 ### Orientacja narzędzia: dysza poza osią A6, obrót wokół dyszy, pochylenie
 

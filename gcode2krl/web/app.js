@@ -129,25 +129,40 @@
     state.fitted = false;
     translate();
   }
-  // ---- steps: 1 cell setup (robot, TCP, print bed, HOME) -> 2 model / path -> 3 KRL program
+  // ---- workflow tabs: 1 preparation (cell) -> 2 model (plater, slicer) -> 3 slicing (simulation) -> 4 code (KRL)
   let curStep = 1;
   let curSource = 'slicer';
-  const show = (sel, on) => $$(sel).forEach(el => el.classList.toggle('hidden', !on));
+  const STEP_NEXT = ['', 'Dalej: model →', 'Dalej: cięcie →', 'Dalej: kod →', ''];
+  function activateTab(name) {
+    $$('.tab').forEach(x => x.classList.toggle('active', x.dataset.tab === name));
+    $$('.pane').forEach(p => p.classList.toggle('active', p.id === 'pane-' + name));
+    if (name === 'view' && viewer) viewer.invalidate();
+    if (name === 'col') drawClearanceChart();
+  }
   function setStep(n, save) {
-    curStep = Math.max(1, Math.min(3, n));
-    $$('.step').forEach(b => b.classList.toggle('active', Number(b.dataset.step) === curStep));
-    show('#cell-setup', curStep === 1);
-    show('.src-tabs', curStep === 2);
-    $('#slicer').classList.toggle('hidden', !(curStep === 2 && curSource === 'slicer'));
-    $('#drop').classList.toggle('hidden', !(curStep === 2 && curSource === 'gcode'));
-    show('#sec-arcs, #sec-krl, #sec-robot, #sec-speeds, #sec-extruder, #sec-cam', curStep === 3);
-    show('.actions', curStep >= 2);
+    curStep = Math.max(1, Math.min(4, n));
+    for (let k = 1; k <= 4; k++) document.body.classList.toggle('step-' + k, k === curStep);
+    $$('.wstep').forEach(b => b.classList.toggle('active', Number(b.dataset.step) === curStep));
+    $('#slicer').classList.toggle('hidden', curSource !== 'slicer');
+    $('#drop').classList.toggle('hidden', curSource !== 'gcode');
     $('#btn-step-prev').classList.toggle('hidden', curStep === 1);
-    $('#btn-step-next').classList.toggle('hidden', curStep === 3);
-    $('#btn-step-next').textContent = curStep === 1 ? 'Dalej: model → ścieżka →' : 'Dalej: program KRL →';
+    $('#btn-step-next').classList.toggle('hidden', curStep === 4);
+    $('#btn-step-next').textContent = STEP_NEXT[curStep];
+    // the main area: the 3D view in 1-3 (plus collisions / warnings in 3), the program text in 4
+    const active = $('.tab.active');
+    if (curStep === 4) activateTab('krl');
+    else if (curStep !== 3 || !active || active.dataset.tab === 'krl') activateTab('view');
+    if (viewer) {
+      viewer.setGroupHidden('plater', curStep >= 3);   // models on the table: preparation and model steps
+      viewer.setGroupHidden('path', curStep < 3);      // the sliced / translated path: simulation
+      if (curStep < 3) { viewer.setZCut(null); }
+      viewer.invalidate();
+    }
+    if (curStep === 2) drawPlaterModels();
+    if (window.GIZMO) window.GIZMO.refresh();
     if (save) { try { localStorage.setItem('gcode2krl.step', String(curStep)); } catch (e) {} }
   }
-  // source of the path inside step 2: the slicer or a ready-made G-code file
+  // source of the path inside the model step: the slicer or a ready-made G-code file
   function setSource(src, save) {
     curSource = src;
     $$('.src-tab').forEach(b => b.classList.toggle('active', b.dataset.src === src));
@@ -155,16 +170,17 @@
     setStep(2, save);
   }
   $$('.src-tab').forEach(b => b.addEventListener('click', () => setSource(b.dataset.src, true)));
-  $$('.step').forEach(b => b.addEventListener('click', () => setStep(Number(b.dataset.step), true)));
+  $$('.wstep').forEach(b => b.addEventListener('click', () => setStep(Number(b.dataset.step), true)));
   $('#btn-step-next').addEventListener('click', () => setStep(curStep + 1, true));
   $('#btn-step-prev').addEventListener('click', () => setStep(curStep - 1, true));
   try { curSource = localStorage.getItem('gcode2krl.source') || 'slicer'; } catch (e) {}
   let savedStep = 1;
   try { savedStep = Number(localStorage.getItem('gcode2krl.step') || '1') || 1; } catch (e) {}
-  setStep(savedStep, false);
   $$('.src-tab').forEach(b => b.classList.toggle('active', b.dataset.src === curSource));
   function readFile(file) {
     setSource('gcode', true);
+    state.gotoSim = true;  // a new path: open the simulation once it is translated
+    state.sliceStats = null; state.slicePreview = null;
     const r = new FileReader();
     r.onload = () => setGcode(String(r.result), file.name);
     r.readAsText(file);
@@ -191,6 +207,7 @@
     if (e.target.value) setSource('gcode', true);
     const n = e.target.value; if (!n) return;
     const d = await (await fetch('/api/example/' + encodeURIComponent(n))).json();
+    state.gotoSim = true; state.sliceStats = null; state.slicePreview = null;
     setGcode(d.gcode, d.name);
     e.target.value = '';
   });
@@ -236,6 +253,7 @@
       state.result = data;
       showResult(data, performance.now() - t0);
       setStatus(`Gotowe w ${((performance.now() - t0) / 1000).toFixed(2)} s`, 'ok');
+      if (state.gotoSim) { state.gotoSim = false; setStep(3, true); }
     } catch (err) {
       setStatus('Błąd: ' + err.message, 'err');
     } finally {
@@ -300,16 +318,71 @@
           : L.key === 'zone_points' ? (data.robot ? data.robot.zone_points : '')
           : L.key === 'printed_points' ? (data.robot ? data.robot.printed_points : '') : p[L.key];
         const arr = L.kinds ? previewLayer(L) : decode(src);
-        viewer.setLayer(L.key, arr, L.color, { alpha: L.alpha, order: L.order, mode: L.mode, size: L.size, visible: $('#layer-' + L.key).checked });
+        viewer.setLayer(L.key, arr, L.color, { alpha: L.alpha, order: L.order, mode: L.mode, size: L.size, visible: $('#layer-' + L.key).checked, group: 'path' });
       }
       showRobot(data.robot);
       viewer.setBounds(p.bounds.min, p.bounds.max);
+      resetLayerCut(p.bounds);
       drawFrames();
       if (!state.fitted) { viewer.viewIso(); state.fitted = true; } else viewer.invalidate();
       updateAutoObstacles();
       const b = p.bounds;
       $('#bounds').textContent = `X ${fmt(b.min[0], 2)} … ${fmt(b.max[0], 2)}   Y ${fmt(b.min[1], 2)} … ${fmt(b.max[1], 2)}   Z ${fmt(b.min[2], 2)} … ${fmt(b.max[2], 2)} mm`;
     }
+    showSimSummary(data);
+  }
+  // ---- simulation summary (sidebar of the slicing step)
+  function showSimSummary(data) {
+    const host = $('#sim-summary'); if (!host) return;
+    const s = data.stats, r = data.robot, sl = state.sliceStats;
+    const rows = [];
+    if (sl) {
+      const modeTxt = { planar: 'płaskie', conical: 'stożkowe', bottom: 'konforemne (dół)', top: 'konforemne (góra)', multi: 'wielokierunkowe' }[sl.layer_mode] || sl.layer_mode;
+      rows.push(`<div><b>${sl.layers}</b> warstw (${modeTxt}${sl.min_layer_height && sl.max_layer_height && Math.abs(sl.max_layer_height - sl.min_layer_height) > 1e-6 ? `, ${sl.min_layer_height.toFixed(2)}–${sl.max_layer_height.toFixed(2)} mm` : ''}) · <b>${sl.paths}</b> ścieżek</div>`);
+      rows.push(`<div>ekstruzja <b>${(sl.extrusion_length / 1000).toFixed(1)} m</b> · przejazdy ${(sl.travel_length / 1000).toFixed(1)} m · czas ok. <b>${(sl.time_s / 60).toFixed(0)} min</b></div>`);
+      rows.push(`<div>materiał <b>${(sl.volume_mm3 / 1000).toFixed(0)} cm³</b> ≈ ${sl.mass_g.toFixed(0)} g${sl.support_volume > 0 ? ` · podpory ${(sl.support_volume / 1000).toFixed(0)} cm³` : ''}${sl.bridges ? ` · ${sl.bridges} mostów` : ''}</div>`);
+      if (sl.support_layers && !(sl.support_volume > 0)) rows.push(`<div class="warn">nawisy: ${sl.support_layers} warstw, ${(sl.support_area / 100).toFixed(0)} cm² wymaga podpór</div>`);
+    } else rows.push(`<div>G-code: <b>${state.filename || ''}</b> · ${fmt(s.input_moves)} ruchów wejściowych</div>`);
+    rows.push(`<div>KRL: <b>${fmt(s.motions_out)}</b> ruchów (SLIN ${fmt(s.lines_out)} · SCIRC ${fmt(s.arcs_out)} · SPL ${fmt(s.spl_points)}) · odchyłka ${fmt(s.max_dev, 3)} mm</div>`);
+    if (r) {
+      const col = r.collision || {};
+      rows.push(`<div class="${r.n_unreachable || r.n_limit ? 'bad' : 'ok'}">${r.n_unreachable ? `${r.n_unreachable} próbek poza zasięgiem` : 'zasięg OK'} · ${r.n_limit ? `${r.n_limit} poza limitami osi` : 'limity osi OK'}</div>`);
+      rows.push(`<div class="${col.n_collision ? 'bad' : (col.n_margin ? 'warn' : 'ok')}">${col.n_collision ? `${col.n_collision} kolizji` : 'brak kolizji'}${col.n_margin ? ` · ${col.n_margin} próbek poniżej prześwitu` : ''}${col.min_clearance !== null && col.min_clearance !== undefined ? ` · min. prześwit ${col.min_clearance.toFixed(1)} mm` : ''}</div>`);
+      if (r.printed && r.printed.n_collision) rows.push(`<div class="bad">${r.printed.n_collision} kolizji z wydrukowaną częścią (${r.printed.max_depth} mm)</div>`);
+    }
+    if (data.warnings && data.warnings.length) rows.push(`<div class="warn">${data.warnings.length} ostrzeżeń (zakładka „Ostrzeżenia”)</div>`);
+    host.innerHTML = rows.join('');
+  }
+  // ---- layer preview: clip the path above a height (like the layer slider of a slicer)
+  const cut = { zmin: 0, zmax: 1 };
+  function resetLayerCut(b) {
+    cut.zmin = b.min[2]; cut.zmax = Math.max(b.max[2], b.min[2] + 1e-3);
+    const el = $('#layer-cut'); if (el) el.value = 1000;
+    if (viewer) viewer.setZCut(null);
+    layerCutInfo(null);
+  }
+  function layerCutInfo(z) {
+    const el = $('#layer-cut-info'); if (!el) return;
+    const sl = state.sliceStats;
+    if (z === null) { el.textContent = sl ? `wszystkie ${sl.layers} warstw` : 'cała ścieżka'; return; }
+    const lh = sl && sl.layers ? (cut.zmax - cut.zmin) / Math.max(1, sl.layers - 1) : 0;
+    const k = lh > 0 ? Math.min(sl.layers, Math.max(1, Math.floor((z - cut.zmin) / lh + 1e-6) + 1)) : 0;
+    el.textContent = `Z ≤ ${z.toFixed(1)} mm` + (k ? ` · warstwa ${k} / ${sl.layers}` : '');
+  }
+  function applyLayerCut(f) {
+    if (!viewer) return;
+    if (f >= 0.9995) { viewer.setZCut(null); layerCutInfo(null); return; }
+    const z = cut.zmin + f * (cut.zmax - cut.zmin);
+    viewer.setZCut(z + 1e-3); layerCutInfo(z);
+  }
+  $('#layer-cut').addEventListener('input', e => { stopAnim(); applyLayerCut(Number(e.target.value) / 1000); });
+  // the robot animation drags the layer cut along: the path above the nozzle is not printed yet
+  function syncLayerCutToTcp() {
+    if (!viewer || !robotView || !robotView.tcp) return;
+    const z = robotView.tcp[2] + 0.5;
+    const f = Math.max(0, Math.min(1, (z - cut.zmin) / (cut.zmax - cut.zmin)));
+    $('#layer-cut').value = Math.round(f * 1000);
+    if (z >= cut.zmax) { viewer.setZCut(null); layerCutInfo(null); } else { viewer.setZCut(z); layerCutInfo(z); }
   }
 
   function showBreakdown(s) {
@@ -657,7 +730,8 @@
     try {
       setStatus(`Wgrywanie ${f.name}…`, 'busy');
       const meta = await uploadMesh(f); meshMeta[meta.id] = meta; refreshSliceMeshes(); $('#slice-mesh').value = meta.id; showModel(meta);
-      setStatus(`Model ${meta.name}: ${meta.tris} trójkątów, ${meta.min.map((v, i) => (meta.max[i] - v).toFixed(0)).join('×')} ${$('#slice-units').value} — ustaw parametry i pokrój`, 'ok');
+      addToPlater(meta);
+      setStatus(`Model ${meta.name}: ${meta.tris} trójkątów, ${meta.min.map((v, i) => (meta.max[i] - v).toFixed(0)).join('×')} ${$('#slice-units').value} — stoi na stole; ułóż go i pokrój`, 'ok');
     } catch (err) { setStatus('Błąd wgrywania: ' + err.message, 'err'); }
   }
   $('#slice-file').addEventListener('change', ev => { const f = ev.target.files[0]; ev.target.value = ''; if (f) uploadSliceModel(f); });
@@ -669,70 +743,148 @@
   modelDrop.addEventListener('drop', e => { e.preventDefault(); e.stopPropagation(); modelDrop.classList.remove('over'); const f = e.dataTransfer.files[0]; if (f) uploadSliceModel(f); });
   $('#slice-mesh').addEventListener('change', e => showModel(meshMeta[e.target.value] || null));
   $('#slice-units').addEventListener('change', () => { const m = meshMeta[$('#slice-mesh').value]; if (m) showModel(m); });
-  // ---- plater: several models with their own placement ---------------------
+  // ---- plater: the models on the table, each with its own placement ----------
   const PLATER_KEY = 'gcode2krl.plater';
-  function platerRows() { try { return JSON.parse(localStorage.getItem(PLATER_KEY) || '[]'); } catch (e) { return []; } }
+  const numv = (v, d = 0) => { const n = Number(v); return Number.isFinite(n) ? n : d; };
+  function normRow(r) {
+    return { mesh: String(r.mesh || ''), units: r.units || 'mm', name: r.name || r.mesh || 'model', x: numv(r.x), y: numv(r.y),
+      rx: numv(r.rx), ry: numv(r.ry), rz: numv(r.rz), scale: numv(r.scale, 1) > 0 ? numv(r.scale, 1) : 1, mx: !!r.mx, my: !!r.my, mz: !!r.mz };
+  }
+  function platerRows() { try { return JSON.parse(localStorage.getItem(PLATER_KEY) || '[]').map(normRow); } catch (e) { return []; } }
   function savePlater(rows) { try { localStorage.setItem(PLATER_KEY, JSON.stringify(rows)); } catch (e) {} renderPlater(); }
+  function modelSpan(r) { const m = meshMeta[r.mesh]; return m ? Math.max((m.max[0] - m.min[0]) * (UNIT_MM[r.units] || 1) * r.scale, 60) : 100; }
+  function addToPlater(meta) {
+    const rows = platerRows(); const tc = tableCentre();
+    const row = normRow({ mesh: meta.id, units: $('#slice-units').value, name: meta.name, x: tc[0], y: tc[1], scale: 1 });
+    if (rows.length) { const last = rows[rows.length - 1]; row.x = Math.round(last.x + modelSpan(last) / 2 + modelSpan(row) / 2 + 20); row.y = last.y; }
+    rows.push(row); savePlater(rows);
+  }
+  function arrangePlater() {
+    const rows = platerRows(); if (!rows.length) return;
+    const tc = tableCentre(); const gap = 20;
+    const total = rows.reduce((a, r) => a + modelSpan(r), 0) + gap * (rows.length - 1);
+    let x = tc[0] - total / 2;
+    for (const r of rows) { const w = modelSpan(r); r.x = Math.round(x + w / 2); r.y = Math.round(tc[1]); x += w + gap; }
+    savePlater(rows);
+  }
   function renderPlater() {
     const rows = platerRows(); const host = $('#plater-list'); host.innerHTML = '';
     $('#plater-count').textContent = rows.length ? `(${rows.length})` : '';
-    if (!rows.length) return;
-    const head = document.createElement('div'); head.className = 'pl-head';
-    ['model', 'X', 'Y', 'obrót Z', 'skala', ''].forEach(t => { const d = document.createElement('span'); d.textContent = t; head.appendChild(d); });
-    host.appendChild(head);
+    if (!rows.length) host.innerHTML = '<div class="muted" style="font-size:11.5px">Stół jest pusty: wgraj model STEP/STL/OBJ albo postaw wgrany z listy („+ na stół”).</div>';
     rows.forEach((r, i) => {
-      const div = document.createElement('div'); div.className = 'pl-row';
-      const nm = document.createElement('span'); nm.className = 'pl-name'; nm.title = r.name; nm.textContent = r.name; div.appendChild(nm);
-      for (const k of ['x', 'y', 'rz', 'scale']) {
-        const inp = document.createElement('input'); inp.type = 'number'; inp.value = r[k]; inp.step = k === 'scale' ? 0.1 : (k === 'rz' ? 15 : 10);
-        inp.addEventListener('change', () => { const rs = platerRows(); rs[i][k] = Number(inp.value) || (k === 'scale' ? 1 : 0); savePlater(rs); });
-        div.appendChild(inp);
-      }
-      const del = document.createElement('button'); del.type = 'button'; del.className = 'mini ghost'; del.textContent = '×'; del.title = 'usuń ze stołu';
-      del.addEventListener('click', () => { const rs = platerRows(); rs.splice(i, 1); savePlater(rs); });
-      div.appendChild(del);
-      host.appendChild(div);
+      const card = document.createElement('div'); card.className = 'pl-card';
+      const meta = meshMeta[r.mesh];
+      const dims = meta ? meta.min.map((v, k) => ((meta.max[k] - v) * (UNIT_MM[r.units] || 1) * r.scale).toFixed(0)).join(' × ') + ' mm' : '';
+      card.innerHTML = `<div class="pl-title"><b title="${esc(r.mesh)}">${esc(r.name)}</b><span class="muted">${dims}</span><button type="button" class="mini ghost" data-k="del" title="zdejmij ze stołu">×</button></div>
+        <div class="pl-grid">
+          <label title="środek obrysu modelu w bazie stołu">X<input type="number" step="10" data-k="x" value="${r.x}"></label><label>Y<input type="number" step="10" data-k="y" value="${r.y}"></label><label title="jednorodna skala (0.001 dla modelu w metrach)">skala<input type="number" step="0.1" min="0.001" data-k="scale" value="${r.scale}"></label>
+          <label title="obrót wokół X stołu [°]">obr. X<input type="number" step="15" data-k="rx" value="${r.rx}"></label><label title="obrót wokół Y stołu [°]">obr. Y<input type="number" step="15" data-k="ry" value="${r.ry}"></label><label title="obrót wokół osi pionowej [°]">obr. Z<input type="number" step="15" data-k="rz" value="${r.rz}"></label>
+        </div>
+        <div class="pl-row2"><span class="muted">lustro</span><label title="odbicie względem płaszczyzny YZ"><input type="checkbox" data-k="mx" ${r.mx ? 'checked' : ''}>X</label><label title="odbicie względem płaszczyzny XZ"><input type="checkbox" data-k="my" ${r.my ? 'checked' : ''}>Y</label><label title="odbicie względem płaszczyzny XY"><input type="checkbox" data-k="mz" ${r.mz ? 'checked' : ''}>Z</label>
+          <span class="grow"></span><button type="button" class="mini" data-k="flat" title="największa płaska ścianka bryły na stół">ułóż płasko</button><button type="button" class="mini" data-k="minov" title="orientacja o najmniejszej powierzchni nawisów">min. nawisy</button><button type="button" class="mini ghost" data-k="zero" title="zeruj obroty, lustro i skalę">zeruj</button><button type="button" class="mini ghost" data-k="center" title="postaw na środku stołu">środek</button></div>`;
+      card.querySelectorAll('input').forEach(inp => inp.addEventListener('change', () => {
+        const rs = platerRows(); const k = inp.dataset.k;
+        if (inp.type === 'checkbox') rs[i][k] = inp.checked; else rs[i][k] = k === 'scale' ? (Number(inp.value) > 0 ? Number(inp.value) : 1) : (Number(inp.value) || 0);
+        savePlater(rs);
+      }));
+      card.querySelectorAll('button').forEach(b => b.addEventListener('click', () => {
+        const rs = platerRows(); const k = b.dataset.k;
+        if (k === 'del') { rs.splice(i, 1); savePlater(rs); return; }
+        if (k === 'zero') { Object.assign(rs[i], { rx: 0, ry: 0, rz: 0, mx: false, my: false, mz: false, scale: 1 }); savePlater(rs); return; }
+        if (k === 'center') { const tc = tableCentre(); rs[i].x = Math.round(tc[0]); rs[i].y = Math.round(tc[1]); savePlater(rs); return; }
+        if (k === 'flat' || k === 'minov') orientModel(i, k === 'flat' ? 'lay_flat' : 'min_overhang');
+      }));
+      host.appendChild(card);
     });
+    drawPlaterModels();
+    if (window.GIZMO) window.GIZMO.refresh();
+  }
+  async function orientModel(i, mode) {
+    const rows = platerRows(); const r = rows[i]; if (!r) return;
+    try {
+      setStatus('Liczenie orientacji…', 'busy');
+      const res = await fetch('/api/orient', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mesh: r.mesh, units: r.units, mode, overhang: sliceParams().overhang_max, deflection: Number(($('#step-deflection') || {}).value) || 0.2 }) });
+      const d = await res.json();
+      if (!res.ok || d.error) throw new Error(d.error || res.statusText);
+      const rs = platerRows(); if (!rs[i]) return;
+      rs[i].rx = +d.rot[0].toFixed(2); rs[i].ry = +d.rot[1].toFixed(2); rs[i].rz = +d.rot[2].toFixed(2);
+      savePlater(rs);
+      setStatus(`${r.name}: obrót X ${d.rot[0].toFixed(1)}° Y ${d.rot[1].toFixed(1)}° Z ${d.rot[2].toFixed(1)}° · nawisy ${(d.overhang_before / 100).toFixed(0)} → ${(d.overhang_after / 100).toFixed(0)} cm² · styk ze stołem ${(d.contact_area / 100).toFixed(0)} cm² · wysokość ${d.height.toFixed(0)} mm`, 'ok');
+    } catch (err) { setStatus('Błąd orientacji: ' + err.message, 'err'); }
   }
   $('#plater-add').addEventListener('click', () => {
     const ref = $('#slice-mesh').value; if (!ref) { setStatus('Najpierw wybierz lub wgraj model', 'err'); return; }
-    const m = meshMeta[ref]; const rows = platerRows();
-    const span = m ? Math.max(m.max[0] - m.min[0], 60) : 100;
-    const tc = tableCentre();
-    rows.push({ mesh: ref, units: $('#slice-units').value, name: m ? m.name : ref, x: rows.length ? Math.round(rows[rows.length - 1].x + span + 20) : Math.round(tc[0]), y: Math.round(tc[1]), rz: 0, scale: 1 });
-    savePlater(rows);
+    addToPlater(meshMeta[ref] || { id: ref, name: ref });
   });
+  $('#plater-arrange').addEventListener('click', arrangePlater);
+  $('#plater-clear').addEventListener('click', () => savePlater([]));
+  // ---- models drawn on the table (the same placement maths as the slicer's Placement)
+  const modelGeomCache = new Map();
+  function modelGeom(id, units) {
+    const key = id + '@' + units;
+    if (!modelGeomCache.has(key)) modelGeomCache.set(key, fetch('/api/mesh/' + encodeURIComponent(id) + '?units=' + encodeURIComponent(units)).then(r => r.json()).then(g => {
+      if (!g || g.error) throw new Error(g ? g.error : 'brak geometrii');
+      return { positions: decode(g.positions), normals: decode(g.normals) };
+    }).catch(err => { modelGeomCache.delete(key); throw err; }));
+    return modelGeomCache.get(key);
+  }
+  // mirror -> scale -> rotation X, Y, Z (fixed axes); then the XY bounding-box centre goes to (x, y) and the bottom to Z = 0
+  function placementMatrix(pos, r) {
+    const d = Math.PI / 180, a = r.rx * d, b = r.ry * d, c = r.rz * d;
+    const ca = Math.cos(a), sa = Math.sin(a), cb = Math.cos(b), sb = Math.sin(b), cc = Math.cos(c), sc = Math.sin(c);
+    const R = [cc * cb, cc * sb * sa - sc * ca, cc * sb * ca + sc * sa, sc * cb, sc * sb * sa + cc * ca, sc * sb * ca - cc * sa, -sb, cb * sa, cb * ca];
+    const sx = (r.mx ? -1 : 1) * r.scale, sy = (r.my ? -1 : 1) * r.scale, sz = (r.mz ? -1 : 1) * r.scale;
+    const m = [R[0] * sx, R[1] * sy, R[2] * sz, R[3] * sx, R[4] * sy, R[5] * sz, R[6] * sx, R[7] * sy, R[8] * sz];
+    let minx = Infinity, maxx = -Infinity, miny = Infinity, maxy = -Infinity, minz = Infinity, maxz = -Infinity;
+    for (let i = 0; i < pos.length; i += 3) {
+      const x = pos[i], y = pos[i + 1], z = pos[i + 2];
+      const X = m[0] * x + m[1] * y + m[2] * z, Y = m[3] * x + m[4] * y + m[5] * z, Z = m[6] * x + m[7] * y + m[8] * z;
+      if (X < minx) minx = X; if (X > maxx) maxx = X; if (Y < miny) miny = Y; if (Y > maxy) maxy = Y; if (Z < minz) minz = Z; if (Z > maxz) maxz = Z;
+    }
+    if (!Number.isFinite(minx)) { minx = maxx = miny = maxy = minz = maxz = 0; }
+    const t = [r.x - (minx + maxx) / 2, r.y - (miny + maxy) / 2, -minz];
+    const mat = new Float32Array([m[0], m[3], m[6], 0, m[1], m[4], m[7], 0, m[2], m[5], m[8], 0, t[0], t[1], t[2], 1]);
+    const flip = ((r.mx ? 1 : 0) + (r.my ? 1 : 0) + (r.mz ? 1 : 0)) % 2 === 1;
+    return { mat, flip, size: [maxx - minx, maxy - miny, maxz - minz] };
+  }
+  const platerDrawn = new Map();   // mesh name -> geometry key
+  const platerSizes = [];          // placed size of each model (for the drag handle height)
+  let platerGen = 0;
+  async function drawPlaterModels() {
+    if (!viewer) return;
+    const rows = platerRows(); const gen = ++platerGen;
+    for (const name of [...platerDrawn.keys()]) if (Number(name.slice(2)) >= rows.length) { viewer.removeMesh(name); platerDrawn.delete(name); }
+    platerSizes.length = rows.length;
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i]; const key = r.mesh + '@' + r.units; const name = 'pm' + i;
+      let geom;
+      try { geom = await modelGeom(r.mesh, r.units); } catch (e) { continue; }
+      if (gen !== platerGen) return;
+      const P = placementMatrix(geom.positions, r);
+      platerSizes[i] = P.size;
+      viewer.setMesh(name, platerDrawn.get(name) === key ? null : geom, 'var(--c-model)', P.mat, { group: 'plater', flip: P.flip });
+      platerDrawn.set(name, key);
+    }
+    viewer.setGroupHidden('plater', curStep >= 3);
+    if (window.GIZMO) window.GIZMO.refresh();
+  }
+  function modelTop(i) { const sz = platerSizes[i]; return sz ? sz[2] : 0; }
   renderPlater();
-  // ---- orientation actions from the slicer form ---------------------------
-  window.addEventListener('slicer-action', async ev => {
-    const act = ev.detail; const F = window.SLICER_FORM;
-    if (act === 'orient_reset') { F.setValue('rot_x', 0); F.setValue('rot_y', 0); F.setValue('rot_z', 0); F.setValue('auto_orient', 'none'); F.save(); F.updateVisibility(); setStatus('Obroty wyzerowane', 'ok'); return; }
-    const ref = $('#slice-mesh').value; if (!ref) { setStatus('Najpierw wybierz lub wgraj model', 'err'); return; }
-    try {
-      setStatus('Liczenie orientacji…', 'busy');
-      const mode = act === 'orient_flat' ? 'lay_flat' : 'min_overhang';
-      const res = await fetch('/api/orient', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mesh: ref, units: $('#slice-units').value, mode, overhang: F.params().overhang_max, deflection: Number(($('#step-deflection') || {}).value) || 0.2 }) });
-      const d = await res.json();
-      if (!res.ok || d.error) throw new Error(d.error || res.statusText);
-      F.setValue('rot_x', +d.rot[0].toFixed(2)); F.setValue('rot_y', +d.rot[1].toFixed(2)); F.setValue('rot_z', +d.rot[2].toFixed(2)); F.setValue('auto_orient', 'none'); F.save(); F.updateVisibility();
-      setStatus(`Orientacja: obrót X ${d.rot[0].toFixed(1)}° Y ${d.rot[1].toFixed(1)}° Z ${d.rot[2].toFixed(1)}° · nawisy ${(d.overhang_before / 100).toFixed(0)} → ${(d.overhang_after / 100).toFixed(0)} cm² · styk ze stołem ${(d.contact_area / 100).toFixed(0)} cm² · wysokość ${d.height.toFixed(0)} mm`, 'ok');
-    } catch (err) { setStatus('Błąd orientacji: ' + err.message, 'err'); }
-  });
   $('#btn-slice').addEventListener('click', async () => {
-    const ref = $('#slice-mesh').value; if (!ref && !platerRows().length) { setStatus('Wybierz model do pokrojenia', 'err'); return; }
+    const rows = platerRows();
+    if (!rows.length) { setStatus('Stół jest pusty: wgraj model albo postaw wgrany na stole', 'err'); return; }
     setStatus('Krojenie…', 'busy'); $('#btn-slice').disabled = true;
     try {
       const params = sliceParams();
-      const tc = tableCentre();
-      const body = { mesh: ref, units: $('#slice-units').value, params, deflection: Number(($('#step-deflection') || {}).value) || 0.2, offset: [tc[0], tc[1], 0] };
-      const rows = platerRows();
-      if (rows.length) body.models = rows.map(r => ({ mesh: r.mesh, units: r.units, name: r.name, offset: [r.x, r.y, 0], rot: [0, 0, r.rz], scale: r.scale }));
+      const body = { params, deflection: Number(($('#step-deflection') || {}).value) || 0.2 };
+      body.models = rows.map(r => ({ mesh: r.mesh, units: r.units, name: r.name, offset: [r.x, r.y, 0], rot: [r.rx, r.ry, r.rz], scale: r.scale, mirror: [r.mx, r.my, r.mz] }));
       if (params.layer_mode === 'multi') { body.segments = window.SLICER_FORM.extras().segments; params.layer_mode = 'planar'; if (!body.segments.trim()) throw new Error('tryb wielokierunkowy wymaga definicji segmentów'); }
       const res = await fetch('/api/slice', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       const d = await res.json();
       if (!res.ok || d.error) throw new Error(d.error || res.statusText);
       const st = d.stats;
       state.slicePreview = d.preview || null;
+      state.sliceStats = st; state.gotoSim = true;
       const modeTxt = { planar: 'płaskie', conical: 'stożkowe', bottom: 'konforemne (dół)', top: 'konforemne (góra)', multi: 'wielokierunkowe' }[st.layer_mode] || st.layer_mode;
       const hTxt = st.min_layer_height && st.max_layer_height && Math.abs(st.max_layer_height - st.min_layer_height) > 1e-6 ? ` (${st.min_layer_height.toFixed(2)}–${st.max_layer_height.toFixed(2)} mm)` : '';
       const bt = st.by_type || {};
@@ -770,6 +922,7 @@
     if (!R) { robotView.setVisible(false); $('#joints').classList.add('hidden'); return; }
     if (!robotView.model || robotView.model.key !== key) {
       robotView.setModel(R, null); buildJointRows(R);
+      applyFrames();      // the scene transform first, so that the cell fit is centred on the real cell
       showCellPreview();
       if (R.has_mesh) fetch('/api/robot_mesh/' + key).then(r => r.json()).then(m => { if (robotView.model && robotView.model.key === key) { robotView.setModel(R, m); applyFrames(); } }).catch(() => {});
       const src = $('#robot-sources');
@@ -857,7 +1010,8 @@
     previewCell();
     const bf = parse6('#opt_base_frame', [1400, 0, 500, 0, 0, 0]);
     const sx = Number($('#tbl_sx').value) || 800, sy = Number($('#tbl_sy').value) || 800;
-    viewer.setBounds([Math.min(-sx / 2, -bf[0] - 300), -Math.max(sy / 2, 600), -bf[2] - 50], [sx / 2 + 100, Math.max(sy / 2, 600), 1500 - bf[2]]);
+    // the table spans 0..sx x 0..sy in the base frame; the robot stands at (-bf.x, -bf.y) of it
+    viewer.setBounds([Math.min(-100, -bf[0] - 400), Math.min(-100, -bf[1] - 700), -bf[2] - 50], [sx + 100, Math.max(sy + 100, -bf[1] + 700), 1700 - bf[2]]);
     viewer.viewIso();
     state.fitted = true;
   }
@@ -940,7 +1094,7 @@
       const tr = document.createElement('tr');
       tr.className = p.min_clearance <= 0 ? 'bad' : (p.min_clearance < col.margin ? 'warn' : '');
       tr.innerHTML = `<td>${p.a}</td><td>${p.b}</td><td>${p.kind === 'self' ? 'autokolizja' : 'przeszkoda'}</td><td class="num">${p.min_clearance.toFixed(1)} mm</td><td class="num">${p.n_collision}</td><td class="num">${p.n_margin}</td><td class="num">${p.argmin + 1}</td>`;
-      tr.addEventListener('click', () => { stopAnim(); anim.pos = p.argmin; poseAt(anim.pos); $$('.tab')[0].click(); });
+      tr.addEventListener('click', () => { stopAnim(); anim.pos = p.argmin; poseAt(anim.pos, true); activateTab('view'); });
       tb.appendChild(tr);
     }
     const notes = $('#col-notes');
@@ -990,7 +1144,7 @@
     const r = e.target.getBoundingClientRect(); const f = (e.clientX - r.left - 44) / (r.width - 54);
     stopAnim(); anim.pos = Math.max(0, Math.min(anim.n - 1, Math.round(f * (anim.n - 1)))); poseAt(anim.pos); drawClearanceChart();
   });
-  function poseAt(x) {
+  function poseAt(x, sync) {
     if (!anim.joints || !anim.n) return;
     x = Math.max(0, Math.min(anim.n - 1, x));
     let i = Math.floor(x), f = x - i;
@@ -1003,6 +1157,7 @@
     }
     setPose(q, `ścieżka ${Math.round(x) + 1} / ${anim.n}` + (!ok0 ? ' · poza zasięgiem' : ''));
     $('#anim').value = x;
+    if (sync) syncLayerCutToTcp();
     const cn = $('#clear-now');
     if (colData) {
       const c = colData.clearance[i];
@@ -1020,13 +1175,13 @@
     const dt = Math.min(0.1, (ts - anim.last) / 1000); anim.last = ts;
     anim.pos += dt * Number($('#anim-speed').value);
     if (anim.pos >= anim.n - 1) anim.pos = 0;
-    poseAt(anim.pos);
+    poseAt(anim.pos, true);
     anim.raf = requestAnimationFrame(tick);
   }
   function stopAnim() { anim.playing = false; $('#btn-play').textContent = '▶'; if (anim.raf) cancelAnimationFrame(anim.raf); }
   function startAnim() { if (!anim.n) return; anim.playing = true; anim.last = performance.now(); $('#btn-play').textContent = '❚❚'; anim.raf = requestAnimationFrame(tick); }
   $('#btn-play').addEventListener('click', () => anim.playing ? stopAnim() : startAnim());
-  $('#anim').addEventListener('input', e => { stopAnim(); anim.pos = Number(e.target.value); poseAt(anim.pos); });
+  $('#anim').addEventListener('input', e => { stopAnim(); anim.pos = Number(e.target.value); poseAt(anim.pos, true); });
   $('#show-robot').addEventListener('change', e => robotView && robotView.setVisible(e.target.checked));
   $('#show-reach').addEventListener('change', e => robotView && robotView.setReachVisible(e.target.checked));
   $('#show-obstacles').addEventListener('change', e => robotView && robotView.setObstaclesVisible(e.target.checked));
@@ -1040,12 +1195,7 @@
   });
 
   // ------------------------------------------------------------------- tabs
-  $$('.tab').forEach(t => t.addEventListener('click', () => {
-    $$('.tab').forEach(x => x.classList.toggle('active', x === t));
-    $$('.pane').forEach(p => p.classList.toggle('active', p.id === 'pane-' + t.dataset.tab));
-    if (t.dataset.tab === 'view' && viewer) viewer.invalidate();
-    if (t.dataset.tab === 'col') drawClearanceChart();
-  }));
+  $$('.tab').forEach(t => t.addEventListener('click', () => activateTab(t.dataset.tab)));
 
   // ----------------------------------------------------------------- viewer UI
   const legend = $('#legend');
@@ -1084,6 +1234,7 @@
   $('#auto').addEventListener('change', e => { state.auto = e.target.checked; });
 
   loadOptions();
+  setStep(savedStep, false);
   $('#opt_tol_range').value = $('#opt_tol').value;
   syncFramesFromOptions();
   robotsReady.then(() => { loadOptions(); syncFramesFromOptions(); applyTableAnchor(); updateRobotModel(); updateAutoObstacles(); refreshMeshMeta(); updateToolMeshInfo(); });
@@ -1098,5 +1249,6 @@
     get viewer() { return viewer; }, get robotView() { return robotView; }, state,
     parse6, kukaFrame, invert, setFrameFields, applyFrames, updateAutoObstacles, platerRows, savePlater, saveOptions, scheduleAuto,
     previewCell, localObstacles, localZones, tableAnchor, applyTableAnchor, ANCHOR_SIGN, tableCentre,
+    modelTop, drawPlaterModels, step: () => curStep,
   };
 })();

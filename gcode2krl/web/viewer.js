@@ -6,14 +6,21 @@ const VS = `
 attribute vec3 aPos;
 uniform mat4 uMVP;
 uniform float uPointSize;
+varying float vZ;
 void main() {
   gl_Position = uMVP * vec4(aPos, 1.0);
   gl_PointSize = uPointSize;
+  vZ = aPos.z;
 }`;
 const FS = `
 precision mediump float;
 uniform vec4 uColor;
-void main() { gl_FragColor = uColor; }`;
+uniform float uZCut;
+varying float vZ;
+void main() {
+  if (vZ > uZCut) discard;  // layer preview: everything above the cut height is hidden
+  gl_FragColor = uColor;
+}`;
 const MVS = `
 attribute vec3 aPos;
 attribute vec3 aNormal;
@@ -105,6 +112,9 @@ class PathViewer {
     this.uMVP = gl.getUniformLocation(this.prog, 'uMVP');
     this.uColor = gl.getUniformLocation(this.prog, 'uColor');
     this.uPointSize = gl.getUniformLocation(this.prog, 'uPointSize');
+    this.uZCut = gl.getUniformLocation(this.prog, 'uZCut');
+    this.zCut = Infinity;          // layers of the 'path' group are clipped above this data-frame Z
+    this.hiddenGroups = new Set(); // groups switched off by the workflow step (independent of per-layer visibility)
     this.mprog = this._program(MVS, MFS);
     this.m = {
       aPos: gl.getAttribLocation(this.mprog, 'aPos'), aNormal: gl.getAttribLocation(this.mprog, 'aNormal'),
@@ -200,10 +210,16 @@ class PathViewer {
     if (color) { M.color = typeof color === 'string' ? hexToRgba(color, opts.alpha) : color; M.cssColor = typeof color === 'string' ? color : null; M.alpha = opts.alpha; }
     if (model) M.model = model;
     if (opts.group) M.group = opts.group;
+    if (opts.flip !== undefined) M.flip = !!opts.flip;  // mirrored model: the winding is reversed
     if (opts.visible !== undefined) M.visible = opts.visible;
     this.invalidate();
   }
   setMeshTransform(name, model) { const M = this.meshes.get(name); if (M) { M.model = model; this.invalidate(); } }
+  removeMesh(name) { const M = this.meshes.get(name); if (M) { this.gl.deleteBuffer(M.pbuf); this.gl.deleteBuffer(M.nbuf); this.meshes.delete(name); this.invalidate(); } }
+  /** Hide / show a whole group without touching the per-layer visibility flags. */
+  setGroupHidden(group, hidden) { if (hidden) this.hiddenGroups.add(group); else this.hiddenGroups.delete(group); this.invalidate(); }
+  /** Layer preview: clip the 'path' group above z (data frame); Infinity shows everything. */
+  setZCut(z) { this.zCut = (z === null || z === undefined) ? Infinity : z; this.invalidate(); }
   setGroupVisible(group, v) {
     for (const M of this.meshes.values()) if (M.group === group) M.visible = v;
     for (const [n, L] of this.layers) if (L.group === group) L.visible = v;
@@ -336,7 +352,8 @@ class PathViewer {
     gl.enable(gl.DEPTH_TEST);
     gl.depthFunc(gl.LEQUAL);
     const mvp = M4.mul(this._mvp(), this.scene);
-    const meshes = [...this.meshes.values()].filter(M => M.visible && M.count > 0 && M.model)
+    const hid = this.hiddenGroups;
+    const meshes = [...this.meshes.values()].filter(M => M.visible && M.count > 0 && M.model && !hid.has(M.group))
       .sort((a, b) => (a.color[3] < 1 ? 1 : 0) - (b.color[3] < 1 ? 1 : 0));
     if (meshes.length) {
       gl.useProgram(this.mprog);
@@ -348,7 +365,7 @@ class PathViewer {
       for (const M of meshes) {
         const translucent = M.color[3] < 1;
         gl.depthMask(!translucent);
-        if (translucent) gl.disable(gl.CULL_FACE); else gl.enable(gl.CULL_FACE);
+        if (translucent) gl.disable(gl.CULL_FACE); else { gl.enable(gl.CULL_FACE); gl.cullFace(M.flip ? gl.FRONT : gl.BACK); }
         gl.bindBuffer(gl.ARRAY_BUFFER, M.pbuf);
         gl.enableVertexAttribArray(this.m.aPos);
         gl.vertexAttribPointer(this.m.aPos, 3, gl.FLOAT, false, 0, 0);
@@ -365,11 +382,13 @@ class PathViewer {
     }
     gl.useProgram(this.prog);
     gl.uniformMatrix4fv(this.uMVP, false, mvp);
-    const layers = [...this.layers.values()].filter(L => L.visible && L.count > 0).sort((a, b) => a.order - b.order);
+    const layers = [...this.layers.values()].filter(L => L.visible && L.count > 0 && !hid.has(L.group)).sort((a, b) => a.order - b.order);
     const mvpWorld = this._mvp();
     let worldSet = false;
+    const cut = Number.isFinite(this.zCut) ? this.zCut : 1e9;
     for (const L of layers) {
       if (L.world !== worldSet) { gl.uniformMatrix4fv(this.uMVP, false, L.world ? mvpWorld : mvp); worldSet = !!L.world; }
+      gl.uniform1f(this.uZCut, L.group === 'path' ? cut : 1e9);
       gl.bindBuffer(gl.ARRAY_BUFFER, L.buf);
       gl.enableVertexAttribArray(this.aPos);
       gl.vertexAttribPointer(this.aPos, 3, gl.FLOAT, false, 0, 0);

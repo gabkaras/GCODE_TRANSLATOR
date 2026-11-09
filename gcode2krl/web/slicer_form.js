@@ -10,17 +10,8 @@
   const A = (k, label, help, buttons) => ({ k, label, help, type: 'actions', buttons, extra: true });
 
   const GROUPS = [
-    { id: 'model', title: 'Model: położenie i orientacja', open: true, fields: [
-      N('rot_x', 'Obrót X', ['Obrót modelu', 'Obrót wokół osi X, Y i Z stołu (w tej kolejności, stopnie). Po obrocie model jest stawiany na Z = 0 i centrowany.'], { unit: '°', step: 15, def: 0 }),
-      N('rot_y', 'Obrót Y', ['Obrót Y', 'Obrót wokół osi Y stołu.'], { unit: '°', step: 15, def: 0 }),
-      N('rot_z', 'Obrót Z', ['Obrót Z', 'Obrót wokół osi pionowej — ustawia model względem robota (np. długim bokiem wzdłuż X bazy).'], { unit: '°', step: 15, def: 0 }),
-      N('scale', 'Skala', ['Skala', 'Jednorodna skala modelu (1 = wymiary z pliku; 0.001 dla modelu w metrach).'], { unit: '×', step: 0.1, min: 0.001, def: 1 }),
-      C('mirror_x', 'Lustro X', ['Lustro', 'Odbicie modelu względem płaszczyzny YZ / XZ / XY; orientacja ścianek jest naprawiana automatycznie.'], { def: false }),
-      C('mirror_y', 'Lustro Y', ['Lustro Y', 'Odbicie względem płaszczyzny XZ.'], { def: false }),
-      C('mirror_z', 'Lustro Z', ['Lustro Z', 'Odbicie względem płaszczyzny XY (do góry nogami).'], { def: false }),
-      S('auto_orient', 'Automatyczna orientacja', ['Automatyczna orientacja', 'Brak: obroty jak wyżej. Ułóż płasko: największa płaska ścianka bryły na stole. Minimalne nawisy: orientacja spośród ścianek otoczki o najmniejszej powierzchni wymagającej podpór (przy równych: większy styk ze stołem, mniejsza wysokość). Zastępuje ręczne obroty przy każdym krojeniu; przyciski niżej wpisują wynik do pól na stałe.'], [['none', 'brak (obroty ręczne)'], ['lay_flat', 'ułóż płasko'], ['min_overhang', 'minimalne nawisy']], { def: 'none' }),
-      A('orient_actions', 'Oblicz orientację', ['Oblicz orientację', 'Liczy orientację wybranego modelu na serwerze i wpisuje obroty do pól X Y Z (można je potem poprawić ręcznie).'], [['orient_flat', 'ułóż płasko'], ['orient_min', 'min. nawisy'], ['orient_reset', 'zeruj']]),
-      S('print_sequence', 'Kilka modeli', ['Kolejność drukowania', 'Gdy na stole jest kilka modeli (lista „Modele na stole”): warstwa po warstwie — wszystkie razem, jak jeden obiekt; obiekt po obiekcie — każdy model dokończony przed następnym (sprawdź prześwit uchwytu obok gotowych obiektów; raport kolizji nie zna wydrukowanego materiału).'], [['all', 'warstwa po warstwie'], ['sequential', 'obiekt po obiekcie']], { def: 'all' }),
+    { id: 'model', title: 'Modele na stole: kolejność', open: false, fields: [
+      S('print_sequence', 'Kilka modeli', ['Kolejność drukowania', 'Gdy na stole jest kilka modeli: warstwa po warstwie — wszystkie razem, jak jeden obiekt; obiekt po obiekcie — każdy model dokończony przed następnym (sprawdź prześwit uchwytu obok gotowych obiektów; raport kolizji nie zna wydrukowanego materiału). Położenie, obroty, lustro i skalę każdego modelu ustawia się na liście „Modele na stole” albo przeciągając model w podglądzie 3D.'], [['all', 'warstwa po warstwie'], ['sequential', 'obiekt po obiekcie']], { def: 'all' }),
     ] },
     { id: 'layers', title: 'Warstwy', open: false, fields: [
       N('layer_height', 'Wysokość warstwy', ['Wysokość warstwy', 'Odstęp między kolejnymi warstwami. Dla ekstruzji robotem typowo 1–3 mm przy dyszy 3–6 mm; mniejsza = dokładniej i wolniej.'], { unit: 'mm', step: 0.5, min: 0.05, def: 2 }),
@@ -151,7 +142,6 @@
     ] },
     { id: 'misc', title: 'Inne', fields: [
       C('comments', 'Komentarze ;TYPE / ;LAYER w ścieżce', ['Komentarze', 'Zapisuje ;LAYER, ;Z, ;HEIGHT i ;TYPE w eksportowanej ścieżce G-code (czytelność). Własne linie KRL ustawia się w sekcji „Program KRL”.'], { def: true }),
-      C('origin_center', 'Ustaw model na środku stołu', ['Wyśrodkowanie', 'Przesuwa model tak, aby środek jego obrysu XY był na środku blatu (w bazie $BASE: długość/2, szerokość/2 – baza leży w narożniku stołu); wyłącz, żeby zachować współrzędne XY z pliku. Modele z platera mają pozycje podane w platerze.'], { def: true }),
     ] },
   ];
 

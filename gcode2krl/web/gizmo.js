@@ -211,9 +211,10 @@
       push({ id: 'obs' + i, kind: 'obstacle', pos: c, plane: 'xy', size: 9, labelled: true, label: `przeszkoda ${o.name} ${inp('X', o.c[0], `obs:${i}:c0`)}${inp('Y', o.c[1], `obs:${i}:c1`)}${inp('Z', o.c[2], `obs:${i}:c2`)} ${inp('dł.', o.s[0], `obs:${i}:s0`)}${inp('szer.', o.s[1], `obs:${i}:s1`)}${inp('wys.', o.s[2], `obs:${i}:s2`)}`, title: `przeszkoda ${o.name}: przeciągnij, aby przesunąć`,
         drag(p) { const q = fromBase(o.frame, p); o.c = [snap(round(q[0])), snap(round(q[1])), o.c[2]]; writeObstacles(olines); A.previewCell(); } });
     });
-    // models on the plater
-    A.platerRows().forEach((r, i) => push({ id: 'model' + i, kind: 'model', pos: [r.x, r.y, 0], plane: 'xy', size: 11, labelled: true, label: `model ${r.name} ${inp('X', r.x, `model:${i}:x`)}${inp('Y', r.y, `model:${i}:y`)}${inp('obrót Z', r.rz, `model:${i}:rz`)}`, title: `model ${r.name}: przeciągnij po stole`,
+    // models on the table: the handle floats just above the model, the drag moves it in the bed plane
+    if (A.step() <= 2) A.platerRows().forEach((r, i) => push({ id: 'model' + i, kind: 'model', pos: [r.x, r.y, A.modelTop(i) + 8], plane: 'xy', size: 11, labelled: true, label: `model ${r.name} ${inp('X', r.x, `model:${i}:x`)}${inp('Y', r.y, `model:${i}:y`)}${inp('obrót Z', r.rz, `model:${i}:rz`)}<span class="k">°</span>`, title: `model ${r.name}: przeciągnij po stole`,
       drag(p) { const rows = A.platerRows(); rows[i].x = snap(round(p[0])); rows[i].y = snap(round(p[1])); A.savePlater(rows); } }));
+    if (A.step() >= 3) H.length = 0;  // the simulation and the code show no editing handles
     handles = H;
     draw();
   }
