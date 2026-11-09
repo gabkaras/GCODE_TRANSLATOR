@@ -140,6 +140,7 @@
     if (name === 'col') drawClearanceChart();
   }
   function setStep(n, save) {
+    if (n !== curStep) stopAnim();  // a tab change stops the simulation playback
     curStep = Math.max(1, Math.min(4, n));
     for (let k = 1; k <= 4; k++) document.body.classList.toggle('step-' + k, k === curStep);
     $$('.wstep').forEach(b => b.classList.toggle('active', Number(b.dataset.step) === curStep));
@@ -952,6 +953,7 @@
     const B = kukaFrame(parse6('#opt_base_frame', [0,0,0,0,0,0]));
     robotView.setBasePlacement(invert(B));
     viewer.setSceneTransform(B);  // display in the robot frame: the robot stands at 0 0 0, the table base moves
+    updateAutoObstacles();        // the table block reaches from the base down to the robot floor: its height follows base Z
     previewCell();
   }
   // ---- local preview of the cell (obstacles, zones) from the form, before / between translations

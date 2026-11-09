@@ -301,14 +301,17 @@ transformację sceny, obrót bazy obraca stół, nie robota):
 * **baza stołu** — początek `$BASE` leży **zawsze w narożniku blatu**, tak że
   +X i +Y bazy są skierowane na stół (blat zajmuje 0…długość × 0…szerokość w
   bazie); robot stoi nieruchomo w swoim układzie (0 0 0), uchwyt w narożniku
-  przesuwa `$BASE` X Y, a stół jedzie razem z bazą; **uchwyt na okręgu** —
-  obrót bazy A; jedna etykieta „baza stołu $BASE (narożnik blatu) X Y Z A” z
+  przesuwa `$BASE` X Y, a stół jedzie razem z bazą; **uchwyt nad początkiem
+  bazy** zmienia Z (wysokość stołu: bryła stołu sięga od blatu do posadzki
+  robota, więc rośnie i maleje z Z bazy); **uchwyt na okręgu** — obrót bazy
+  A; jedna etykieta „baza stołu $BASE (narożnik blatu) X Y Z A” z
   polami do kliknięcia i wpisania,
 * **narożniki blatu** — pozostałe trzy narożniki zmieniają tylko wymiary
   stołu mierzone od bazy (narożnik bazy stoi w miejscu); środek blatu w bazie
   (długość/2, szerokość/2) formularz liczy z wymiarów i tam slicer stawia
   pokrojony model („ustaw model na środku stołu”; plater podaje pozycje w
   bazie); obrys stołu rysuje się na żywo,
+* zmiana zakładki zatrzymuje odtwarzanie symulacji,
 * **snap** (pasek podglądu: 1/5/10/50/100 mm, Alt wyłącza chwilowo) — pozycje
   i wymiary przyciągane do siatki, obrót bazy co 5°, TCP co najwyżej co 5 mm,
 * **TCP** — X Y Z narzędzia względem kołnierza (ruch w płaszczyźnie ekranu);

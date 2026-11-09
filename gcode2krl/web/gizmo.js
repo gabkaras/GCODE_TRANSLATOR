@@ -37,6 +37,7 @@
     switch (h.kind) {
       case 'bed': return h.id === 'bedc' ? `stół: środek ${inp('X', b.cx, 'tbl_cx')}${inp('Y', b.cy, 'tbl_cy')}` : `stół: wymiary ${inp('dł.', b.sx, 'tbl_sx')}${inp('szer.', b.sy, 'tbl_sy')}<span class="k">mm</span>`;
       case 'base': { const f = A.parse6('#opt_base_frame', [0, 0, 0, 0, 0, 0]);
+        if (h.id === 'basez') return `wysokość bazy ${inp('Z', f[2], 'bf_z')}<span class="k">mm</span>`;
         return h.id === 'base' ? `baza stołu $BASE <small>(narożnik blatu)</small> ${inp('X', f[0], 'bf_x')}${inp('Y', f[1], 'bf_y')}${inp('Z', f[2], 'bf_z')}${inp('A', f[3], 'bf_a')}<span class="k">°</span>` : `obrót bazy ${inp('A', f[3], 'bf_a')}<span class="k">°</span>`; }
       case 'tcp': { const t = A.parse6('#opt_tool_frame', [0, 0, 0, 0, 0, 0]);
         if (h.id === 'tcpz') return `oś dyszy <small>(pochylenie)</small> ${inp('A', t[3], 'tf_a')}${inp('B', t[4], 'tf_b')}${inp('C', t[5], 'tf_c')}<span class="k">°</span>`;
@@ -53,7 +54,7 @@
       const prefix = key.slice(0, 2), hidden = prefix === 'bf' ? 'opt_base_frame' : 'opt_tool_frame';
       const f = A.parse6('#' + hidden, [0, 0, 0, 0, 0, 0]);
       f['xyzabc'.indexOf(key[3])] = val;
-      A.setFrameFields(prefix, hidden, f); A.applyFrames();
+      A.setFrameFields(prefix, hidden, f); A.applyFrames(); A.updateAutoObstacles();
     } else if (key.startsWith('tbl_')) {
       setNum(key, val); A.applyTableAnchor(); A.updateAutoObstacles();
     } else if (key.startsWith('zone:') || key.startsWith('obs:') || key.startsWith('model:')) {
@@ -204,6 +205,15 @@
           if (!this.r0) { this.r0 = pr; this.base0 = A.parse6('#opt_base_frame', [0, 0, 0, 0, 0, 0]); }
           const b = this.base0;
           A.setFrameFields('bf', 'opt_base_frame', [snap(b[0] + pr[0] - this.r0[0]), snap(b[1] + pr[1] - this.r0[1]), b[2], b[3], b[4], b[5]]);
+          A.applyFrames();
+        } });
+      // height of the base: a handle above the origin, dragged along the robot Z axis (the table block follows)
+      push({ id: 'basez', kind: 'base', pos: [0, 0, 140], plane: 'screen', size: 9, labelled: true, usesRaw: true, title: 'wysokość bazy stołu (Z): przeciągnij w górę / w dół',
+        drag(p, last, raw) {
+          const pr = mapply(baseMatrix(), raw || p);
+          if (!this.r0) { this.r0 = pr; this.base0 = A.parse6('#opt_base_frame', [0, 0, 0, 0, 0, 0]); }
+          const b = this.base0;
+          A.setFrameFields('bf', 'opt_base_frame', [b[0], b[1], snap(b[2] + pr[2] - this.r0[2]), b[3], b[4], b[5]]);
           A.applyFrames();
         } });
       const r = Math.max(150, num('tbl_sx', 800) / 2 + 60);
