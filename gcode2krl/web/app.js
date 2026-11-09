@@ -68,7 +68,7 @@
     'extruder_trigger','extruder_on_delay','extruder_off_delay','extruder_reverse_out','krl_start','krl_end',
     'home_start','home_end','home_mode','home_axes','home_vel','zones','zones_krl',
     'orient_solve','spin_step','singular_deg','max_tilt','spin_mode','spin_fixed','spin_offset','status_turn','max_refine','robot','base_frame','tool_frame','base_literal','tool_literal','robot_samples','path_step','margin',
-    'tbl_sx','tbl_sy','tbl_cx','tbl_cy','mat_t','mat_pad','tool_mesh','tool_mesh_units','tool_mesh_frame','printed_check','printed_margin','auto_spin',
+    'tbl_sx','tbl_sy','tbl_cx','tbl_cy','tbl_anchor','mat_t','mat_pad','tool_mesh','tool_mesh_units','tool_mesh_frame','printed_check','printed_margin','auto_spin',
     'tool_radius','cutter_len','cutter_radius','obstacles','tol','max_radius','min_radius','min_arc_points','refine_shift','spl_max_segment','corner_angle',
     'default_feed','offset','fit_arcs','use_spl','name','mode','tool','base','abc','rapid_vel','max_vel','acc','cdis',
     'round_corners','max_block_segments','max_motions_per_file','block_approx','spindle_out','coolant_out','spindle_anout',
@@ -515,6 +515,21 @@
     const text = lines.join('\n').replace(/\n{3,}/g, '\n\n');
     if (text !== ta.value) { ta.value = text; saveOptions(); scheduleAuto(); }
   }
+  // the base origin can be tied to a corner of the table: the table centre then follows the size
+  const ANCHOR_SIGN = { mm: [1, 1], pm: [-1, 1], pp: [-1, -1], mp: [1, -1] };
+  function tableAnchor() { const el = $('#tbl_anchor'); return el && ANCHOR_SIGN[el.value] ? el.value : 'center'; }
+  function applyTableAnchor() {
+    const a = tableAnchor();
+    const locked = a !== 'center';
+    $('#tbl_cx').readOnly = locked; $('#tbl_cy').readOnly = locked;
+    if (locked) {
+      const sx = Number($('#tbl_sx').value) || 800, sy = Number($('#tbl_sy').value) || 800;
+      const [kx, ky] = ANCHOR_SIGN[a];
+      $('#tbl_cx').value = String(kx * sx / 2); $('#tbl_cy').value = String(ky * sy / 2);
+    }
+  }
+  $('#tbl_anchor').addEventListener('change', () => { applyTableAnchor(); saveOptions(); updateAutoObstacles(); scheduleAuto(); });
+  ['#tbl_sx', '#tbl_sy'].forEach(sel => $(sel).addEventListener('input', applyTableAnchor));
   ['#auto-table', '#tbl_sx', '#tbl_sy', '#tbl_cx', '#tbl_cy', '#mat_t', '#mat_pad'].forEach(sel => $(sel).addEventListener('input', updateAutoObstacles));
   // ---- imported meshes (tables, fixtures, tools) ------------------------
   function readFileB64(file) {
@@ -1074,7 +1089,7 @@
   loadOptions();
   $('#opt_tol_range').value = $('#opt_tol').value;
   syncFramesFromOptions();
-  robotsReady.then(() => { loadOptions(); syncFramesFromOptions(); updateRobotModel(); updateAutoObstacles(); refreshMeshMeta(); updateToolMeshInfo(); });
+  robotsReady.then(() => { loadOptions(); syncFramesFromOptions(); applyTableAnchor(); updateRobotModel(); updateAutoObstacles(); refreshMeshMeta(); updateToolMeshInfo(); });
   let savedTheme = 'dark';  // the brand look is dark; 'auto' and 'light' are available in the header
   try { savedTheme = localStorage.getItem('gcode2krl.theme') || 'dark'; } catch (e) {}
   setTheme(savedTheme, false);
@@ -1085,6 +1100,6 @@
   window.GCODE2KRL = {
     get viewer() { return viewer; }, get robotView() { return robotView; }, state,
     parse6, kukaFrame, invert, setFrameFields, applyFrames, updateAutoObstacles, platerRows, savePlater, saveOptions, scheduleAuto,
-    previewCell, localObstacles, localZones,
+    previewCell, localObstacles, localZones, tableAnchor, applyTableAnchor, ANCHOR_SIGN,
   };
 })();

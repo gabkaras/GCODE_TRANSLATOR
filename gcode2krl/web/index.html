@@ -204,6 +204,9 @@
         <div class="fb-head"><span>Wymiary podstawy i materiał</span>
           <label class="auto"><input type="checkbox" id="auto-table" data-default="true" checked> automatycznie</label>
         </div>
+        <div class="row"><span>Początek bazy na stole</span><select id="tbl_anchor" data-default="center">
+          <option value="center">środek stołu (środek podawany ręcznie)</option>
+          <option value="mm">narożnik −X −Y</option><option value="pm">narożnik +X −Y</option><option value="pp">narożnik +X +Y</option><option value="mp">narożnik −X +Y</option></select></div>
         <div class="row"><span>Podstawa (dł. × szer.) [mm]</span><span class="pair2"><input type="number" id="tbl_sx" data-default="800" value="800" step="50"><input type="number" id="tbl_sy" data-default="800" value="800" step="50"></span></div>
         <div class="row"><span>Środek podstawy w bazie X, Y<br><small>puste = środek ścieżki</small></span><span class="pair2"><input type="number" id="tbl_cx" data-default="" value="" step="10" placeholder="auto"><input type="number" id="tbl_cy" data-default="" value="" step="10" placeholder="auto"></span></div>
         <div class="row"><span>Materiał: grubość, zapas [mm]</span><span class="pair2"><input type="number" id="mat_t" data-default="20" value="20" step="1"><input type="number" id="mat_pad" data-default="20" value="20" step="5"></span></div>
@@ -308,7 +311,8 @@
         <label class="tb-check"><input type="checkbox" id="show-reach" checked> zasięg</label>
         <label class="tb-check"><input type="checkbox" id="show-obstacles" checked> przeszkody</label>
         <label class="tb-check"><input type="checkbox" id="show-capsules"> kapsuły</label>
-        <label class="tb-check" title="uchwyty do przeciągania: narożniki i środek podstawy, baza robota, TCP, strefy, przeszkody, modele na stole"><input type="checkbox" id="chk-gizmo" checked> uchwyty</label>
+        <label class="tb-check" title="uchwyty do przeciągania: narożniki i środek podstawy, baza stołu, TCP, strefy, przeszkody, modele na stole"><input type="checkbox" id="chk-gizmo" checked> uchwyty</label>
+        <label class="tb-check" title="przyciąganie uchwytów do siatki (Alt podczas przeciągania wyłącza)">snap <select id="gizmo-snap"><option value="0">wył.</option><option value="1">1 mm</option><option value="5">5 mm</option><option value="10" selected>10 mm</option><option value="50">50 mm</option><option value="100">100 mm</option></select></label>
         <button id="btn-play" title="Spacja">▶</button>
         <input type="range" id="anim" min="0" max="0" value="0" step="0.01" class="anim">
         <select id="anim-speed" title="prędkość animacji"><option value="20">0.5×</option><option value="40" selected>1×</option><option value="100">2.5×</option><option value="300">8×</option></select>

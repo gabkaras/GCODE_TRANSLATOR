@@ -286,7 +286,12 @@ transformację sceny, obrót bazy obraca stół, nie robota):
   na żywo,
 * **baza stołu** — robot stoi nieruchomo w swoim układzie (0 0 0), a uchwyt w
   początku bazy przesuwa `$BASE` X Y; **uchwyt na okręgu** — obrót bazy A; jedna
-  etykieta „baza stołu $BASE X Y Z A” z polami do kliknięcia i wpisania,
+  etykieta „baza stołu $BASE X Y Z A” z polami do kliknięcia i wpisania oraz
+  wyborem **początku bazy na stole**: środek (podawany ręcznie) albo jeden z
+  czterech narożników — wtedy środek stołu liczy się z wymiarów, stół jedzie
+  razem z bazą, a narożniki zmieniają tylko wymiary mierzone od bazy,
+* **snap** (pasek podglądu: 1/5/10/50/100 mm, Alt wyłącza chwilowo) — pozycje
+  i wymiary przyciągane do siatki, obrót bazy co 5°, TCP co najwyżej co 5 mm,
 * **TCP** — X Y Z narzędzia względem kołnierza (ruch w płaszczyźnie ekranu),
 * **strefy bezpieczeństwa** — środek i narożnik (wymiary XY), **przeszkody
   `box`** — środek, **modele na stole** — położenie XY.

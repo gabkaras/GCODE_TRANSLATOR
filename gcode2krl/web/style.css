@@ -282,3 +282,4 @@ button.mini, .file-btn.mini { padding: 4px 9px; font-size: 11px; }
 .gz-label input { width: 52px; background: var(--field); color: var(--text); border: 1px solid var(--line); border-radius: 3px; padding: 0 3px; font: 10.5px var(--mono); margin: 0 2px; }
 .gz-label input:focus { border-color: var(--accent); outline: none; }
 .gz-label .k { color: var(--muted); margin-left: 4px; }
+.gz-label select { background: var(--field); color: var(--text); border: 1px solid var(--line); border-radius: 3px; font: 10.5px var(--mono); margin-left: 4px; }

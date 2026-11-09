@@ -35,15 +35,18 @@
   function labelText(h) {
     const b = h.kind === 'bed' ? bedRect() : null;
     switch (h.kind) {
-      case 'bed': return h.id === 'bedc' ? `stół: środek ${inp('X', b.cx, 'tbl_cx')}${inp('Y', b.cy, 'tbl_cy')}` : `stół: wymiary ${inp('dł.', b.sx, 'tbl_sx')}${inp('szer.', b.sy, 'tbl_sy')}<span class="k">mm</span>`;
+      case 'bed': return h.id === 'bedc' ? `stół: środek ${inp('X', b.cx, 'tbl_cx')}${inp('Y', b.cy, 'tbl_cy')}` : `stół: wymiary ${inp('dł.', b.sx, 'tbl_sx')}${inp('szer.', b.sy, 'tbl_sy')}<span class="k">mm</span>` + (anchorSign() ? ` <small>· początek bazy w narożniku</small>` : '');
       case 'base': { const f = A.parse6('#opt_base_frame', [0, 0, 0, 0, 0, 0]);
-        return h.id === 'base' ? `baza stołu $BASE ${inp('X', f[0], 'bf_x')}${inp('Y', f[1], 'bf_y')}${inp('Z', f[2], 'bf_z')}${inp('A', f[3], 'bf_a')}<span class="k">°</span>` : `obrót bazy ${inp('A', f[3], 'bf_a')}<span class="k">°</span>`; }
+        const sel = `<select data-k="tbl_anchor" title="gdzie na stole leży początek bazy"><option value="center"${A.tableAnchor() === 'center' ? ' selected' : ''}>w środku</option>${['mm', 'pm', 'pp', 'mp'].map(k => `<option value="${k}"${A.tableAnchor() === k ? ' selected' : ''}>narożnik ${k[0] === 'm' ? '−X' : '+X'} ${k[1] === 'm' ? '−Y' : '+Y'}</option>`).join('')}</select>`;
+        return h.id === 'base' ? `baza stołu $BASE ${inp('X', f[0], 'bf_x')}${inp('Y', f[1], 'bf_y')}${inp('Z', f[2], 'bf_z')}${inp('A', f[3], 'bf_a')}<span class="k">°</span> ${sel}` : `obrót bazy ${inp('A', f[3], 'bf_a')}<span class="k">°</span>`; }
       case 'tcp': { const t = A.parse6('#opt_tool_frame', [0, 0, 0, 0, 0, 0]); return `TCP narzędzia ${inp('X', t[0], 'tf_x')}${inp('Y', t[1], 'tf_y')}${inp('Z', t[2], 'tf_z')}`; }
       default: return h.label || h.id;
     }
   }
   function commitLabelInput(el) {
-    const key = el.dataset.k; const val = Number(el.value);
+    const key = el.dataset.k;
+    if (key === 'tbl_anchor') { $('#tbl_anchor').value = el.value; A.applyTableAnchor(); A.updateAutoObstacles(); A.saveOptions(); A.scheduleAuto(); setTimeout(build, 50); return; }
+    const val = Number(el.value);
     if (!Number.isFinite(val)) return;
     if (/^(bf|tf)_/.test(key)) {
       const prefix = key.slice(0, 2), hidden = prefix === 'bf' ? 'opt_base_frame' : 'opt_tool_frame';
@@ -51,7 +54,7 @@
       f['xyzabc'.indexOf(key[3])] = val;
       A.setFrameFields(prefix, hidden, f); A.applyFrames();
     } else if (key.startsWith('tbl_')) {
-      setNum(key, val); A.updateAutoObstacles();
+      setNum(key, val); A.applyTableAnchor(); A.updateAutoObstacles();
     } else if (key.startsWith('zone:') || key.startsWith('obs:') || key.startsWith('model:')) {
       const [kind, idx, field] = key.split(':');
       if (kind === 'model') { const rows = A.platerRows(); if (rows[idx]) { rows[idx][field] = val; A.savePlater(rows); } }
@@ -61,7 +64,7 @@
     setTimeout(build, 50);
   }
   if (labelHost) {
-    labelHost.addEventListener('change', e => { if (e.target.matches('input[data-k]')) commitLabelInput(e.target); });
+    labelHost.addEventListener('change', e => { if (e.target.matches('input[data-k], select[data-k]')) commitLabelInput(e.target); });
     labelHost.addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.matches('input[data-k]')) { e.target.blur(); } });
     labelHost.addEventListener('pointerdown', e => e.stopPropagation());
   }
@@ -96,6 +99,15 @@
     }
   }
 
+  // ---- snapping
+  function snapStep() { const el = $('#gizmo-snap'); return el ? Number(el.value) || 0 : 0; }
+  let altHeld = false;
+  window.addEventListener('keydown', e => { if (e.key === 'Alt') altHeld = true; });
+  window.addEventListener('keyup', e => { if (e.key === 'Alt') altHeld = false; });
+  const snap = v => { const st = snapStep(); return st > 0 && !altHeld ? Math.round(v / st) * st : v; };
+  const snapAng = v => { const st = snapStep(); return st > 0 && !altHeld ? Math.round(v / 5) * 5 : v; };
+  const anchorSign = () => { const a = A.tableAnchor(); return a === 'center' ? null : A.ANCHOR_SIGN[a]; };
+
   function num(id, def) { const el = $('#' + id); const v = el ? Number(el.value) : NaN; return Number.isFinite(v) && el.value !== '' ? v : def; }
   function setNum(id, val) { const el = $('#' + id); if (el) el.value = String(round(val, 1)); }
 
@@ -121,20 +133,34 @@
     // print bed (auto table) corners + centre
     if ($('#auto-table') && $('#auto-table').checked) {
       const b = bedRect();
+      const anc = anchorSign();  // [kx, ky]: the base origin sits at the corner (-kx*sx/2, -ky*sy/2) from the centre
       const corners = [[-1, -1], [1, -1], [1, 1], [-1, 1]];
-      corners.forEach((s, i) => push({
-        id: 'bed' + i, kind: 'bed', pos: [b.cx + s[0] * b.sx / 2, b.cy + s[1] * b.sy / 2, b.z], plane: 'xy', size: 9, labelled: i === 2,
-        title: 'narożnik podstawy: przeciągnij, aby zmienić wymiary',
-        drag(p) {
-          const opp = [b.cx - s[0] * b.sx / 2, b.cy - s[1] * b.sy / 2];
-          const sx = Math.max(50, Math.abs(p[0] - opp[0])), sy = Math.max(50, Math.abs(p[1] - opp[1]));
-          setNum('tbl_sx', sx); setNum('tbl_sy', sy); setNum('tbl_cx', (p[0] + opp[0]) / 2); setNum('tbl_cy', (p[1] + opp[1]) / 2);
-          liveBed();
-        },
-        end() { A.updateAutoObstacles(); },
-      }));
-      push({ id: 'bedc', kind: 'bed', pos: [b.cx, b.cy, b.z], plane: 'xy', size: 11, labelled: true, title: 'środek podstawy: przeciągnij, aby przesunąć stół',
-        drag(p) { setNum('tbl_cx', p[0]); setNum('tbl_cy', p[1]); liveBed(); }, end() { A.updateAutoObstacles(); } });
+      corners.forEach((s, i) => {
+        const isAnchor = anc && s[0] === -anc[0] && s[1] === -anc[1];
+        if (isAnchor) return;  // that corner is the base origin: use the base handle
+        push({
+          id: 'bed' + i, kind: 'bed', pos: [b.cx + s[0] * b.sx / 2, b.cy + s[1] * b.sy / 2, b.z], plane: 'xy', size: 9, labelled: i === 2 || (anc && s[0] === anc[0] && s[1] === anc[1]),
+          title: anc ? 'narożnik stołu: przeciągnij, aby zmienić wymiary (początek bazy zostaje w swoim narożniku)' : 'narożnik podstawy: przeciągnij, aby zmienić wymiary',
+          drag(p) {
+            if (anc) {
+              // the anchored corner is at the base origin (0, 0): sizes measured from it
+              const sx = Math.max(50, snap(Math.abs(p[0]))), sy = Math.max(50, snap(Math.abs(p[1])));
+              if (s[0] === anc[0]) setNum('tbl_sx', sx);
+              if (s[1] === anc[1]) setNum('tbl_sy', sy);
+              A.applyTableAnchor();
+            } else {
+              const opp = [b.cx - s[0] * b.sx / 2, b.cy - s[1] * b.sy / 2];
+              const px = snap(p[0]), py = snap(p[1]);
+              const sx = Math.max(50, Math.abs(px - opp[0])), sy = Math.max(50, Math.abs(py - opp[1]));
+              setNum('tbl_sx', sx); setNum('tbl_sy', sy); setNum('tbl_cx', (px + opp[0]) / 2); setNum('tbl_cy', (py + opp[1]) / 2);
+            }
+            liveBed();
+          },
+          end() { A.updateAutoObstacles(); },
+        });
+      });
+      if (!anc) push({ id: 'bedc', kind: 'bed', pos: [b.cx, b.cy, b.z], plane: 'xy', size: 11, labelled: true, title: 'środek podstawy: przeciągnij, aby przesunąć stół',
+        drag(p) { setNum('tbl_cx', snap(p[0])); setNum('tbl_cy', snap(p[1])); liveBed(); }, end() { A.updateAutoObstacles(); } });
     }
     // base of the table ($BASE): its origin and X axis in the data (base) frame; the robot stays at 0 0 0
     if (rv && rv.model) {
@@ -145,7 +171,7 @@
           const pr = mapply(baseMatrix(), raw || p);
           if (!this.r0) { this.r0 = pr; this.base0 = A.parse6('#opt_base_frame', [0, 0, 0, 0, 0, 0]); }
           const b = this.base0;
-          A.setFrameFields('bf', 'opt_base_frame', [b[0] + pr[0] - this.r0[0], b[1] + pr[1] - this.r0[1], b[2], b[3], b[4], b[5]]);
+          A.setFrameFields('bf', 'opt_base_frame', [snap(b[0] + pr[0] - this.r0[0]), snap(b[1] + pr[1] - this.r0[1]), b[2], b[3], b[4], b[5]]);
           A.applyFrames();
         } });
       const r = Math.max(150, num('tbl_sx', 800) / 2 + 60);
@@ -153,7 +179,7 @@
         drag(p) {
           const ang = Math.atan2(p[1], p[0]) * 180 / Math.PI;  // angle of the dragged point in the current base axes
           const cur = A.parse6('#opt_base_frame', [0, 0, 0, 0, 0, 0]);
-          A.setFrameFields('bf', 'opt_base_frame', [cur[0], cur[1], cur[2], round(((cur[3] + ang + 180) % 360 + 360) % 360 - 180, 1), cur[4], cur[5]]);
+          A.setFrameFields('bf', 'opt_base_frame', [cur[0], cur[1], cur[2], snapAng(round(((cur[3] + ang + 180) % 360 + 360) % 360 - 180, 1)), cur[4], cur[5]]);
           A.applyFrames();
         } });
     }
@@ -164,7 +190,9 @@
           const d = v3.sub(p, start);
           const df = mrotT(rv.flangeInBase, d);
           const cur = A.parse6('#opt_tool_frame', [0, 0, 150, 0, 0, 0]);
-          A.setFrameFields('tf', 'opt_tool_frame', [cur[0] + df[0], cur[1] + df[1], cur[2] + df[2], cur[3], cur[4], cur[5]]);
+          const st = Math.min(snapStep() || 1, 5);  // TCP: at most 5 mm steps
+          const sn = v => (snapStep() > 0 && !altHeld) ? Math.round(v / st) * st : v;
+          A.setFrameFields('tf', 'opt_tool_frame', [sn(cur[0] + df[0]), sn(cur[1] + df[1]), sn(cur[2] + df[2]), cur[3], cur[4], cur[5]]);
           A.applyFrames();
         } });
     }
@@ -173,21 +201,21 @@
     zlines.forEach((z, i) => {
       const c = toBase(z.frame, z.c);
       push({ id: 'zone' + i, kind: 'zone', pos: c, plane: 'xy', size: 10, labelled: true, label: `strefa ${z.name} <small>${z.mode === 'allowed' ? 'dozwolona' : 'zabroniona'}</small> ${inp('X', z.c[0], `zone:${i}:c0`)}${inp('Y', z.c[1], `zone:${i}:c1`)}${inp('Z', z.c[2], `zone:${i}:c2`)} ${inp('dł.', z.s[0], `zone:${i}:s0`)}${inp('szer.', z.s[1], `zone:${i}:s1`)}${inp('wys.', z.s[2], `zone:${i}:s2`)}`, title: `strefa ${z.name}: przeciągnij środek`,
-        drag(p) { const q = fromBase(z.frame, p); z.c = [round(q[0]), round(q[1]), z.c[2]]; writeZones(zlines); A.previewCell(); } });
+        drag(p) { const q = fromBase(z.frame, p); z.c = [snap(round(q[0])), snap(round(q[1])), z.c[2]]; writeZones(zlines); A.previewCell(); } });
       const cz = [c[0] + z.s[0] / 2, c[1] + z.s[1] / 2, c[2] + z.s[2] / 2];
       push({ id: 'zonesz' + i, kind: 'zone', pos: cz, plane: 'xy', size: 8, title: `strefa ${z.name}: przeciągnij narożnik, aby zmienić wymiary`,
-        drag(p) { z.s = [Math.max(20, round(2 * Math.abs(p[0] - c[0]))), Math.max(20, round(2 * Math.abs(p[1] - c[1]))), z.s[2]]; writeZones(zlines); A.previewCell(); }, label: 'strefa: wymiary' });
+        drag(p) { z.s = [Math.max(20, snap(round(2 * Math.abs(p[0] - c[0])))), Math.max(20, snap(round(2 * Math.abs(p[1] - c[1])))), z.s[2]]; writeZones(zlines); A.previewCell(); }, label: 'strefa: wymiary' });
     });
     // obstacle boxes written by hand (not the auto table / material)
     const olines = obstacleLines();
     olines.forEach((o, i) => {
       const c = toBase(o.frame, o.c);
       push({ id: 'obs' + i, kind: 'obstacle', pos: c, plane: 'xy', size: 9, labelled: true, label: `przeszkoda ${o.name} ${inp('X', o.c[0], `obs:${i}:c0`)}${inp('Y', o.c[1], `obs:${i}:c1`)}${inp('Z', o.c[2], `obs:${i}:c2`)} ${inp('dł.', o.s[0], `obs:${i}:s0`)}${inp('szer.', o.s[1], `obs:${i}:s1`)}${inp('wys.', o.s[2], `obs:${i}:s2`)}`, title: `przeszkoda ${o.name}: przeciągnij, aby przesunąć`,
-        drag(p) { const q = fromBase(o.frame, p); o.c = [round(q[0]), round(q[1]), o.c[2]]; writeObstacles(olines); A.previewCell(); } });
+        drag(p) { const q = fromBase(o.frame, p); o.c = [snap(round(q[0])), snap(round(q[1])), o.c[2]]; writeObstacles(olines); A.previewCell(); } });
     });
     // models on the plater
     A.platerRows().forEach((r, i) => push({ id: 'model' + i, kind: 'model', pos: [r.x, r.y, 0], plane: 'xy', size: 11, labelled: true, label: `model ${r.name} ${inp('X', r.x, `model:${i}:x`)}${inp('Y', r.y, `model:${i}:y`)}${inp('obrót Z', r.rz, `model:${i}:rz`)}`, title: `model ${r.name}: przeciągnij po stole`,
-      drag(p) { const rows = A.platerRows(); rows[i].x = round(p[0]); rows[i].y = round(p[1]); A.savePlater(rows); } }));
+      drag(p) { const rows = A.platerRows(); rows[i].x = snap(round(p[0])); rows[i].y = snap(round(p[1])); A.savePlater(rows); } }));
     handles = H;
     draw();
   }
