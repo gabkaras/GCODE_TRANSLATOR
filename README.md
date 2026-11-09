@@ -275,13 +275,17 @@ podglądu włącza punkty z etykietami (nazwa i bieżąca wartość: „stół:
 narożnik 950 × 700 mm”, „baza robota $BASE X 1400 Y 0 Z 500”, „TCP narzędzia X Y
 Z”…), które można chwycić myszą i przeciągnąć; bryła stołu, strefy i
 przeszkody przerysowują się w trakcie ruchu z pól formularza, a po puszczeniu
-przelicza się program:
+przelicza się program. Każda etykieta ma pola edycyjne (klik → wpisz → Enter),
+stół jest rysowany jako pełna bryła od blatu do posadzki robota, a widok
+wyświetla scenę w układzie robota (dane ścieżki pozostają w bazie; viewer
+nakłada transformację sceny):
 
 * **narożniki podstawy** — wymiary stołu (przeciwległy narożnik stoi w
   miejscu), **środek podstawy** — jej położenie w bazie; obrys stołu rysuje się
   na żywo,
-* **podstawa robota** — położenie `$BASE` X Y (scena jest w układzie bazy, więc
-  przesunięcie robota to przesunięcie bazy), **uchwyt na okręgu** — obrót bazy A,
+* **baza stołu** — robot stoi nieruchomo w swoim układzie (0 0 0), a uchwyt w
+  początku bazy przesuwa `$BASE` X Y; **uchwyt na okręgu** — obrót bazy A; jedna
+  etykieta „baza stołu $BASE X Y Z A” z polami do kliknięcia i wpisania,
 * **TCP** — X Y Z narzędzia względem kołnierza (ruch w płaszczyźnie ekranu),
 * **strefy bezpieczeństwa** — środek i narożnik (wymiary XY), **przeszkody
   `box`** — środek, **modele na stole** — położenie XY.

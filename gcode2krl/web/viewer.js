@@ -117,6 +117,7 @@ class PathViewer {
     this.bounds = { min: [0, 0, 0], max: [100, 100, 10] };
     this.cam = { target: [50, 50, 0], dist: 250, yaw: -0.6, pitch: 0.9, ortho: false, fov: Math.PI / 4 };
     this.onRender = [];  // callbacks after every frame (overlays)
+    this.scene = new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]);  // data (base frame) -> displayed frame (robot frame)
     this.applyTheme();
     this._dirty = true;
     this._raf = null;
@@ -221,7 +222,7 @@ class PathViewer {
 
   fit() {
     const b = this.bounds;
-    const c = scale3(add3(b.min, b.max), 0.5);
+    const c = this._sceneApply(scale3(add3(b.min, b.max), 0.5));
     const r = Math.max(1e-3, Math.hypot(b.max[0]-b.min[0], b.max[1]-b.min[1], b.max[2]-b.min[2]) / 2);
     this.cam.target = c;
     this.cam.dist = r / Math.sin(this.cam.fov / 2) * 1.15;
@@ -275,10 +276,16 @@ class PathViewer {
     return M4.mul(proj, view);
   }
 
-  /** camera position (scene coordinates) */
-  eye() { return this._eye(); }
+  /** rigid transform applied to everything drawn (layers, meshes, grid): data stays in the base frame,
+   *  the display can be the robot frame so the robot stands still at its origin. */
+  setSceneTransform(m) { this.scene = m ? new Float32Array(m) : new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]); this.invalidate(); }
+  _sceneApply(p) { const m = this.scene; return [m[0]*p[0]+m[4]*p[1]+m[8]*p[2]+m[12], m[1]*p[0]+m[5]*p[1]+m[9]*p[2]+m[13], m[2]*p[0]+m[6]*p[1]+m[10]*p[2]+m[14]]; }
+  _sceneInv(p, vec) { const m = this.scene; const q = vec ? p : [p[0]-m[12], p[1]-m[13], p[2]-m[14]]; return [m[0]*q[0]+m[1]*q[1]+m[2]*q[2], m[4]*q[0]+m[5]*q[1]+m[6]*q[2], m[8]*q[0]+m[9]*q[1]+m[10]*q[2]]; }
+  /** camera position (data coordinates) */
+  eye() { return this._sceneInv(this._eye(), false); }
   /** scene point -> CSS pixel position on the canvas (null when behind the camera) */
-  project(p) {
+  project(p0) {
+    const p = this._sceneApply(p0);
     const m = this._mvp();
     const x = m[0] * p[0] + m[4] * p[1] + m[8] * p[2] + m[12];
     const y = m[1] * p[0] + m[5] * p[1] + m[9] * p[2] + m[13];
@@ -299,10 +306,10 @@ class PathViewer {
     if (c.ortho) {
       const hh = c.dist * t;
       const o = add3(eye, add3(scale3(x, nx * hh * aspect), scale3(y, ny * hh)));
-      return { origin: o, dir: scale3(z, -1) };
+      return { origin: this._sceneInv(o, false), dir: this._sceneInv(scale3(z, -1), true) };
     }
     const d = norm3(add3(add3(scale3(z, -1), scale3(x, nx * t * aspect)), scale3(y, ny * t)));
-    return { origin: eye, dir: d };
+    return { origin: this._sceneInv(eye, false), dir: this._sceneInv(d, true) };
   }
 
   invalidate() {
@@ -320,7 +327,7 @@ class PathViewer {
     gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
     gl.enable(gl.DEPTH_TEST);
     gl.depthFunc(gl.LEQUAL);
-    const mvp = this._mvp();
+    const mvp = M4.mul(this._mvp(), this.scene);
     const meshes = [...this.meshes.values()].filter(M => M.visible && M.count > 0 && M.model)
       .sort((a, b) => (a.color[3] < 1 ? 1 : 0) - (b.color[3] < 1 ? 1 : 0));
     if (meshes.length) {

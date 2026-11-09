@@ -244,8 +244,9 @@
       else if (o.kind === 'sphere') geom = sphere(o.radius);
       else if (o.kind === 'floor') geom = box(8000, 8000, 2, 0, 0, -1);
       else return;
-      const color = o.workpiece ? 'var(--c-workpiece)' : (o.kind === 'floor' ? 'var(--brand-grey)' : 'var(--c-obstacle)');
-      v.setMesh('ob_' + i, geom, color, mul(this.robotInBase, base), { group: 'obstacles', alpha: o.kind === 'floor' ? 0.25 : 0.42 });
+      const isTable = o.kind === 'box' && /^(stol|table|stół)$/i.test(o.name || '');
+      const color = o.workpiece ? 'var(--c-workpiece)' : (o.kind === 'floor' ? 'var(--brand-grey)' : (isTable ? 'var(--c-table)' : 'var(--c-obstacle)'));
+      v.setMesh('ob_' + i, geom, color, mul(this.robotInBase, base), { group: 'obstacles', alpha: o.kind === 'floor' ? 0.25 : (isTable ? 0.95 : 0.42) });
       // outline edges for boxes
       if (o.kind === 'box') {
         const h = o.half, E = [];

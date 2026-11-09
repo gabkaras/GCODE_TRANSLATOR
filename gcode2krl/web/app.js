@@ -784,7 +784,9 @@
   function applyFrames() {
     if (!robotView || !robotView.model) return;
     robotView.setTool(kukaFrame(parse6('#opt_tool_frame', [0,0,0,0,0,0])));
-    robotView.setBasePlacement(invert(kukaFrame(parse6('#opt_base_frame', [0,0,0,0,0,0]))));
+    const B = kukaFrame(parse6('#opt_base_frame', [0,0,0,0,0,0]));
+    robotView.setBasePlacement(invert(B));
+    viewer.setSceneTransform(B);  // display in the robot frame: the robot stands at 0 0 0, the table base moves
     previewCell();
   }
   // ---- local preview of the cell (obstacles, zones) from the form, before / between translations
@@ -796,7 +798,7 @@
   const rowRot = m => [m[0], m[4], m[8], m[1], m[5], m[9], m[2], m[6], m[10]];
   function toRobot(frame, c, abc) {
     // centre / rotation of a primitive given in the robot or base frame -> robot frame (what the viewer draws)
-    const R = kukaFrame([0, 0, 0, ...(abc || [0, 0, 0])]);
+    const R = kukaFrame([0, 0, 0, ...(abc && abc.length === 3 ? abc : [0, 0, 0])]);
     if (frame !== 'base') return { center: c, rot: rowRot(R) };
     const B = kukaFrame(parse6('#opt_base_frame', [0, 0, 0, 0, 0, 0]));
     const M = mulM(B, R);
