@@ -145,8 +145,9 @@ def build_options(options: dict, filename: str) -> tuple[TranslateOptions, KrlOp
         advance=_opt(options, "advance", 3, int),
         source_name=os.path.basename(filename or ""),
         halt_on_tool_change=_opt(options, "halt_tool_change", True, bool),
-        base_frame=_ntuple(options, "base_frame", None, 6) if _opt(options, "base_literal", False, bool) else None,
-        tool_frame=_ntuple(options, "tool_frame", None, 6) if _opt(options, "tool_literal", False, bool) else None,
+        base_frame=_ntuple(options, "base_frame", None, 6) if _frame_known(options, "base") else None,
+        tool_frame=_ntuple(options, "tool_frame", None, 6) if _frame_known(options, "tool") else None,
+        frame_mode=_frame_mode(options),
     )
     if kopts.mode not in ("spline", "lin"):
         raise ValueError("mode must be 'spline' or 'lin'")
@@ -777,6 +778,25 @@ class Handler(SimpleHTTPRequestHandler):
             self.send_json({"error": f"{type(exc).__name__}: {exc}"}, 500)
             return
         self.send_json(result)
+
+
+def _frame_mode(options: dict) -> str:
+    """declare (default) | data | literal; the old base_literal / tool_literal switches mean literal."""
+    mode = str(options.get("frame_mode") or "").lower()
+    if mode in ("declare", "data", "literal"):
+        return mode
+    if _opt(options, "base_literal", False, bool) or _opt(options, "tool_literal", False, bool):
+        return "literal"
+    return "declare"
+
+
+def _frame_known(options: dict, which: str) -> bool:
+    """With the old per-frame switches only the switched-on frame is written literally;
+    the other one stays a plain TOOL_DATA[n] / BASE_DATA[n] selection."""
+    if str(options.get("frame_mode") or "").lower() in ("declare", "data", "literal"):
+        return True
+    old = _opt(options, "base_literal", False, bool) or _opt(options, "tool_literal", False, bool)
+    return _opt(options, f"{which}_literal", False, bool) if old else True
 
 
 def free_port(preferred: int) -> int:

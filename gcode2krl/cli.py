@@ -90,9 +90,12 @@ def build_parser() -> argparse.ArgumentParser:
     r = p.add_argument_group("robot check")
     r.add_argument("--robot", default="none", help="robot model for the reach/axis-limit check, e.g. KR90R2700PRO (default none; 'list' prints models)")
     r.add_argument("--base-frame", type=float, nargs=6, default=None, metavar=("X", "Y", "Z", "A", "B", "C"),
-                   help="$BASE in robot coordinates (also written literally into the program)")
+                   help="$BASE in robot coordinates (written into the program, see --frame-mode)")
     r.add_argument("--tool-frame", type=float, nargs=6, default=None, metavar=("X", "Y", "Z", "A", "B", "C"),
-                   help="$TOOL in flange coordinates (also written literally into the program)")
+                   help="$TOOL in flange coordinates (written into the program, see --frame-mode)")
+    r.add_argument("--frame-mode", choices=("declare", "data", "literal"), default="declare",
+                   help="declare: TOOL_DATA[n]/BASE_DATA[n] = {...} then $TOOL/$BASE = ..._DATA[n] (default); "
+                        "data: only $TOOL = TOOL_DATA[n] as configured on the controller; literal: $TOOL = {...}")
     r.add_argument("--base-points", type=float, nargs=9, default=None,
                    metavar=("OX", "OY", "OZ", "XX", "XY", "XZ", "PX", "PY", "PZ"),
                    help="$BASE from the KUKA 3-point method: origin, point on +X, point in the XY plane (robot coordinates)")
@@ -160,7 +163,7 @@ def run(argv: list[str] | None = None) -> int:
                        spindle_max_rpm=args.spindle_max_rpm, bco_ptp=not args.no_bco, advance=args.advance,
                        source_name=os.path.basename(args.input), halt_on_tool_change=not args.no_halt_tool_change,
                        base_frame=tuple(args.base_frame) if args.base_frame else None,
-                       tool_frame=tuple(args.tool_frame) if args.tool_frame else None)
+                       tool_frame=tuple(args.tool_frame) if args.tool_frame else None, frame_mode=args.frame_mode)
     from .translator import has_orientation, resolve_orientations
     robot_rep = None
     orient_info = None

@@ -67,7 +67,7 @@
   const OPTION_IDS = ['extruder','extruder_out','extruder_analog','extruder_anout','extruder_flow_full','extruder_delay',
     'extruder_trigger','extruder_on_delay','extruder_off_delay','extruder_reverse_out','krl_start','krl_end',
     'home_start','home_end','home_mode','home_axes','home_vel','zones','zones_krl',
-    'orient_solve','spin_step','singular_deg','max_tilt','spin_mode','spin_fixed','spin_offset','status_turn','max_refine','robot','base_frame','tool_frame','base_literal','tool_literal','robot_samples','path_step','margin',
+    'orient_solve','spin_step','singular_deg','max_tilt','spin_mode','spin_fixed','spin_offset','status_turn','max_refine','robot','base_frame','tool_frame','frame_mode','robot_samples','path_step','margin',
     'tbl_sx','tbl_sy','tbl_cx','tbl_cy','mat_t','mat_pad','tool_mesh','tool_mesh_units','tool_mesh_frame','printed_check','printed_margin','auto_spin',
     'tool_radius','cutter_len','cutter_radius','obstacles','tol','max_radius','min_radius','min_arc_points','refine_shift','spl_max_segment','corner_angle',
     'default_feed','offset','fit_arcs','use_spl','name','mode','tool','base','abc','rapid_vel','max_vel','acc','cdis',

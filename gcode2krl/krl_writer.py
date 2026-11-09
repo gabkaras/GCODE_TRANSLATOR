@@ -59,8 +59,13 @@ class KrlOptions:
     krl_start: str = ""  # user KRL lines inserted after the settings
     krl_end: str = ""  # user KRL lines inserted before END
     ori_var: bool = False  # orientation varies along the path ($ORI_TYPE = #VAR)
-    base_frame: tuple[float, ...] | None = None  # literal $BASE {X Y Z A B C} instead of BASE_DATA[n]
-    tool_frame: tuple[float, ...] | None = None  # literal $TOOL {X Y Z A B C} instead of TOOL_DATA[n]
+    base_frame: tuple[float, ...] | None = None  # $BASE {X Y Z A B C} values (robot frame)
+    tool_frame: tuple[float, ...] | None = None  # $TOOL {X Y Z A B C} values (flange frame)
+    # how the tool and base get into the program: "declare" writes the values into
+    # TOOL_DATA[n] / BASE_DATA[n] ($CONFIG.DAT) and then $TOOL = TOOL_DATA[n]; "data"
+    # only selects TOOL_DATA[n] / BASE_DATA[n] as configured on the controller;
+    # "literal" sets $TOOL = {X ...} directly (independent of $CONFIG.DAT)
+    frame_mode: str = "declare"
 
 
 @dataclass
@@ -432,12 +437,26 @@ class KrlWriter:
             out.append(f"; UWAGA: KSS obsluguje 8 stref $WORKSPACE, pominieto {len(self.o.workspaces) - 8}")
         return out
 
+    def frame_lines(self) -> list[str]:
+        """$TOOL / $BASE according to frame_mode (see KrlOptions)."""
+        mode = self.o.frame_mode if self.o.frame_mode in ("declare", "data", "literal") else "declare"
+        out: list[str] = []
+        decl: list[str] = []
+        for var, data, n, f in (("$TOOL", "TOOL_DATA", self.o.tool, self.o.tool_frame), ("$BASE", "BASE_DATA", self.o.base, self.o.base_frame)):
+            if f is not None and mode == "literal":
+                out.append(f"{var} = {self.frame_literal(f)}")
+            elif f is not None and mode == "declare":
+                decl.append(f"{data}[{n}] = {self.frame_literal(f)}")
+                out.append(f"{var} = {data}[{n}]")
+            else:
+                out.append(f"{var} = {data}[{n}]")
+        if decl:
+            decl.insert(0, "; narzedzie (TCP w ukladzie kolnierza) i baza (w ukladzie robota): deklaracja wartosci w $CONFIG.DAT")
+            decl.append("")
+        return decl + out
+
     def settings_lines(self) -> list[str]:
-        tool = self.frame_literal(self.o.tool_frame) if self.o.tool_frame else f"TOOL_DATA[{self.o.tool}]"
-        base = self.frame_literal(self.o.base_frame) if self.o.base_frame else f"BASE_DATA[{self.o.base}]"
-        return [
-            f"$TOOL = {tool}",
-            f"$BASE = {base}",
+        return self.frame_lines() + [
             f"$VEL.CP = {fvel(self.o.rapid_vel)}",
             f"$ACC.CP = {fnum(self.o.acc, 2)}",
             f"$APO.CDIS = {fnum(self.o.cdis, 2)}",

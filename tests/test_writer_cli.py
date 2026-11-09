@@ -48,6 +48,22 @@ def test_spline_block_syntax():
     assert prog.files["CIRC_T.dat"].startswith("&ACCESS RVP\n&REL 1\nDEFDAT CIRC_T\n")
 
 
+def test_frame_modes_declare_data_literal():
+    items, stats = translate(parse_gcode("G1 X0 Y0 Z0 F600\nG1 X10 Y0\nG1 X10 Y10\n"), TranslateOptions())
+    frames = dict(tool_frame=(0, 0, 150, 0, 45, 0), base_frame=(1400, 0, 500, 0, 0, 0))
+    src = write_krl(items, KrlOptions(name="T", **frames), stats).files["T.src"]  # default: declare
+    assert "TOOL_DATA[1] = {X 0.000, Y 0.000, Z 150.000, A 0.000, B 45.000, C 0.000}" in src
+    assert "BASE_DATA[1] = {X 1400.000, Y 0.000, Z 500.000, A 0.000, B 0.000, C 0.000}" in src
+    assert src.index("TOOL_DATA[1] = {") < src.index("$TOOL = TOOL_DATA[1]") < src.index("$BASE = BASE_DATA[1]")
+    src = write_krl(items, KrlOptions(name="T", frame_mode="data", **frames), stats).files["T.src"]
+    assert "TOOL_DATA[1] = {" not in src and "$TOOL = TOOL_DATA[1]" in src and "$BASE = BASE_DATA[1]" in src
+    src = write_krl(items, KrlOptions(name="T", frame_mode="literal", **frames), stats).files["T.src"]
+    assert "$TOOL = {X 0.000, Y 0.000, Z 150.000, A 0.000, B 45.000, C 0.000}" in src and "TOOL_DATA[1]" not in src
+    # no values known: only the selection of the configured data sets
+    src = write_krl(items, KrlOptions(name="T"), stats).files["T.src"]
+    assert "TOOL_DATA[1] = {" not in src and "$TOOL = TOOL_DATA[1]" in src
+
+
 def test_lin_mode_syntax_and_exact_corners():
     text = "G1 X10 F600\nG1 Y10\nG1 X20 Y20\nM30\n"
     items, stats = translate(parse_gcode(text), TranslateOptions(use_spl=False, fit_arcs=False))

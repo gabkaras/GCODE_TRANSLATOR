@@ -546,8 +546,13 @@ Bez kernela GUI pokazuje komunikat, a STL/OBJ działają nadal.
 Co robi sprawdzenie (`--robot`, w GUI panel *Robot*):
 
 * `$BASE` podajesz w układzie robota (X Y Z A B C), `$TOOL` w układzie
-  kołnierza; orientacja narzędzia na ścieżce to `--abc`. Oba układy można
-  zapisać literalnie w programie zamiast `BASE_DATA[n]` / `TOOL_DATA[n]`.
+  kołnierza; orientacja narzędzia na ścieżce to `--abc`. Do programu trafiają
+  **deklaracje** obu układów (domyślnie, `--frame-mode declare`, w GUI „TCP i
+  baza w programie”): `TOOL_DATA[n] = {X …, Y …, Z …, A …, B …, C …}` i
+  `BASE_DATA[n] = {…}` przed `$TOOL = TOOL_DATA[n]` / `$BASE = BASE_DATA[n]`,
+  więc program niesie wartości, a sterownik ma je w `$CONFIG.DAT`; `data`
+  zostawia samo wywołanie `TOOL_DATA[n]` (wartości ze sterownika), `literal`
+  wpisuje `$TOOL = {…}` / `$BASE = {…}` wprost.
 * Dla próbek wzdłuż wygenerowanej ścieżki liczona jest kinematyka odwrotna.
   Raport: liczba próbek poza zasięgiem, poza limitami osi (z podziałem na
   osie) oraz zakres min/max każdej osi. CLI zwraca kod wyjścia 3, gdy coś
