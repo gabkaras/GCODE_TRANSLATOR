@@ -54,7 +54,10 @@ Pythona i numpy (działa offline, np. na komputerze przy robocie):
   albo wybierz przykład),
 * **krok 3 – Program KRL**: łuki, program, orientacja i kolizje, prędkości,
   ekstruder; wynik liczy się automatycznie po każdej zmianie opcji (suwak
-  tolerancji, tryb, orientacja…),
+  tolerancji, tryb, orientacja…). Każda opcja, którą czyta serwer (translator,
+  writer KRL, raport robota, slicer), ma pole w GUI z przyciskiem „?”; w
+  plikach zostają tylko dane modeli robotów (JSON z oficjalnych danych KUKA) i
+  wgrane siatki,
 * kafelki: ruchy wejściowe / KRL, kompresja, maksymalna odchyłka (zielona,
   gdy mieści się w tolerancji), czasy parsera / dopasowania / generowania,
 * **podgląd 3D** na własnym rendererze WebGL: warstwy G-code wejściowy, G0,

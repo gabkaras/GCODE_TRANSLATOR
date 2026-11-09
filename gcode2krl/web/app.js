@@ -66,7 +66,7 @@
   const OPTION_IDS = ['extruder','extruder_out','extruder_analog','extruder_anout','extruder_flow_full','extruder_delay',
     'extruder_trigger','extruder_on_delay','extruder_off_delay','extruder_reverse_out','krl_start','krl_end',
     'home_start','home_end','home_mode','home_axes','home_vel','zones','zones_krl',
-    'orient_solve','spin_step','singular_deg','max_tilt','spin_mode','spin_fixed','spin_offset','robot','base_frame','tool_frame','base_literal','tool_literal','robot_samples','path_step','margin',
+    'orient_solve','spin_step','singular_deg','max_tilt','spin_mode','spin_fixed','spin_offset','status_turn','max_refine','robot','base_frame','tool_frame','base_literal','tool_literal','robot_samples','path_step','margin',
     'tbl_sx','tbl_sy','tbl_cx','tbl_cy','mat_t','mat_pad','tool_mesh','tool_mesh_units',
     'tool_radius','cutter_len','cutter_radius','obstacles','tol','max_radius','min_radius','min_arc_points','refine_shift','spl_max_segment','corner_angle',
     'default_feed','offset','fit_arcs','use_spl','name','mode','tool','base','abc','rapid_vel','max_vel','acc','cdis',
@@ -691,7 +691,7 @@
     try {
       setStatus('Liczenie orientacji…', 'busy');
       const mode = act === 'orient_flat' ? 'lay_flat' : 'min_overhang';
-      const res = await fetch('/api/orient', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mesh: ref, units: $('#slice-units').value, mode, overhang: F.params().overhang_max }) });
+      const res = await fetch('/api/orient', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mesh: ref, units: $('#slice-units').value, mode, overhang: F.params().overhang_max, deflection: Number(($('#step-deflection') || {}).value) || 0.2 }) });
       const d = await res.json();
       if (!res.ok || d.error) throw new Error(d.error || res.statusText);
       F.setValue('rot_x', +d.rot[0].toFixed(2)); F.setValue('rot_y', +d.rot[1].toFixed(2)); F.setValue('rot_z', +d.rot[2].toFixed(2)); F.setValue('auto_orient', 'none'); F.save(); F.updateVisibility();
@@ -703,7 +703,7 @@
     setStatus('Krojenie…', 'busy'); $('#btn-slice').disabled = true;
     try {
       const params = sliceParams();
-      const body = { mesh: ref, units: $('#slice-units').value, params };
+      const body = { mesh: ref, units: $('#slice-units').value, params, deflection: Number(($('#step-deflection') || {}).value) || 0.2 };
       const rows = platerRows();
       if (rows.length) body.models = rows.map(r => ({ mesh: r.mesh, units: r.units, name: r.name, offset: [r.x, r.y, 0], rot: [0, 0, r.rz], scale: r.scale }));
       if (params.layer_mode === 'multi') { body.segments = window.SLICER_FORM.extras().segments; params.layer_mode = 'planar'; if (!body.segments.trim()) throw new Error('tryb wielokierunkowy wymaga definicji segmentów'); }
