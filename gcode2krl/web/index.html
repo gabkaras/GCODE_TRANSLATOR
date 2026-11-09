@@ -265,6 +265,7 @@
       <h2>Stanowisko → model → program robota</h2>
       <p><b>Krok 1:</b> skonfiguruj stanowisko: model robota, narzędzie (TCP i montaż dyszy), położenie i wymiary podstawy do druku, HOME. <b>Krok 2:</b> wczytaj model STEP/STL/OBJ i pokrój go pod ekstruder na robocie, albo wgraj gotowy G-code. <b>Krok 3:</b> program KRL: <b>SLIN</b>/<b>SCIRC</b>/<b>SPL</b> z orientacją narzędzia, ekstruder przez <b>TRIGGER</b> i <b>ANOUT</b>, kontrola zasięgu i kolizji, pliki <b>.src/.dat</b> dla KUKA KRC4.</p>
       <p class="muted">Ustawienia stanowiska zapisują się w przeglądarce — następnym razem zaczniesz od kroku 2.</p>
+      <p class="muted">W widoku 3D można przeciągać uchwyty: narożniki i środek podstawy, podstawę robota (położenie i obrót bazy), TCP, strefy, przeszkody i modele na stole — pola w formularzu aktualizują się same.</p>
       <ul class="keys"><li><kbd>F</kbd> dopasuj widok</li><li><kbd>T</kbd> z góry</li><li><kbd>I</kbd> izometria</li><li><kbd>Ctrl+⏎</kbd> tłumacz</li></ul>
     </div>
   </div>
@@ -307,6 +308,7 @@
         <label class="tb-check"><input type="checkbox" id="show-reach" checked> zasięg</label>
         <label class="tb-check"><input type="checkbox" id="show-obstacles" checked> przeszkody</label>
         <label class="tb-check"><input type="checkbox" id="show-capsules"> kapsuły</label>
+        <label class="tb-check" title="uchwyty do przeciągania: narożniki i środek podstawy, baza robota, TCP, strefy, przeszkody, modele na stole"><input type="checkbox" id="chk-gizmo" checked> uchwyty</label>
         <button id="btn-play" title="Spacja">▶</button>
         <input type="range" id="anim" min="0" max="0" value="0" step="0.01" class="anim">
         <select id="anim-speed" title="prędkość animacji"><option value="20">0.5×</option><option value="40" selected>1×</option><option value="100">2.5×</option><option value="300">8×</option></select>
@@ -362,6 +364,7 @@
 <script src="/robot.js"></script>
 <script src="/slicer_form.js"></script>
 <script src="/app.js"></script>
+<script src="/gizmo.js"></script>
 <script src="/help.js"></script>
 </body>
 </html>

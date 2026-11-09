@@ -192,6 +192,7 @@
         for (const t of [t0, t1]) lines.push(c[0] + rr*(Math.cos(t)*dir[0] + Math.sin(t)*up[0]), c[1] + rr*(Math.cos(t)*dir[1] + Math.sin(t)*up[1]), c[2] + rr*(Math.cos(t)*dir[2] + Math.sin(t)*up[2]));
       }
       v.setLayer('rb_reach_arc', new Float32Array(lines), ORANGE, { alpha: 0.35, order: 3, group: 'robot', visible: this.reachVisible });
+      this.flangeInBase = mul(B, f[7]);
       const tcpM = mul(mul(B, f[7]), this.tool);
       const o = apply(tcpM, [0,0,0]), L = Math.max(40, (R.visual && R.visual.wrist || 150) * 0.6);
       const ax = [], cols = ['var(--c-ax-x)', 'var(--c-ax-y)', 'var(--c-ax-z)'];

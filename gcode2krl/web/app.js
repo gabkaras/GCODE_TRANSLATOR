@@ -1004,4 +1004,9 @@
   $$('.theme-switch button').forEach(b => b.addEventListener('click', () => setTheme(b.dataset.theme, true)));
   window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => setTheme(document.documentElement.getAttribute('data-theme') || 'auto', false));
   fetch('/api/version').then(r => r.json()).then(d => { $('#version').textContent = 'v' + d.version; }).catch(() => {});
+  // ---- API for the drag handles (gizmo.js) -----------------------------------
+  window.GCODE2KRL = {
+    get viewer() { return viewer; }, get robotView() { return robotView; }, state,
+    parse6, kukaFrame, invert, setFrameFields, applyFrames, updateAutoObstacles, platerRows, savePlater, saveOptions, scheduleAuto,
+  };
 })();

@@ -274,6 +274,36 @@ class PathViewer {
     return M4.mul(proj, view);
   }
 
+  /** camera position (scene coordinates) */
+  eye() { return this._eye(); }
+  /** scene point -> CSS pixel position on the canvas (null when behind the camera) */
+  project(p) {
+    const m = this._mvp();
+    const x = m[0] * p[0] + m[4] * p[1] + m[8] * p[2] + m[12];
+    const y = m[1] * p[0] + m[5] * p[1] + m[9] * p[2] + m[13];
+    const w = m[3] * p[0] + m[7] * p[1] + m[11] * p[2] + m[15];
+    if (w <= 1e-9) return null;
+    return [(x / w + 1) / 2 * this.canvas.clientWidth, (1 - y / w) / 2 * this.canvas.clientHeight];
+  }
+  /** ray through a CSS pixel of the canvas: {origin, dir} in scene coordinates */
+  ray(px, py) {
+    const c = this.cam;
+    const eye = this._eye();
+    const z = norm3(sub3(eye, c.target));
+    const x = norm3(cross3([0, 0, 1], z));
+    const y = cross3(z, x);
+    const W = this.canvas.clientWidth, H = this.canvas.clientHeight, aspect = W / Math.max(1, H);
+    const nx = (px / W) * 2 - 1, ny = 1 - (py / H) * 2;
+    const t = Math.tan(c.fov / 2);
+    if (c.ortho) {
+      const hh = c.dist * t;
+      const o = add3(eye, add3(scale3(x, nx * hh * aspect), scale3(y, ny * hh)));
+      return { origin: o, dir: scale3(z, -1) };
+    }
+    const d = norm3(add3(add3(scale3(z, -1), scale3(x, nx * t * aspect)), scale3(y, ny * t)));
+    return { origin: eye, dir: d };
+  }
+
   invalidate() {
     this._dirty = true;
     if (this._raf === null) this._raf = requestAnimationFrame(() => { this._raf = null; this.render(); });
@@ -338,10 +368,12 @@ class PathViewer {
     cv.addEventListener('contextmenu', e => e.preventDefault());
     cv.addEventListener('pointerdown', e => {
       cv.setPointerCapture(e.pointerId);
+      if (this.gizmo && e.button === 0 && !e.shiftKey && this.gizmo.down(e)) { drag = { mode: 'gizmo' }; return; }
       drag = { x: e.clientX, y: e.clientY, mode: (e.button === 2 || e.button === 1 || e.shiftKey) ? 'pan' : 'orbit' };
     });
     cv.addEventListener('pointermove', e => {
-      if (!drag) return;
+      if (!drag) { if (this.gizmo) this.gizmo.hover(e); return; }
+      if (drag.mode === 'gizmo') { this.gizmo.move(e); return; }
       const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
       drag.x = e.clientX; drag.y = e.clientY;
       const c = this.cam;
@@ -358,7 +390,7 @@ class PathViewer {
       }
       this.invalidate();
     });
-    const end = e => { drag = null; };
+    const end = e => { if (drag && drag.mode === 'gizmo' && this.gizmo) this.gizmo.up(e); drag = null; };
     cv.addEventListener('pointerup', end); cv.addEventListener('pointercancel', end);
     cv.addEventListener('wheel', e => {
       e.preventDefault();

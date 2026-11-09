@@ -265,6 +265,28 @@ zone operator forbidden robot robot 0 1600 900 1200 800 1800   # żaden człon n
   dozwolonej albo wejdzie do zabronionej (KSS pilnuje tylko TCP; zakres
   `robot` zapewnia raport aplikacji). Opcja „$WORKSPACE w KRL” / `--no-zones-krl`.
 
+### Uchwyty w widoku 3D: przeciąganie stołu, bazy, TCP, stref, modeli
+
+![uchwyty do przeciągania](docs/gui_gizmo.png)
+
+Przełącznik *uchwyty* w pasku podglądu włącza punkty, które można chwycić
+myszą (kursor „łapka”, podpowiedź z nazwą) i przeciągnąć; pola formularza
+aktualizują się na bieżąco, a po puszczeniu przelicza się program:
+
+* **narożniki podstawy** — wymiary stołu (przeciwległy narożnik stoi w
+  miejscu), **środek podstawy** — jej położenie w bazie; obrys stołu rysuje się
+  na żywo,
+* **podstawa robota** — położenie `$BASE` X Y (scena jest w układzie bazy, więc
+  przesunięcie robota to przesunięcie bazy), **uchwyt na okręgu** — obrót bazy A,
+* **TCP** — X Y Z narzędzia względem kołnierza (ruch w płaszczyźnie ekranu),
+* **strefy bezpieczeństwa** — środek i narożnik (wymiary XY), **przeszkody
+  `box`** — środek, **modele na stole** — położenie XY.
+
+Picking liczy odległość rzutu uchwytu od kursora (≤ 14 px), ruch jest
+rzutowany na płaszczyznę XY bazy (dla TCP na płaszczyznę ekranu) promieniem
+kamery (`viewer.project`, `viewer.ray`); orbita i przesuwanie kamery działają
+jak dotąd poza uchwytami.
+
 ### Model narzędzia (STEP) i druk planarny bez kolizji
 
 ![model narzędzia w kroku 1](docs/gui_tool_step.png)
