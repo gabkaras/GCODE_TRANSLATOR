@@ -1249,6 +1249,6 @@
     get viewer() { return viewer; }, get robotView() { return robotView; }, state,
     parse6, kukaFrame, invert, setFrameFields, applyFrames, updateAutoObstacles, platerRows, savePlater, saveOptions, scheduleAuto,
     previewCell, localObstacles, localZones, tableAnchor, applyTableAnchor, ANCHOR_SIGN, tableCentre,
-    modelTop, drawPlaterModels, step: () => curStep,
+    modelTop, drawPlaterModels, step: () => curStep, rotToABC, mulM,
   };
 })();

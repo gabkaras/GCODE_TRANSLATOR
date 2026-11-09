@@ -311,7 +311,11 @@ transformację sceny, obrót bazy obraca stół, nie robota):
   bazie); obrys stołu rysuje się na żywo,
 * **snap** (pasek podglądu: 1/5/10/50/100 mm, Alt wyłącza chwilowo) — pozycje
   i wymiary przyciągane do siatki, obrót bazy co 5°, TCP co najwyżej co 5 mm,
-* **TCP** — X Y Z narzędzia względem kołnierza (ruch w płaszczyźnie ekranu),
+* **TCP** — X Y Z narzędzia względem kołnierza (ruch w płaszczyźnie ekranu);
+  przy TCP rysowane są osie narzędzia: **koniec osi dyszy** (Z narzędzia)
+  pochyla narzędzie — nowe A B C `$TOOL` liczone z kierunku osi przy
+  zachowanym X narzędzia, **koniec osi X** obraca narzędzie wokół dyszy;
+  etykieta TCP ma pola X Y Z A B C do wpisania, kąty przyciągane co 5°,
 * **strefy bezpieczeństwa** — środek i narożnik (wymiary XY), **przeszkody
   `box`** — środek, **modele na stole** — położenie XY.
 
@@ -360,6 +364,14 @@ GUI i w CLI: `--no-home-start`, `--no-home-end`, `--home-mode axes
 ### Orientacja narzędzia: dysza poza osią A6, obrót wokół dyszy, pochylenie
 
 ![montaż dyszy pod kątem](docs/gui_tool_mount.png)
+
+![obrót TCP uchwytami w 3D](docs/gui_tcp_rotate.png)
+
+Orientację narzędzia można też ustawić myszą w podglądzie 3D: przy TCP
+rysowane są osie narzędzia, uchwyt na końcu osi dyszy (Z narzędzia) pochyla
+narzędzie (A B C `$TOOL` liczone z nowego kierunku osi, X narzędzia
+zachowane), uchwyt na osi X obraca je wokół dyszy (oś dyszy zostaje
+dokładnie, kąt obrotu przyciągany co 5°); etykieta TCP ma pola X Y Z A B C.
 
 * **Montaż dyszy pod kątem.** Ramka `$TOOL` ma pełne A B C: oś dyszy (Z
   narzędzia) nie musi leżeć w osi A6. Presety w sekcji *Stanowisko* („w osi

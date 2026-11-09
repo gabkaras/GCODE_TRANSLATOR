@@ -38,7 +38,10 @@
       case 'bed': return h.id === 'bedc' ? `stół: środek ${inp('X', b.cx, 'tbl_cx')}${inp('Y', b.cy, 'tbl_cy')}` : `stół: wymiary ${inp('dł.', b.sx, 'tbl_sx')}${inp('szer.', b.sy, 'tbl_sy')}<span class="k">mm</span>`;
       case 'base': { const f = A.parse6('#opt_base_frame', [0, 0, 0, 0, 0, 0]);
         return h.id === 'base' ? `baza stołu $BASE <small>(narożnik blatu)</small> ${inp('X', f[0], 'bf_x')}${inp('Y', f[1], 'bf_y')}${inp('Z', f[2], 'bf_z')}${inp('A', f[3], 'bf_a')}<span class="k">°</span>` : `obrót bazy ${inp('A', f[3], 'bf_a')}<span class="k">°</span>`; }
-      case 'tcp': { const t = A.parse6('#opt_tool_frame', [0, 0, 0, 0, 0, 0]); return `TCP narzędzia ${inp('X', t[0], 'tf_x')}${inp('Y', t[1], 'tf_y')}${inp('Z', t[2], 'tf_z')}`; }
+      case 'tcp': { const t = A.parse6('#opt_tool_frame', [0, 0, 0, 0, 0, 0]);
+        if (h.id === 'tcpz') return `oś dyszy <small>(pochylenie)</small> ${inp('A', t[3], 'tf_a')}${inp('B', t[4], 'tf_b')}${inp('C', t[5], 'tf_c')}<span class="k">°</span>`;
+        if (h.id === 'tcpx') return `obrót wokół dyszy <small>(X narzędzia)</small>`;
+        return `TCP narzędzia ${inp('X', t[0], 'tf_x')}${inp('Y', t[1], 'tf_y')}${inp('Z', t[2], 'tf_z')} ${inp('A', t[3], 'tf_a')}${inp('B', t[4], 'tf_b')}${inp('C', t[5], 'tf_c')}<span class="k">°</span>`; }
       default: return h.label || h.id;
     }
   }
@@ -121,6 +124,37 @@
     return { cx, cy, sx, sy, z };
   }
   function baseMatrix() { return A.kukaFrame(A.parse6('#opt_base_frame', [0, 0, 0, 0, 0, 0])); }  // robot -> base placement (base in robot frame)
+  const TOOL_AXIS_LEN = 90;
+  const norm = a => { const l = v3.len(a); return l > 1e-9 ? v3.scale(a, 1 / l) : null; };
+  const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+  /** tool frame axes at the TCP in the data (base) frame: {o, x, y, z} */
+  function toolAxes() {
+    const rv = A.robotView; if (!rv || !rv.tcp || !rv.flangeInBase) return null;
+    const T = A.mulM(rv.flangeInBase, A.kukaFrame(A.parse6('#opt_tool_frame', [0, 0, 150, 0, 0, 0])));
+    return { o: rv.tcp.slice(), x: mcol(T, 0), y: mcol(T, 1), z: mcol(T, 2) };
+  }
+  /** new A B C of $TOOL from a dragged nozzle axis (zv) or tool X (xv), both in flange coordinates; the other axis is kept */
+  function setToolAxes(zv, xv) {
+    const cur = A.parse6('#opt_tool_frame', [0, 0, 150, 0, 0, 0]);
+    const R = A.kukaFrame([0, 0, 0, cur[3], cur[4], cur[5]]);
+    const z = (zv && norm(zv)) || mcol(R, 2);
+    let x, abc;
+    if (xv && !zv) {
+      // spin about the nozzle: snap the spin angle, keep the nozzle axis exactly
+      const x0 = mcol(R, 0), y0 = mcol(R, 1);
+      const phi = snapAng(round(Math.atan2(v3.dot(xv, y0), v3.dot(xv, x0)) * 180 / Math.PI, 1)) * Math.PI / 180;
+      x = v3.add(v3.scale(x0, Math.cos(phi)), v3.scale(y0, Math.sin(phi)));
+      abc = A.rotToABC(x, cross(z, x), z).map(a => round(((a + 180) % 360 + 360) % 360 - 180, 1));
+    } else {
+      // tilt: the nozzle axis follows the drag, tool X stays as close as possible; A B C snapped (45°, 90° mounts hit exactly)
+      x = v3.sub(mcol(R, 0), v3.scale(z, v3.dot(mcol(R, 0), z)));
+      if (v3.len(x) < 1e-6) { x = mcol(R, 1); x = v3.sub(x, v3.scale(z, v3.dot(x, z))); }
+      x = norm(x); if (!x) return;
+      abc = A.rotToABC(x, cross(z, x), z).map(a => snapAng(round(((a + 180) % 360 + 360) % 360 - 180, 1)));
+    }
+    A.setFrameFields('tf', 'opt_tool_frame', [cur[0], cur[1], cur[2], ...abc]);
+    A.applyFrames();
+  }
   function robotInBase() { return A.invert(baseMatrix()); }
 
   // ------------------------------------------------------------ handle set
@@ -193,6 +227,14 @@
           A.setFrameFields('tf', 'opt_tool_frame', [sn(cur[0] + df[0]), sn(cur[1] + df[1]), sn(cur[2] + df[2]), cur[3], cur[4], cur[5]]);
           A.applyFrames();
         } });
+      // orientation of the tool: the tip of the nozzle axis (tool Z) tilts the tool, the tip of tool X spins it about the nozzle
+      const ax = toolAxes();
+      if (ax) {
+        push({ id: 'tcpz', kind: 'tcp', pos: v3.add(ax.o, v3.scale(ax.z, TOOL_AXIS_LEN)), plane: 'screen', size: 9, labelled: true, title: 'oś dyszy (Z narzędzia): przeciągnij, aby pochylić narzędzie — zmienia A B C $TOOL',
+          drag(p) { setToolAxes(mrotT(rv.flangeInBase, v3.sub(p, ax.o)), null); } });
+        push({ id: 'tcpx', kind: 'tcp', pos: v3.add(ax.o, v3.scale(ax.x, TOOL_AXIS_LEN * 0.6)), plane: 'screen', size: 8, title: 'X narzędzia: przeciągnij, aby obrócić narzędzie wokół osi dyszy',
+          drag(p) { setToolAxes(null, mrotT(rv.flangeInBase, v3.sub(p, ax.o))); } });
+      }
     }
     // safety zones (centre + size), from the parsed text
     const zlines = zoneLines();
@@ -270,6 +312,11 @@
   }
   function draw() {
     const v = A.viewer; if (!v) return;
+    const ax = enabled && A.step() <= 2 ? toolAxes() : null;
+    [['x', 'var(--c-ax-x)', 0.6], ['y', 'var(--c-ax-y)', 0.4], ['z', 'var(--c-ax-z)', 1]].forEach(([k, col, f]) => {
+      const arr = ax ? new Float32Array([...ax.o, ...v3.add(ax.o, v3.scale(ax[k], TOOL_AXIS_LEN * f))]) : new Float32Array(0);
+      v.setLayer('gz_tax_' + k, arr, col, { order: 30, group: 'gizmo', visible: enabled });
+    });
     const groups = {};
     for (const h of handles) { const k = h.kind + (h === hover || (drag && drag.h === h) ? '_hot' : ''); (groups[k] = groups[k] || []).push(...h.pos); }
     for (const k of Object.keys(COLORS)) {
