@@ -178,6 +178,7 @@ class PathViewer {
     L.alpha = opts.alpha;
     L.mode = opts.mode || 'lines';
     L.size = opts.size || 6;
+    L.world = !!opts.world;  // drawn in the displayed frame, without the scene transform
     if (opts.order !== undefined) L.order = opts.order;
     if (opts.visible !== undefined) L.visible = opts.visible;
     if (opts.group) L.group = opts.group;
@@ -234,7 +235,14 @@ class PathViewer {
   toggleOrtho() { this.cam.ortho = !this.cam.ortho; this.invalidate(); return this.cam.ortho; }
 
   _buildGrid() {
-    const b = this.bounds;
+    // the grid lies in the displayed frame (the robot's world when a scene transform is set):
+    // transform the data bounds and put the grid on the lowest level, never above z = 0
+    const b0 = this.bounds;
+    const cs = [];
+    for (const x of [b0.min[0], b0.max[0]]) for (const y of [b0.min[1], b0.max[1]]) for (const z of [b0.min[2], b0.max[2]]) cs.push(this._sceneApply([x, y, z]));
+    const b = { min: [0, 1, 2].map(i => Math.min(...cs.map(c => c[i]))), max: [0, 1, 2].map(i => Math.max(...cs.map(c => c[i]))) };
+    const identity = this.scene[0] === 1 && this.scene[5] === 1 && this.scene[10] === 1 && this.scene[12] === 0 && this.scene[13] === 0 && this.scene[14] === 0 && this.scene[1] === 0 && this.scene[4] === 0;
+    if (!identity) { b.min[2] = Math.min(b.min[2], 0); b.min[0] = Math.min(b.min[0], -300); b.max[0] = Math.max(b.max[0], 300); b.min[1] = Math.min(b.min[1], -300); b.max[1] = Math.max(b.max[1], 300); }
     const span = Math.max(b.max[0]-b.min[0], b.max[1]-b.min[1], 1);
     const step = Math.pow(10, Math.floor(Math.log10(span / 8)));
     const nice = span / step > 50 ? step * 5 : (span / step > 20 ? step * 2 : step);
@@ -245,12 +253,12 @@ class PathViewer {
     const minor = [], major = [];
     for (let x = x0; x <= x1 + 1e-9; x += nice) (Math.abs(x / (nice*5) - Math.round(x/(nice*5))) < 1e-6 ? major : minor).push(x, y0, z, x, y1, z);
     for (let y = y0; y <= y1 + 1e-9; y += nice) (Math.abs(y / (nice*5) - Math.round(y/(nice*5))) < 1e-6 ? major : minor).push(x0, y, z, x1, y, z);
-    this.setLayer('_grid', new Float32Array(minor), this.gridColor, { order: -20 });
-    this.setLayer('_gridMajor', new Float32Array(major), this.gridMajor, { order: -19 });
+    this.setLayer('_grid', new Float32Array(minor), this.gridColor, { order: -20, world: true });
+    this.setLayer('_gridMajor', new Float32Array(major), this.gridMajor, { order: -19, world: true });
     const a = Math.max(nice * 2, span * 0.08);
-    this.setLayer('_axX', new Float32Array([0,0,z, a,0,z]), 'var(--c-ax-x)', { order: -18 });
-    this.setLayer('_axY', new Float32Array([0,0,z, 0,a,z]), 'var(--c-ax-y)', { order: -17 });
-    this.setLayer('_axZ', new Float32Array([0,0,z, 0,0,z+a]), 'var(--c-ax-z)', { order: -16 });
+    this.setLayer('_axX', new Float32Array([0,0,z, a,0,z]), 'var(--c-ax-x)', { order: -18, world: true });
+    this.setLayer('_axY', new Float32Array([0,0,z, 0,a,z]), 'var(--c-ax-y)', { order: -17, world: true });
+    this.setLayer('_axZ', new Float32Array([0,0,z, 0,0,z+a]), 'var(--c-ax-z)', { order: -16, world: true });
     this.gridStep = nice;
   }
 
@@ -278,7 +286,7 @@ class PathViewer {
 
   /** rigid transform applied to everything drawn (layers, meshes, grid): data stays in the base frame,
    *  the display can be the robot frame so the robot stands still at its origin. */
-  setSceneTransform(m) { this.scene = m ? new Float32Array(m) : new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]); this.invalidate(); }
+  setSceneTransform(m) { this.scene = m ? new Float32Array(m) : new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]); if (this.bounds) this._buildGrid(); this.invalidate(); }
   _sceneApply(p) { const m = this.scene; return [m[0]*p[0]+m[4]*p[1]+m[8]*p[2]+m[12], m[1]*p[0]+m[5]*p[1]+m[9]*p[2]+m[13], m[2]*p[0]+m[6]*p[1]+m[10]*p[2]+m[14]]; }
   _sceneInv(p, vec) { const m = this.scene; const q = vec ? p : [p[0]-m[12], p[1]-m[13], p[2]-m[14]]; return [m[0]*q[0]+m[1]*q[1]+m[2]*q[2], m[4]*q[0]+m[5]*q[1]+m[6]*q[2], m[8]*q[0]+m[9]*q[1]+m[10]*q[2]]; }
   /** camera position (data coordinates) */
@@ -358,7 +366,10 @@ class PathViewer {
     gl.useProgram(this.prog);
     gl.uniformMatrix4fv(this.uMVP, false, mvp);
     const layers = [...this.layers.values()].filter(L => L.visible && L.count > 0).sort((a, b) => a.order - b.order);
+    const mvpWorld = this._mvp();
+    let worldSet = false;
     for (const L of layers) {
+      if (L.world !== worldSet) { gl.uniformMatrix4fv(this.uMVP, false, L.world ? mvpWorld : mvp); worldSet = !!L.world; }
       gl.bindBuffer(gl.ARRAY_BUFFER, L.buf);
       gl.enableVertexAttribArray(this.aPos);
       gl.vertexAttribPointer(this.aPos, 3, gl.FLOAT, false, 0, 0);

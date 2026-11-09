@@ -277,8 +277,9 @@ Z”…), które można chwycić myszą i przeciągnąć; bryła stołu, strefy 
 przeszkody przerysowują się w trakcie ruchu z pól formularza, a po puszczeniu
 przelicza się program. Każda etykieta ma pola edycyjne (klik → wpisz → Enter),
 stół jest rysowany jako pełna bryła od blatu do posadzki robota, a widok
-wyświetla scenę w układzie robota (dane ścieżki pozostają w bazie; viewer
-nakłada transformację sceny):
+wyświetla scenę w układzie robota: siatka i duże osie to $ROBROOT na
+posadzce, małe osie to $BASE (dane ścieżki pozostają w bazie; viewer nakłada
+transformację sceny, obrót bazy obraca stół, nie robota):
 
 * **narożniki podstawy** — wymiary stołu (przeciwległy narożnik stoi w
   miejscu), **środek podstawy** — jej położenie w bazie; obrys stołu rysuje się
