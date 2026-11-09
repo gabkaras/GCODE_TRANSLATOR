@@ -259,6 +259,7 @@
     const s = data.stats;
     $('#results').classList.remove('hidden');
     $('#empty').classList.add('hidden');
+    const vi = $('#view-intro'); if (vi) vi.classList.add('hidden');
     $('#st-in').textContent = fmt(s.input_moves);
     $('#st-in-sub').textContent = `G0 ${fmt(s.input_counts.G0)} · G1 ${fmt(s.input_counts.G1)} · G2/G3 ${fmt(s.input_counts.G2 + s.input_counts.G3)}`;
     $('#st-out').textContent = fmt(s.motions_out);
@@ -485,6 +486,10 @@
 
   // automatic table and stock obstacles from the base frame and the path bounds
   function updateAutoObstacles() {
+    _updateAutoObstacles();
+    if (typeof previewCell === 'function') previewCell();
+  }
+  function _updateAutoObstacles() {
     const ta = $('#opt_obstacles'); if (!ta) return;
     const keep = ta.value.split('\n').filter(l => !/#\s*auto\s*$/.test(l));
     let lines = keep;
@@ -753,6 +758,7 @@
     if (!R) { robotView.setVisible(false); $('#joints').classList.add('hidden'); return; }
     if (!robotView.model || robotView.model.key !== key) {
       robotView.setModel(R, null); buildJointRows(R);
+      showCellPreview();
       if (R.has_mesh) fetch('/api/robot_mesh/' + key).then(r => r.json()).then(m => { if (robotView.model && robotView.model.key === key) { robotView.setModel(R, m); applyFrames(); } }).catch(() => {});
       const src = $('#robot-sources');
       src.innerHTML = Object.entries(R.sources || {}).map(([k, v]) => `<div><b>${k}:</b> ${v}</div>`).join('') + (R.notes || []).map(n => `<div class="warn">${n}</div>`).join('');
@@ -779,7 +785,76 @@
     if (!robotView || !robotView.model) return;
     robotView.setTool(kukaFrame(parse6('#opt_tool_frame', [0,0,0,0,0,0])));
     robotView.setBasePlacement(invert(kukaFrame(parse6('#opt_base_frame', [0,0,0,0,0,0]))));
+    previewCell();
   }
+  // ---- local preview of the cell (obstacles, zones) from the form, before / between translations
+  function mulM(a, b) {
+    const o = new Float32Array(16);
+    for (let c = 0; c < 4; c++) for (let r = 0; r < 4; r++) o[c * 4 + r] = a[r] * b[c * 4] + a[4 + r] * b[c * 4 + 1] + a[8 + r] * b[c * 4 + 2] + a[12 + r] * b[c * 4 + 3];
+    return o;
+  }
+  const rowRot = m => [m[0], m[4], m[8], m[1], m[5], m[9], m[2], m[6], m[10]];
+  function toRobot(frame, c, abc) {
+    // centre / rotation of a primitive given in the robot or base frame -> robot frame (what the viewer draws)
+    const R = kukaFrame([0, 0, 0, ...(abc || [0, 0, 0])]);
+    if (frame !== 'base') return { center: c, rot: rowRot(R) };
+    const B = kukaFrame(parse6('#opt_base_frame', [0, 0, 0, 0, 0, 0]));
+    const M = mulM(B, R);
+    return { center: [B[0] * c[0] + B[4] * c[1] + B[8] * c[2] + B[12], B[1] * c[0] + B[5] * c[1] + B[9] * c[2] + B[13], B[2] * c[0] + B[6] * c[1] + B[10] * c[2] + B[14]], rot: rowRot(M) };
+  }
+  function localObstacles() {
+    const out = [];
+    ($('#opt_obstacles').value || '').split('\n').forEach(raw => {
+      const line = raw.split('#')[0].trim(); if (!line) return;
+      const p = line.split(/[\s,]+/); const kind = p[0].toLowerCase();
+      const wp = p[p.length - 1] && /^(workpiece|material|stock)$/i.test(p[p.length - 1]);
+      const nums = p.slice(3, wp ? -1 : undefined).map(Number);
+      const frame = (p[2] || 'robot').toLowerCase();
+      if (kind === 'box' && nums.length >= 6) {
+        const t = toRobot(frame, nums.slice(0, 3), nums.slice(6, 9));
+        out.push({ name: p[1], kind: 'box', center: t.center, rot: t.rot, half: [nums[3] / 2, nums[4] / 2, nums[5] / 2], workpiece: wp });
+      } else if ((kind === 'cylinder' || kind === 'cyl') && nums.length >= 5) {
+        const t = toRobot(frame, nums.slice(0, 3)); out.push({ name: p[1], kind: 'cylinder', center: t.center, rot: t.rot, radius: nums[3], height: nums[4], workpiece: wp });
+      } else if (kind === 'sphere' && nums.length >= 4) {
+        const t = toRobot(frame, nums.slice(0, 3)); out.push({ name: p[1], kind: 'sphere', center: t.center, rot: t.rot, radius: nums[3], workpiece: wp });
+      } else if (kind === 'floor' && p.length >= 4) {
+        const t = toRobot(frame, [0, 0, Number(p[3]) || 0]); out.push({ name: p[1], kind: 'floor', center: t.center, rot: t.rot });
+      }
+    });
+    return out;
+  }
+  function localZones() {
+    const out = [];
+    ($('#opt_zones').value || '').split('\n').forEach(raw => {
+      const line = raw.split('#')[0].trim(); if (!line) return;
+      const p = line.split(/[\s,]+/); if (p[0].toLowerCase() === 'zone') p.shift();
+      if (p.length < 10) return;
+      const nums = p.slice(4).map(Number);
+      const t = toRobot(p[3].toLowerCase(), nums.slice(0, 3), nums.slice(6, 9));
+      out.push({ name: p[0], mode: p[1], scope: p[2], center: t.center, rot: t.rot, half: [nums[3] / 2, nums[4] / 2, nums[5] / 2] });
+    });
+    return out;
+  }
+  // the 3D view shows the cell (robot, bed, zones) right away, before any path exists
+  function showCellPreview() {
+    if (!viewer || !robotView || !robotView.model || state.result) return;
+    $('#results').classList.remove('hidden');
+    $('#empty').classList.add('hidden');
+    previewCell();
+    const bf = parse6('#opt_base_frame', [1400, 0, 500, 0, 0, 0]);
+    const sx = Number($('#tbl_sx').value) || 800, sy = Number($('#tbl_sy').value) || 800;
+    viewer.setBounds([Math.min(-sx / 2, -bf[0] - 300), -Math.max(sy / 2, 600), -bf[2] - 50], [sx / 2 + 100, Math.max(sy / 2, 600), 1500 - bf[2]]);
+    viewer.viewIso();
+    state.fitted = true;
+  }
+  const vic = $('#view-intro-close'); if (vic) vic.addEventListener('click', () => $('#view-intro').classList.add('hidden'));
+  function previewCell() {
+    if (!robotView || !robotView.model) return;
+    robotView.setObstacles(localObstacles());
+    robotView.setZones(localZones());
+    if (window.GIZMO) window.GIZMO.refresh();
+  }
+  ['#opt_obstacles', '#opt_zones'].forEach(sel => { const el = $(sel); if (el) el.addEventListener('input', () => previewCell()); });
   function buildJointRows(R) {
     const box = $('#joint-rows');
     box.innerHTML = '';
@@ -1008,5 +1083,6 @@
   window.GCODE2KRL = {
     get viewer() { return viewer; }, get robotView() { return robotView; }, state,
     parse6, kukaFrame, invert, setFrameFields, applyFrames, updateAutoObstacles, platerRows, savePlater, saveOptions, scheduleAuto,
+    previewCell, localObstacles, localZones,
   };
 })();

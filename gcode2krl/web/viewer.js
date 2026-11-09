@@ -116,6 +116,7 @@ class PathViewer {
     this.layers = new Map();   // name -> {buf, count, color, visible, mode, order, size}
     this.bounds = { min: [0, 0, 0], max: [100, 100, 10] };
     this.cam = { target: [50, 50, 0], dist: 250, yaw: -0.6, pitch: 0.9, ortho: false, fov: Math.PI / 4 };
+    this.onRender = [];  // callbacks after every frame (overlays)
     this.applyTheme();
     this._dirty = true;
     this._raf = null;
@@ -360,6 +361,7 @@ class PathViewer {
     }
     this._dirty = false;
     if (this.onChange) this.onChange(this);
+    for (const f of this.onRender) { try { f(); } catch (e) {} }
   }
 
   _bindEvents() {

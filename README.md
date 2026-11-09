@@ -269,9 +269,13 @@ zone operator forbidden robot robot 0 1600 900 1200 800 1800   # żaden człon n
 
 ![uchwyty do przeciągania](docs/gui_gizmo.png)
 
-Przełącznik *uchwyty* w pasku podglądu włącza punkty, które można chwycić
-myszą (kursor „łapka”, podpowiedź z nazwą) i przeciągnąć; pola formularza
-aktualizują się na bieżąco, a po puszczeniu przelicza się program:
+Widok 3D pokazuje stanowisko (robot w HOME, stół, strefy, przeszkody) od
+razu po starcie, jeszcze bez ścieżki; przełącznik *uchwyty* w pasku
+podglądu włącza punkty z etykietami (nazwa i bieżąca wartość: „stół:
+narożnik 950 × 700 mm”, „baza robota $BASE X 1400 Y 0 Z 500”, „TCP narzędzia X Y
+Z”…), które można chwycić myszą i przeciągnąć; bryła stołu, strefy i
+przeszkody przerysowują się w trakcie ruchu z pól formularza, a po puszczeniu
+przelicza się program:
 
 * **narożniki podstawy** — wymiary stołu (przeciwległy narożnik stoi w
   miejscu), **środek podstawy** — jej położenie w bazie; obrys stołu rysuje się
