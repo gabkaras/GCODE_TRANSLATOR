@@ -216,7 +216,15 @@
 
   // ---------------------------------------------------------------- translate
   let autoTimer = null;
+  // while a number is being typed the translation waits for the committed value (Enter / leaving the
+  // field / spinner release): "2", "20", "200" must not be translated one after the other
+  let holdAuto = false, autoHeld = false;
+  document.addEventListener('input', e => { if (e.target.matches && e.target.matches('input[type=number], input[type=text], textarea')) holdAuto = true; }, true);
+  const releaseAuto = () => { if (!holdAuto) return; holdAuto = false; if (autoHeld) { autoHeld = false; scheduleAuto(); } };
+  document.addEventListener('change', releaseAuto, true);
+  document.addEventListener('focusout', releaseAuto, true);
   function scheduleAuto() {
+    if (holdAuto) { autoHeld = true; return; }
     if (!state.gcode || !$('#auto').checked) return;
     clearTimeout(autoTimer);
     autoTimer = setTimeout(translate, 350);
@@ -437,7 +445,11 @@
     AXES6.forEach((ax, i) => { const el = $('#' + prefix + '_' + ax); if (el && document.activeElement !== el) el.value = +v[i].toFixed(3); });
   }
   function fieldsToHidden(prefix, hiddenId) {
-    const v = AXES6.map(ax => Number($('#' + prefix + '_' + ax).value) || 0);
+    // a field that is empty or half-typed ("-", "1e") keeps the previous frame: an empty Z must not
+    // become a 0 mm long tool (flange in the table, collision warnings)
+    const els = AXES6.map(ax => $('#' + prefix + '_' + ax));
+    if (els.some(el => el.value.trim() === '' || !Number.isFinite(Number(el.value)))) return false;
+    const v = els.map(el => Number(el.value));
     const h = $('#' + hiddenId);
     const text = v.map(x => +x.toFixed(3)).join(' ');
     if (h.value !== text) { h.value = text; return true; }

@@ -95,6 +95,20 @@ def test_lint_catches_kss_spline_problems():
     assert [m for _, m in lint_krl(good) if "C_SPL" in m] == []
 
 
+def test_leading_z_rapid_is_folded_into_the_first_xy_rapid():
+    # "G0 Z2" from the assumed X0 Y0, then "G0 X.. Y..": the robot comes from HOME and must go
+    # straight to the first point, not to the base origin (a table corner) first
+    g = "G0 Z2 F9000\nG0 X350 Y360\nG1 X400 F900\nG1 Y400\nM30\n"
+    items, stats = translate(parse_gcode(g), TranslateOptions())
+    rapids = [i for i in items if isinstance(i, RapidItem)]
+    assert len(rapids) == 1 and np.allclose(rapids[0].target, [350, 360, 2]) and np.allclose(rapids[0].start, rapids[0].target)
+    src = write_krl(items, KrlOptions(name="T"), stats).files["T.src"]
+    assert "X 0.000, Y 0.000" not in src
+    # a program that really starts cutting from X0 Y0 keeps its Z move
+    items, _ = translate(parse_gcode("G0 Z5\nG1 X10 Y10 F600\nM30\n"), TranslateOptions())
+    assert [type(i).__name__ for i in items][:2] == ["RapidItem", "LineItem"]
+
+
 def test_frame_modes_declare_data_literal():
     items, stats = translate(parse_gcode("G1 X0 Y0 Z0 F600\nG1 X10 Y0\nG1 X10 Y10\n"), TranslateOptions())
     frames = dict(tool_frame=(0, 0, 150, 0, 45, 0), base_frame=(1400, 0, 500, 0, 0, 0))

@@ -312,6 +312,14 @@ transformację sceny, obrót bazy obraca stół, nie robota):
   pokrojony model („ustaw model na środku stołu”; plater podaje pozycje w
   bazie); obrys stołu rysuje się na żywo,
 * zmiana zakładki zatrzymuje odtwarzanie symulacji,
+* liczba wpisywana w pole (TCP, baza, opcje) trafia do tłumaczenia dopiero po
+  zatwierdzeniu (Enter, wyjście z pola, strzałki pola); puste lub niedokończone
+  pole zostawia poprzednią wartość — wyczyszczone Z narzędzia nie staje się
+  narzędziem o długości 0 z ostrzeżeniami o kolizji kołnierza ze stołem,
+* początkowe `G0 Z…` z założonej pozycji X0 Y0 jest łączone z pierwszym `G0
+  X… Y…`: robot jedzie z HOME prosto nad pierwszy punkt ścieżki, a nie do
+  początku bazy (narożnika stołu); obrys ścieżki i blok materiału liczą się z
+  ruchów roboczych,
 * **snap** (pasek podglądu: 1/5/10/50/100 mm, Alt wyłącza chwilowo) — pozycje
   i wymiary przyciągane do siatki, obrót bazy co 5°, TCP co najwyżej co 5 mm,
 * **TCP** — X Y Z narzędzia względem kołnierza (ruch w płaszczyźnie ekranu);

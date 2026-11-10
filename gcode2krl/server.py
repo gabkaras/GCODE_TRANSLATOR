@@ -199,7 +199,9 @@ def preview_geometry(parsed, items, offset) -> dict:
     def pack(chunks):
         return _f32(np.concatenate(chunks) if chunks else np.zeros(0))
 
-    allpts = [np.asarray(x).reshape(-1, 3) for x in inp + inp_rapid]
+    # bounds of the work itself (feed moves); rapids only when there is nothing else - the first
+    # rapid starts at the assumed origin and would stretch the bounds (and the stock block) to it
+    allpts = [np.asarray(x).reshape(-1, 3) for x in (inp if inp else inp + inp_rapid)]
     if allpts:
         a = np.concatenate(allpts)
         bounds = {"min": a.min(axis=0).tolist(), "max": a.max(axis=0).tolist()}

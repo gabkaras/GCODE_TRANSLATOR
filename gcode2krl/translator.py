@@ -330,7 +330,22 @@ class Translator:
     def translate(self, parsed: ParseResult) -> tuple[list, Stats]:
         self.stats.input_counts = dict(parsed.counts)
         self.stats.warnings.extend(parsed.warnings)
-        for cmd in parsed.commands:
+        # Leading rapids that only move Z start from the *assumed* position (X0 Y0): the robot
+        # comes from HOME, so "G0 Z2" followed by "G0 X.. Y.." must not send it to the base
+        # origin first. They are folded into the first rapid that sets X / Y.
+        skip: set[int] = set()
+        lead = []
+        for k, cmd in enumerate(parsed.commands):
+            if isinstance(cmd, LinearMove) and cmd.rapid:
+                lead.append(k)
+            elif isinstance(cmd, (LinearMove, ArcMove)):
+                break
+        first_xy = next((k for k in lead if float(np.linalg.norm((parsed.commands[k].end - parsed.commands[k].start)[:2])) > 1e-9), None)
+        if first_xy is not None:
+            skip = {k for k in lead if k < first_xy}
+        for k, cmd in enumerate(parsed.commands):
+            if k in skip:
+                continue
             if isinstance(cmd, LinearMove):
                 ori = ("abc", cmd.abc) if cmd.abc is not None else (("axis", cmd.axis) if cmd.axis is not None else None)
                 ori0 = ("abc", cmd.abc0) if cmd.abc0 is not None else (("axis", cmd.axis0) if cmd.axis0 is not None else None)
@@ -342,7 +357,8 @@ class Translator:
                     if rabc is None and cmd.axis is not None:
                         from .robot import abc_from_axis
                         rabc = abc_from_axis(cmd.axis)
-                    self.items.append(RapidItem(cmd.end + self.offset, cmd.start + self.offset,
+                    r_start = cmd.end if (skip and k == first_xy) else cmd.start  # no travel from the assumed origin
+                    self.items.append(RapidItem(cmd.end + self.offset, r_start + self.offset,
                                                 abc=rabc, axis=cmd.axis))
                     self.last_ori = ori
                     self.stats.rapids += 1
